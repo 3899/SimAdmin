@@ -116,6 +116,26 @@ export default function NotificationChannelsTab({
     />
   )
 
+  const renderNumberConfigField = (
+    channel: NotificationChannelInstance,
+    key: string,
+    label: string,
+    min = 0,
+  ) => (
+    <TextField
+      key={key}
+      type="number"
+      label={label}
+      value={Number(channel.config[key]) || min}
+      onChange={(event: ChangeEvent<HTMLInputElement>) => {
+        const value = Math.max(min, Math.trunc(Number(event.target.value) || min))
+        onPatchChannelConfig(channel.id, { [key]: value })
+      }}
+      inputProps={{ min }}
+      fullWidth
+    />
+  )
+
   const patchRateLimit = (channel: NotificationChannelInstance, patch: Partial<NotificationChannelInstance['rate_limit']>) => {
     onPatchChannel(channel.id, {
       rate_limit: {
@@ -322,6 +342,30 @@ export default function NotificationChannelsTab({
             {renderStringField(channel, 'chat_id', 'Chat ID')}
             {renderStringField(channel, 'parse_mode', 'Parse Mode', { select: ['', 'MarkdownV2', 'HTML'] })}
             {renderBoolField(channel, 'disable_web_page_preview', '禁用链接预览')}
+          </Box>
+        )
+      case 'email':
+        return (
+          <Box sx={fieldStackSx}>
+            {renderStringField(channel, 'smtp_host', 'SMTP 服务器')}
+            {renderNumberConfigField(channel, 'smtp_port', 'SMTP 端口', 1)}
+            <Box display="flex" gap={2} flexWrap="wrap">
+              {renderBoolField(channel, 'smtp_tls', '启用 TLS')}
+              {renderBoolField(channel, 'allow_insecure_connections', '允许不安全证书')}
+            </Box>
+            {renderStringField(channel, 'username', '用户名')}
+            {renderStringField(channel, 'password', '密码', { password: true })}
+            {renderStringField(channel, 'sender_address', '发件人邮箱')}
+            {renderStringField(channel, 'sender_name', '发件人名称')}
+            {renderStringField(channel, 'receiver_address', '收件人邮箱')}
+            {renderStringField(channel, 'message_format', '消息格式', { select: ['plain', 'html'] })}
+          </Box>
+        )
+      case 'serverchan3':
+        return (
+          <Box sx={fieldStackSx}>
+            {renderStringField(channel, 'uid', 'UID')}
+            {renderStringField(channel, 'send_key', 'SendKey', { password: true })}
           </Box>
         )
       default:

@@ -3,6 +3,7 @@ import type { SvgIconProps } from '@mui/material/SvgIcon'
 import {
   Business,
   Chat,
+  Email,
   Forum,
   Groups,
   NotificationsActive,
@@ -72,7 +73,10 @@ export function defaultRateLimitForChannel(type: NotificationChannelKey): Notifi
     case 'wecom_robot':
     case 'dingtalk_robot':
     case 'telegram':
+    case 'email':
       return { enabled: true, max_messages: 20, window_seconds: 60 }
+    case 'serverchan3':
+      return { enabled: true, max_messages: 5, window_seconds: 60 }
     case 'dingtalk_app':
       return { enabled: true, max_messages: 1000, window_seconds: 60 }
     case 'feishu_robot':
@@ -92,6 +96,8 @@ export const CHANNEL_DEFS: ChannelDef[] = [
   { key: 'dingtalk_app', label: '钉钉企业内机器人', icon: Work },
   { key: 'feishu_robot', label: '飞书机器人', icon: Chat },
   { key: 'telegram', label: 'Telegram 机器人', icon: Send },
+  { key: 'email', label: 'Email', icon: Email },
+  { key: 'serverchan3', label: 'Server酱3', icon: Webhook },
 ]
 
 export const EVENT_TYPES: { key: NotificationEventType; label: string }[] = [
@@ -290,6 +296,21 @@ export function defaultChannelConfig(type: NotificationChannelKey): Record<strin
       return { webhook_url: '', token: '', secret: '' }
     case 'telegram':
       return { bot_token: '', chat_id: '', parse_mode: '', disable_web_page_preview: true }
+    case 'email':
+      return {
+        smtp_host: '',
+        smtp_port: 465,
+        smtp_tls: true,
+        username: '',
+        password: '',
+        sender_address: '',
+        sender_name: '',
+        receiver_address: '',
+        message_format: 'plain',
+        allow_insecure_connections: false,
+      }
+    case 'serverchan3':
+      return { uid: '', send_key: '' }
     default:
       return {}
   }

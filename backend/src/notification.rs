@@ -1,9 +1,9 @@
 use crate::config::{
-    BarkConfig, ConfigManager, DingtalkAppConfig, DingtalkRobotConfig, FeishuRobotConfig,
-    LegacyNotificationConfig, MatcherOperator, MessageChannelConfig, NotificationChannel,
-    NotificationChannelInstance, NotificationConfig, NotificationEventType, NotificationRule,
-    PushPlusConfig, QuietHoursSchedule, TelegramConfig, WebhookConfig, WecomAppConfig,
-    WecomRobotConfig,
+    BarkConfig, ConfigManager, DingtalkAppConfig, DingtalkRobotConfig, EmailConfig,
+    FeishuRobotConfig, LegacyNotificationConfig, MatcherOperator, MessageChannelConfig,
+    NotificationChannel, NotificationChannelInstance, NotificationConfig, NotificationEventType,
+    NotificationRule, PushPlusConfig, QuietHoursSchedule, ServerChan3Config, TelegramConfig,
+    WebhookConfig, WecomAppConfig, WecomRobotConfig,
 };
 use crate::db::{
     CallRecord, Database, NewNotificationQueueItem, NotificationQueueEntry, SmsMessage,
@@ -17,6 +17,10 @@ use base64::{engine::general_purpose, Engine as _};
 use chrono::{
     DateTime, Datelike, Duration as ChronoDuration, FixedOffset, NaiveDateTime, Timelike, Utc,
 };
+use lettre::message::{Mailbox, SinglePart};
+use lettre::transport::smtp::authentication::Credentials;
+use lettre::transport::smtp::client::{Tls, TlsParameters};
+use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use reqwest::{Client, StatusCode};
 use ring::hmac;
@@ -992,6 +996,16 @@ impl NotificationSender {
                 let config = parse_instance_config::<TelegramConfig>(channel)?;
                 self.send_telegram_text(&config, text.to_string()).await
             }
+            NotificationChannel::Email => {
+                let config = parse_instance_config::<EmailConfig>(channel)?;
+                self.send_email_message(&config, title.to_string(), text.to_string())
+                    .await
+            }
+            NotificationChannel::ServerChan3 => {
+                let config = parse_instance_config::<ServerChan3Config>(channel)?;
+                self.send_serverchan3_message(&config, title.to_string(), text.to_string())
+                    .await
+            }
         }
     }
 
@@ -1033,6 +1047,8 @@ impl NotificationSender {
             NotificationChannel::Telegram => {
                 self.send_telegram_call(&config.telegram, call, force).await
             }
+            NotificationChannel::Email => Ok("Email skipped".to_string()),
+            NotificationChannel::ServerChan3 => Ok("Server酱3 skipped".to_string()),
         }
     }
 
@@ -1065,6 +1081,8 @@ impl NotificationSender {
                     .await
             }
             NotificationChannel::Telegram => self.send_telegram_ddns(&config.telegram, event).await,
+            NotificationChannel::Email => Ok("Email skipped".to_string()),
+            NotificationChannel::ServerChan3 => Ok("Server酱3 skipped".to_string()),
         }
     }
 
@@ -1108,6 +1126,8 @@ impl NotificationSender {
                 self.send_telegram_version_update(&config.telegram, event)
                     .await
             }
+            NotificationChannel::Email => Ok("Email skipped".to_string()),
+            NotificationChannel::ServerChan3 => Ok("Server酱3 skipped".to_string()),
         }
     }
 
@@ -2130,6 +2150,43 @@ impl NotificationSender {
             .await
     }
 
+    async fn send_serverchan3_message(
+        &self,
+        config: &ServerChan3Config,
+        title: String,
+        desp: String,
+    ) -> Result<String, String> {
+        let url = serverchan3_url(config)?;
+        self.post_json("Server酱3", &url, serverchan3_payload(&title, &desp))
+            .await
+    }
+
+    async fn send_email_message(
+        &self,
+        config: &EmailConfig,
+        subject: String,
+        body: String,
+    ) -> Result<String, String> {
+        if config.smtp_host.trim().is_empty() {
+            return Err("SMTP 服务器未配置".to_string());
+        }
+        if config.sender_address.trim().is_empty() || config.receiver_address.trim().is_empty() {
+            return Err("发件人或收件人邮箱未配置".to_string());
+        }
+
+        let sender = mailbox_from_config(&config.sender_address, &config.sender_name, "发件人")?;
+        let receiver = mailbox_from_config(&config.receiver_address, "", "收件人")?;
+        let message = build_email_message(config, sender, receiver, &subject, &body)?;
+        let mailer = build_email_transport(config)?;
+
+        mailer
+            .send(message)
+            .await
+            .map_err(|err| format!("Email 发送失败：{err}"))?;
+
+        Ok("Email test successful".to_string())
+    }
+
     async fn post_json(&self, label: &str, url: &str, payload: Value) -> Result<String, String> {
         let response = self
             .client
@@ -2155,6 +2212,92 @@ where
     }
     serde_json::from_value(channel.config.clone())
         .map_err(|err| format!("Failed to parse {} channel config: {}", channel.name, err))
+}
+
+fn serverchan3_url(config: &ServerChan3Config) -> Result<String, String> {
+    let uid = config.uid.trim();
+    let send_key = config.send_key.trim();
+    if uid.is_empty() || send_key.is_empty() {
+        return Err("Server酱3 UID 或 SendKey 未配置".to_string());
+    }
+    Ok(format!(
+        "https://{}.push.ft07.com/send/{}.send",
+        encode_path_segment(uid),
+        encode_path_segment(send_key)
+    ))
+}
+
+fn serverchan3_payload(title: &str, desp: &str) -> Value {
+    json!({
+        "title": title,
+        "desp": desp,
+    })
+}
+
+fn mailbox_from_config(address: &str, name: &str, label: &str) -> Result<Mailbox, String> {
+    let address = address.trim();
+    if address.is_empty() {
+        return Err(format!("{label}邮箱未配置"));
+    }
+    let mailbox = if name.trim().is_empty() {
+        address.to_string()
+    } else {
+        format!("{} <{}>", name.trim(), address)
+    };
+    mailbox
+        .parse::<Mailbox>()
+        .map_err(|err| format!("{label}邮箱格式无效：{err}"))
+}
+
+fn build_email_message(
+    config: &EmailConfig,
+    sender: Mailbox,
+    receiver: Mailbox,
+    subject: &str,
+    body: &str,
+) -> Result<Message, String> {
+    let builder = Message::builder()
+        .from(sender)
+        .to(receiver)
+        .subject(subject);
+
+    let part = match config.message_format.trim().to_ascii_lowercase().as_str() {
+        "" | "plain" | "text" => Ok(SinglePart::plain(body.to_string())),
+        "html" => Ok(SinglePart::html(body.to_string())),
+        other => Err(format!("不支持的 Email 消息格式：{other}")),
+    }?;
+
+    builder
+        .singlepart(part)
+        .map_err(|err| format!("构建 Email 消息失败：{err}"))
+}
+
+fn build_email_transport(
+    config: &EmailConfig,
+) -> Result<AsyncSmtpTransport<Tokio1Executor>, String> {
+    let host = config.smtp_host.trim();
+    let port = config.smtp_port.max(1);
+    let mut builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host)
+        .port(port)
+        .tls(if config.smtp_tls {
+            let tls_parameters = TlsParameters::builder(host.to_string())
+                .dangerous_accept_invalid_certs(config.allow_insecure_connections)
+                .dangerous_accept_invalid_hostnames(config.allow_insecure_connections)
+                .build()
+                .map_err(|err| format!("构建 SMTP TLS 参数失败：{err}"))?;
+            Tls::Wrapper(tls_parameters)
+        } else {
+            Tls::None
+        });
+
+    if !config.username.trim().is_empty() || !config.password.is_empty() {
+        builder = builder.credentials(Credentials::new(
+            config.username.trim().to_string(),
+            config.password.clone(),
+        ));
+    }
+
+    Ok(builder.build())
 }
 
 fn rule_matches(rule: &NotificationRule, event: &NotificationEvent<'_>) -> bool {
@@ -2313,6 +2456,8 @@ impl NotificationChannel {
             NotificationChannel::DingtalkApp => "dingtalk_app",
             NotificationChannel::FeishuRobot => "feishu_robot",
             NotificationChannel::Telegram => "telegram",
+            NotificationChannel::Email => "email",
+            NotificationChannel::ServerChan3 => "serverchan3",
         }
     }
 
@@ -2327,12 +2472,14 @@ impl NotificationChannel {
             NotificationChannel::DingtalkApp => "钉钉企业内机器人",
             NotificationChannel::FeishuRobot => "飞书机器人",
             NotificationChannel::Telegram => "Telegram机器人",
+            NotificationChannel::Email => "Email",
+            NotificationChannel::ServerChan3 => "Server酱3",
         }
     }
 }
 
 #[allow(dead_code)]
-fn all_channels() -> [NotificationChannel; 9] {
+fn all_channels() -> [NotificationChannel; 11] {
     [
         NotificationChannel::Webhook,
         NotificationChannel::Bark,
@@ -2343,6 +2490,8 @@ fn all_channels() -> [NotificationChannel; 9] {
         NotificationChannel::DingtalkApp,
         NotificationChannel::FeishuRobot,
         NotificationChannel::Telegram,
+        NotificationChannel::Email,
+        NotificationChannel::ServerChan3,
     ]
 }
 
@@ -2366,6 +2515,8 @@ fn should_send_sms_to_channel(
         NotificationChannel::DingtalkApp => should_send_sms(&config.dingtalk_app.common, false),
         NotificationChannel::FeishuRobot => should_send_sms(&config.feishu_robot.common, false),
         NotificationChannel::Telegram => should_send_sms(&config.telegram.common, false),
+        NotificationChannel::Email => should_send_sms(&config.email.common, false),
+        NotificationChannel::ServerChan3 => should_send_sms(&config.serverchan3.common, false),
     }
 }
 
@@ -2399,6 +2550,8 @@ fn should_send_update_to_channel(
         NotificationChannel::DingtalkApp => should_send_update(&config.dingtalk_app.common),
         NotificationChannel::FeishuRobot => should_send_update(&config.feishu_robot.common),
         NotificationChannel::Telegram => should_send_update(&config.telegram.common),
+        NotificationChannel::Email => should_send_update(&config.email.common),
+        NotificationChannel::ServerChan3 => should_send_update(&config.serverchan3.common),
     }
 }
 
@@ -3338,5 +3491,41 @@ mod tests {
         assert!(!is_wecom_access_token_error(
             r#"{"errcode":0,"errmsg":"ok"}"#
         ));
+    }
+
+    #[test]
+    fn builds_serverchan3_url_and_payload() {
+        let config = ServerChan3Config {
+            uid: "user-1".to_string(),
+            send_key: "sctp-secret".to_string(),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            serverchan3_url(&config).unwrap(),
+            "https://user-1.push.ft07.com/send/sctp-secret.send"
+        );
+        assert_eq!(
+            serverchan3_payload("SimAdmin 测试", "hello"),
+            json!({
+                "title": "SimAdmin 测试",
+                "desp": "hello",
+            })
+        );
+    }
+
+    #[test]
+    fn serverchan3_requires_uid_and_send_key() {
+        let missing_uid = ServerChan3Config {
+            send_key: "sctp-secret".to_string(),
+            ..Default::default()
+        };
+        assert!(serverchan3_url(&missing_uid).is_err());
+
+        let missing_key = ServerChan3Config {
+            uid: "user-1".to_string(),
+            ..Default::default()
+        };
+        assert!(serverchan3_url(&missing_key).is_err());
     }
 }
