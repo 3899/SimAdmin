@@ -5917,8 +5917,7 @@ async fn power_cycle_sim_for_profile_switch_inner(
                 path
             }
             None => {
-                let message =
-                    "等待基带重新枚举超时：ModemManager 启动后 15 秒内未检测到 Modem".to_string();
+                let message = "等待基带重新枚举超时：ModemManager 启动后 15 秒内未检测到 Modem".to_string();
                 record_baseband_step(
                     &mut steps,
                     "等待基带重新枚举",

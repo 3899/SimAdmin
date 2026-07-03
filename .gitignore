@@ -19,6 +19,12 @@ frontend/package-lock.json
 
 # Release 包
 release/
+release/*
+
+# userdata 目录 - 仅保留必要的配置文件
+
+userdata/home/root/simadmin
+userdata/home/root/www/
 
 # 临时目录
 temp/
