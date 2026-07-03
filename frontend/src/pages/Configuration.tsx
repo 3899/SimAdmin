@@ -499,12 +499,13 @@ export default function ConfigurationPage() {
                 sx={{
                   bgcolor: healthOk ? 'success.main' : healthKnown ? 'error.main' : 'warning.main',
                   borderRadius: '50%',
-                  boxShadow: (theme) => `0 0 0 5px ${healthOk
-                    ? theme.palette.mode === 'light' ? 'rgba(42, 174, 103, 0.12)' : 'rgba(102, 187, 106, 0.18)'
-                    : healthKnown
-                      ? theme.palette.mode === 'light' ? 'rgba(211, 47, 47, 0.12)' : 'rgba(244, 67, 54, 0.18)'
-                      : theme.palette.mode === 'light' ? 'rgba(237, 108, 2, 0.12)' : 'rgba(255, 167, 38, 0.18)'
-                    }`,
+                  boxShadow: (theme) => `0 0 0 5px ${
+                    healthOk
+                      ? theme.palette.mode === 'light' ? 'rgba(42, 174, 103, 0.12)' : 'rgba(102, 187, 106, 0.18)'
+                      : healthKnown
+                        ? theme.palette.mode === 'light' ? 'rgba(211, 47, 47, 0.12)' : 'rgba(244, 67, 54, 0.18)'
+                        : theme.palette.mode === 'light' ? 'rgba(237, 108, 2, 0.12)' : 'rgba(255, 167, 38, 0.18)'
+                  }`,
                   flex: '0 0 auto',
                   height: 10,
                   width: 10,

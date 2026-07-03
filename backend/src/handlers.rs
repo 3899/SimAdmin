@@ -18,7 +18,6 @@ use tracing::{error, info, warn};
 use zbus::Connection;
 
 use crate::{
-    modem_manager,
     config::{ApnConfig, VowifiConfig},
     db::{
         NewVowifiSmsDelivery, NewVowifiSmsPart, SmsMessage, VowifiEsimRestoreEntry,
@@ -27,7 +26,7 @@ use crate::{
     esim::EsimApiError,
     models::*,
     modem_manager::{
-        answer_call, apply_roaming_policy, background_fetch_smsc, current_sim_identity,
+        self, answer_call, apply_roaming_policy, background_fetch_smsc, current_sim_identity,
         find_nm_modem_connection_pub, get_airplane_mode, get_band_lock_status,
         get_baseband_restart_progress, get_call_by_path, get_call_settings, get_cell_location,
         get_cells_data, get_data_connection_status, get_device_info_data, get_is_roaming_mm,
@@ -561,7 +560,7 @@ pub async fn enable_esim_profile_handler(
     tokio::spawn(async move {
         let _guard = modem_manager::BasebandRestartRunGuard;
 
-        match bg_app.esim_supervisor.enable_profile(bg_iccid.clone()).await {
+        match bg_app.esim_supervisor.enable_profile(bg_iccid).await {
             Ok(data) => {
                 if esim_command_succeeded(&data) {
                     modem_manager::record_restart_step("启用 eSIM Profile", "ok", None);
@@ -582,10 +581,7 @@ pub async fn enable_esim_profile_handler(
                             } else {
                                 warn!("Failed to request SMS resync after eSIM profile switch");
                             }
-                            spawn_vowifi_profile_switch_restore(
-                                bg_app.clone(),
-                                bg_switch_token,
-                            );
+                            spawn_vowifi_profile_switch_restore(bg_app.clone(), bg_switch_token);
                             bg_app
                                 .system_event_emitter
                                 .emit_code(
@@ -612,9 +608,7 @@ pub async fn enable_esim_profile_handler(
                                 .sms_resync
                                 .request_scan("profile-switch-recovery-failed")
                             {
-                                info!(
-                                    "Requested SMS resync after failed eSIM profile recovery"
-                                );
+                                info!("Requested SMS resync after failed eSIM profile recovery");
                             } else {
                                 warn!(
                                     "Failed to request SMS resync after failed eSIM profile recovery"
@@ -623,8 +617,13 @@ pub async fn enable_esim_profile_handler(
                         }
                     }
                 } else {
-                    modem_manager::record_restart_step("启用 eSIM Profile", "error", Some(data.msg.clone()));
-                    bg_app.system_event_emitter
+                    modem_manager::record_restart_step(
+                        "启用 eSIM Profile",
+                        "error",
+                        Some(data.msg.clone()),
+                    );
+                    bg_app
+                        .system_event_emitter
                         .emit_code(
                             system_event_codes::ESIM_PROFILE_ENABLE_FAILED,
                             system_event_severity::WARNING,
@@ -637,8 +636,13 @@ pub async fn enable_esim_profile_handler(
             }
             Err(err) => {
                 let message = err.message();
-                modem_manager::record_restart_step("启用 eSIM Profile", "error", Some(message.clone()));
-                bg_app.system_event_emitter
+                modem_manager::record_restart_step(
+                    "启用 eSIM Profile",
+                    "error",
+                    Some(message.clone()),
+                );
+                bg_app
+                    .system_event_emitter
                     .emit_code(
                         system_event_codes::ESIM_PROFILE_ENABLE_FAILED,
                         system_event_severity::WARNING,
@@ -651,18 +655,19 @@ pub async fn enable_esim_profile_handler(
         }
     });
 
-    let success_resp = EsimCommandResponse {
+    let response = EsimCommandResponse {
         code: 0,
         status: "success".to_string(),
         action: "enable".to_string(),
         msg: "Profile enable task started in background".to_string(),
         data: None,
     };
+
     (
         StatusCode::OK,
         Json(ApiResponse::success_with_message(
             "Profile enable requested",
-            success_resp,
+            response,
         )),
     )
 }
