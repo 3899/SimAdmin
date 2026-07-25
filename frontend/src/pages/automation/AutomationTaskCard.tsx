@@ -18,6 +18,7 @@ import {
   Timer,
   CheckCircle,
   Error as ErrorIcon,
+  SettingsBackupRestore,
 } from '@mui/icons-material'
 import type { AutomationTask, AutomationLogEntry } from '../../api/contracts'
 
@@ -163,6 +164,16 @@ export default function AutomationTaskCard({
                   sx={{ height: 20, fontSize: '0.72rem', '& .MuiChip-label': { px: 0.75 }, '& .MuiChip-icon': { fontSize: '0.85rem' } }}
                 />
               )}
+              {task.action.type === 'backup_data' && (
+                <Chip
+                  size="small"
+                  icon={<SettingsBackupRestore fontSize="small" />}
+                  label="备份数据"
+                  color="success"
+                  variant="outlined"
+                  sx={{ height: 20, fontSize: '0.72rem', '& .MuiChip-label': { px: 0.75 }, '& .MuiChip-icon': { fontSize: '0.85rem' } }}
+                />
+              )}
             </Box>
           </Box>
           <Switch
@@ -216,6 +227,32 @@ export default function AutomationTaskCard({
                 {task.action.config.delay_seconds} 秒
               </Typography>
             </Box>
+          )}
+          {task.action.type === 'backup_data' && (
+            <>
+              <Box display="flex" justifyContent="space-between" mb={0.75}>
+                <Typography variant="body2" color="text.secondary">备份组件:</Typography>
+                <Typography variant="body2">
+                  {task.action.config.components.length} 项
+                </Typography>
+              </Box>
+              <Box display="flex" justifyContent="space-between" mb={0.75} gap={1}>
+                <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0 }}>存储目录:</Typography>
+                <Typography
+                  variant="body2"
+                  title={task.action.config.storage.local_dir}
+                  sx={{
+                    minWidth: 0,
+                    maxWidth: 190,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {task.action.config.storage.local_dir}
+                </Typography>
+              </Box>
+            </>
           )}
 
           <Box display="flex" justifyContent="space-between" mt={0.75}>

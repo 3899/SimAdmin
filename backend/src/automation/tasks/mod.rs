@@ -1,3 +1,4 @@
+pub mod backup_data;
 pub mod baseband_reboot;
 pub mod device_reboot;
 pub mod send_sms;
@@ -22,6 +23,9 @@ impl TaskRegistry {
 
         let h3 = Arc::new(send_sms::SendSmsHandler) as Arc<dyn AutomationTaskHandler>;
         handlers.insert(h3.task_type(), h3);
+
+        let h4 = Arc::new(backup_data::BackupDataHandler) as Arc<dyn AutomationTaskHandler>;
+        handlers.insert(h4.task_type(), h4);
 
         Self { handlers }
     }

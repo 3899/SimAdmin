@@ -3079,7 +3079,13 @@ LTE Timing Advance: 'unavailable'"#;
         assert_eq!(parse_sms_storage_info("+CPMS: \"ME\",x,y"), None);
     }
 
-    fn apn_ctx(path: &str, context_type: &str, apn: &str, protocol: &str, active: bool) -> ApnContext {
+    fn apn_ctx(
+        path: &str,
+        context_type: &str,
+        apn: &str,
+        protocol: &str,
+        active: bool,
+    ) -> ApnContext {
         ApnContext {
             path: path.to_string(),
             name: path.rsplit('/').next().unwrap_or("bearer").to_string(),

@@ -3,24 +3,72 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Chip,
+  Divider,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   FormHelperText,
   MenuItem,
   TextField,
   Typography,
 } from '@mui/material'
-import type { AutomationTask, AutomationAction, AutomationTrigger } from '../../api/contracts'
+import BackupStorageSelector, { type BackupDestination } from '../../components/backup/BackupStorageSelector'
+import type {
+  AutomationTask,
+  AutomationAction,
+  AutomationTrigger,
+  BackupComponentKey,
+} from '../../api/contracts'
 
 type AutomationTaskDialogProps = {
   open: boolean
   onClose: () => void
   editingTask: AutomationTask | null
   onSave: (task: AutomationTask) => Promise<void>
+  defaultBackupLocalDir?: string
 }
+
+const BACKUP_COMPONENT_LABELS: Record<BackupComponentKey, string> = {
+  config: '系统配置',
+  sms: '短信记录',
+  notification_config: '通知配置',
+  notification_logs: '通知日志',
+  notification_queue: '通知队列',
+  automation_config: '自动化配置',
+  automation_logs: '自动化日志',
+  sim_cache: 'SIM 缓存',
+  esim_cache: 'eSIM 缓存',
+  auth: '登录凭据',
+}
+
+const DEFAULT_BACKUP_COMPONENTS: BackupComponentKey[] = [
+  'config',
+  'sms',
+  'notification_config',
+  'automation_config',
+  'sim_cache',
+  'esim_cache',
+]
+
+const CONFIG_AND_DATA_COMPONENTS: BackupComponentKey[] = [
+  'config',
+  'sms',
+  'notification_config',
+  'automation_config',
+  'sim_cache',
+  'esim_cache',
+  'auth',
+]
+
+const LOG_COMPONENTS: BackupComponentKey[] = [
+  'notification_queue',
+  'notification_logs',
+  'automation_logs',
+]
 
 
 export default function AutomationTaskDialog({
@@ -28,15 +76,19 @@ export default function AutomationTaskDialog({
   onClose,
   editingTask,
   onSave,
+  defaultBackupLocalDir = '/opt/simadmin/backups',
 }: AutomationTaskDialogProps) {
   const [formName, setFormName] = useState('')
   const [formEnabled, setFormEnabled] = useState(true)
-  const [formActionType, setFormActionType] = useState<'restart_baseband' | 'reboot_device' | 'send_sms'>('restart_baseband')
+  const [formActionType, setFormActionType] = useState<'restart_baseband' | 'reboot_device' | 'send_sms' | 'backup_data'>('restart_baseband')
   const [formRebootDelay, setFormRebootDelay] = useState(5)
   const [formSmsPhone, setFormSmsPhone] = useState('')
   const [formSmsContent, setFormSmsContent] = useState('')
   const [formSmsDelay, setFormSmsDelay] = useState(120)
   const [formSmsRetries, setFormSmsRetries] = useState(3)
+  const [formBackupComponents, setFormBackupComponents] = useState<BackupComponentKey[]>(DEFAULT_BACKUP_COMPONENTS)
+  const [formBackupLocalDir, setFormBackupLocalDir] = useState(defaultBackupLocalDir)
+  const [formBackupDestination, setFormBackupDestination] = useState<BackupDestination>('local')
 
   const [formTriggerType, setFormTriggerType] = useState<'fixed' | 'interval'>('fixed')
   const [formWeekdays, setFormWeekdays] = useState<number[]>([1, 2, 3, 4, 5, 6, 7])
@@ -56,8 +108,17 @@ export default function AutomationTaskDialog({
         setFormName(editingTask.name)
         setFormEnabled(editingTask.enabled)
         setFormActionType(editingTask.action.type)
+        setFormBackupComponents(DEFAULT_BACKUP_COMPONENTS)
+        setFormBackupLocalDir(defaultBackupLocalDir)
+        setFormBackupDestination('local')
         if (editingTask.action.type === 'reboot_device') {
           setFormRebootDelay(editingTask.action.config.delay_seconds)
+        } else if (editingTask.action.type === 'backup_data') {
+          setFormBackupComponents(editingTask.action.config.components?.length
+            ? editingTask.action.config.components
+            : DEFAULT_BACKUP_COMPONENTS)
+          setFormBackupLocalDir(editingTask.action.config.storage?.local_dir || defaultBackupLocalDir)
+          setFormBackupDestination('local')
         } else if (editingTask.action.type === 'send_sms') {
           setFormSmsPhone(editingTask.action.config.phone_number)
           setFormSmsContent(editingTask.action.config.content)
@@ -81,6 +142,9 @@ export default function AutomationTaskDialog({
         setFormSmsContent('')
         setFormSmsDelay(120)
         setFormSmsRetries(3)
+        setFormBackupComponents(DEFAULT_BACKUP_COMPONENTS)
+        setFormBackupLocalDir(defaultBackupLocalDir)
+        setFormBackupDestination('local')
         setFormTriggerType('fixed')
         setFormWeekdays([1, 2, 3, 4, 5, 6, 7])
         setFormTriggerTime('04:00')
@@ -88,7 +152,7 @@ export default function AutomationTaskDialog({
         setFormIntervalUnit('days')
       }
     }
-  }, [open, editingTask])
+  }, [open, editingTask, defaultBackupLocalDir])
 
   const insertVariable = (token: string) => {
     const el = smsContentRef.current
@@ -126,6 +190,20 @@ export default function AutomationTaskDialog({
       action = { type: 'restart_baseband', config: null }
     } else if (formActionType === 'reboot_device') {
       action = { type: 'reboot_device', config: { delay_seconds: Number(formRebootDelay) || 5 } }
+    } else if (formActionType === 'backup_data') {
+      if (formBackupComponents.length === 0) {
+        setDialogError('请至少选择一个备份组件')
+        return
+      }
+      action = {
+        type: 'backup_data',
+        config: {
+          components: formBackupComponents,
+          storage: {
+            local_dir: formBackupLocalDir.trim() || '/opt/simadmin/backups',
+          },
+        },
+      }
     } else {
       const phoneClean = formSmsPhone.trim()
       if (!phoneClean) {
@@ -219,6 +297,45 @@ export default function AutomationTaskDialog({
     }
   }
 
+  const renderBackupComponentGroup = (title: string, components: BackupComponentKey[]) => (
+    <Box>
+      <Typography variant="body2" fontWeight={600} color="text.secondary" mb={1}>
+        {title}
+      </Typography>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, columnGap: 1.5, rowGap: 0.5 }}>
+        {components.map((key) => {
+          const checked = formBackupComponents.includes(key)
+          return (
+            <FormControlLabel
+              key={key}
+              control={
+                <Checkbox
+                  checked={checked}
+                  disabled={checked && formBackupComponents.length === 1}
+                  onChange={() => {
+                    setFormBackupComponents((prev) =>
+                      prev.includes(key)
+                        ? prev.filter((item) => item !== key)
+                        : [...prev, key]
+                    )
+                  }}
+                />
+              }
+              label={<Typography variant="body2">{BACKUP_COMPONENT_LABELS[key]}</Typography>}
+              sx={{
+                m: 0,
+                minWidth: 0,
+                '& .MuiFormControlLabel-label': {
+                  minWidth: 0,
+                },
+              }}
+            />
+          )
+        })}
+      </Box>
+    </Box>
+  )
+
   return (
     <Dialog
       open={open}
@@ -257,10 +374,11 @@ export default function AutomationTaskDialog({
             label="执行动作"
             fullWidth
             value={formActionType}
-            onChange={(e) => setFormActionType(e.target.value as 'restart_baseband' | 'reboot_device' | 'send_sms')}
+            onChange={(e) => setFormActionType(e.target.value as 'restart_baseband' | 'reboot_device' | 'send_sms' | 'backup_data')}
           >
             <MenuItem value="restart_baseband">重启基带</MenuItem>
             <MenuItem value="reboot_device">重启设备</MenuItem>
+            <MenuItem value="backup_data">备份数据</MenuItem>
             <MenuItem value="send_sms">发送短信</MenuItem>
           </TextField>
 
@@ -339,6 +457,27 @@ export default function AutomationTaskDialog({
                   helperText="发送失败后每5秒自动重试"
                 />
               </Box>
+            </Box>
+          )}
+
+          {formActionType === 'backup_data' && (
+            <Box display="flex" flexDirection="column" gap={2.5}>
+              <BackupStorageSelector
+                destination={formBackupDestination}
+                localDir={formBackupLocalDir}
+                onDestinationChange={(destination) => {
+                  if (destination === 'local') setFormBackupDestination(destination)
+                }}
+                disableDownload
+                hideDownload
+                localDirDisabled={true}
+                localDirReadOnly={true}
+              />
+
+              <Divider />
+
+              {renderBackupComponentGroup('配置与数据组件', CONFIG_AND_DATA_COMPONENTS)}
+              {renderBackupComponentGroup('运行日志组件', LOG_COMPONENTS)}
             </Box>
           )}
 

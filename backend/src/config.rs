@@ -1434,21 +1434,177 @@ pub struct AutomationTask {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "config", rename_all = "snake_case")]
 pub enum AutomationTrigger {
-    Fixed { weekdays: Vec<u8>, times: Vec<String> },
-    Interval { interval_value: u64, interval_unit: String },
+    Fixed {
+        weekdays: Vec<u8>,
+        times: Vec<String>,
+    },
+    Interval {
+        interval_value: u64,
+        interval_unit: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "config", rename_all = "snake_case")]
 pub enum AutomationAction {
     RestartBaseband,
-    RebootDevice { delay_seconds: u32 },
+    RebootDevice {
+        delay_seconds: u32,
+    },
+    BackupData {
+        components: Vec<String>,
+        storage: BackupStorageConfig,
+    },
     SendSms {
         phone_number: String,
         content: String,
         random_delay_seconds: Option<u32>,
         retry_limit: Option<u32>,
     },
+}
+
+fn default_backup_components() -> Vec<String> {
+    [
+        "config",
+        "sms",
+        "notification_config",
+        "automation_config",
+        "sim_cache",
+        "esim_cache",
+    ]
+    .into_iter()
+    .map(ToString::to_string)
+    .collect()
+}
+
+fn default_backup_local_dir() -> String {
+    "/opt/simadmin/backups".to_string()
+}
+
+fn default_backup_retention_days() -> u32 {
+    7
+}
+
+fn default_backup_max_files() -> u32 {
+    10
+}
+
+fn default_backup_interval_value() -> u64 {
+    7
+}
+
+fn default_backup_interval_unit() -> String {
+    "days".to_string()
+}
+
+fn default_backup_times() -> Vec<String> {
+    vec!["04:00".to_string()]
+}
+
+fn default_backup_weekdays() -> Vec<u8> {
+    vec![1, 2, 3, 4, 5, 6, 7]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_backup_components")]
+    pub components: Vec<String>,
+    #[serde(default)]
+    pub schedule: BackupScheduleConfig,
+    #[serde(default)]
+    pub cleanup: BackupCleanupConfig,
+    #[serde(default)]
+    pub storage: BackupStorageConfig,
+    #[serde(default)]
+    pub last_run_at: String,
+    #[serde(default)]
+    pub last_run_key: String,
+}
+
+impl Default for BackupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            components: default_backup_components(),
+            schedule: BackupScheduleConfig::default(),
+            cleanup: BackupCleanupConfig::default(),
+            storage: BackupStorageConfig::default(),
+            last_run_at: String::new(),
+            last_run_key: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct BackupScheduleConfig {
+    #[serde(default = "default_backup_schedule_mode")]
+    pub mode: String,
+    #[serde(default = "default_backup_weekdays")]
+    pub weekdays: Vec<u8>,
+    #[serde(default = "default_backup_times")]
+    pub times: Vec<String>,
+    #[serde(default = "default_backup_interval_value")]
+    pub interval_value: u64,
+    #[serde(default = "default_backup_interval_unit")]
+    pub interval_unit: String,
+}
+
+fn default_backup_schedule_mode() -> String {
+    "manual".to_string()
+}
+
+impl Default for BackupScheduleConfig {
+    fn default() -> Self {
+        Self {
+            mode: default_backup_schedule_mode(),
+            weekdays: default_backup_weekdays(),
+            times: default_backup_times(),
+            interval_value: default_backup_interval_value(),
+            interval_unit: default_backup_interval_unit(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct BackupCleanupConfig {
+    #[serde(default = "default_true")]
+    pub retention_days_enabled: bool,
+    #[serde(default = "default_backup_retention_days")]
+    pub retention_days: u32,
+    #[serde(default = "default_true")]
+    pub max_files_enabled: bool,
+    #[serde(default = "default_backup_max_files")]
+    pub max_files: u32,
+}
+
+impl Default for BackupCleanupConfig {
+    fn default() -> Self {
+        Self {
+            retention_days_enabled: true,
+            retention_days: default_backup_retention_days(),
+            max_files_enabled: true,
+            max_files: default_backup_max_files(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct BackupStorageConfig {
+    #[serde(default = "default_backup_local_dir")]
+    pub local_dir: String,
+}
+
+impl Default for BackupStorageConfig {
+    fn default() -> Self {
+        Self {
+            local_dir: default_backup_local_dir(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1713,6 +1869,8 @@ pub struct AppConfig {
     pub esim: EsimConfig,
     #[serde(default)]
     pub automation: AutomationConfig,
+    #[serde(default)]
+    pub backup: BackupConfig,
 }
 
 impl Default for AppConfig {
@@ -1729,6 +1887,7 @@ impl Default for AppConfig {
             work_mode: WorkMode::default(),
             esim: EsimConfig::default(),
             automation: AutomationConfig::default(),
+            backup: BackupConfig::default(),
         }
     }
 }
@@ -1915,6 +2074,18 @@ impl ConfigManager {
         self.config.read().unwrap().notifications.clone()
     }
 
+    pub fn get_config(&self) -> AppConfig {
+        self.config.read().unwrap().clone()
+    }
+
+    pub fn replace_config(&self, config: AppConfig) -> Result<(), String> {
+        {
+            let mut current = self.config.write().unwrap();
+            *current = config;
+        }
+        self.save()
+    }
+
     /// 获取自动化配置
     pub fn get_automation_config(&self) -> AutomationConfig {
         self.config.read().unwrap().automation.clone()
@@ -1925,6 +2096,18 @@ impl ConfigManager {
         {
             let mut config = self.config.write().unwrap();
             config.automation = automation;
+        }
+        self.save()
+    }
+
+    pub fn get_backup_config(&self) -> BackupConfig {
+        self.config.read().unwrap().backup.clone()
+    }
+
+    pub fn set_backup_config(&self, backup: BackupConfig) -> Result<(), String> {
+        {
+            let mut config = self.config.write().unwrap();
+            config.backup = backup;
         }
         self.save()
     }

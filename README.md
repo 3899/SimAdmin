@@ -58,6 +58,12 @@
 	<br/><br/>
 	<img src="./static/Security_Settings.png" width="100%" alt="Security_Settings" />
 	<br/><br/>
+	<img src="./static/DataBackup.png" width="100%" alt="DataBackup" />
+	<br/><br/>
+	<img src="./static/DataRecovery.png" width="100%" alt="DataRecovery" />
+	<br/><br/>
+	<img src="./static/Library&Snapshot.png" width="100%" alt="Library&Snapshot" />
+	<br/><br/>
 	<img src="./static/OTA.png" width="100%" alt="OTA" />
 	<br/><br/>
 	<img src="./static/Dashboard_Dark.png" width="100%" alt="Dashboard_Dark" />
@@ -160,6 +166,7 @@ SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的
 | 自动化中心 | `/automation` | 管理自动化任务，以及检索、筛选和清理任务执行日志 |
 | 系统配置 | `/config` | 基本系统配置，包含设备运行模式设置、数据连接、漫游、飞行模式等 |
 | 安全性设置 | `/config/security` | 管理员密码修改、密码策略、登录保护及会话超时等安全配置 |
+| 数据备份与恢复 | `/config/backup` | 系统配置、短信、通知等 10 大类组件的打包备份与分步导入恢复 |
 | OTA 更新 | `/ota` | 上传 OTA 包、在线获取 Release、验证、应用或取消更新 |
 
 ### 后端能力
@@ -168,6 +175,7 @@ SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的
 - 设备信息、SIM 信息、网络注册信息读取。
 - 数据连接开关和漫游策略持久化。
 - 飞行模式控制。
+- 数据备份与恢复：支持系统配置、短信、通知等 10 类组件打包归档、校验导入、定期清理、自动备份调度及导入前快照一键回滚。
 - 基带重启流程和进度查询。
 - 数据连接 watchdog，每 15 秒检查连接状态、iptables 规则数量和 modem 可用性；检测到宿主机防火墙规则时仅记录诊断日志，不自动清空规则。
 - ModemManager 丢失时触发 `mmcli --scan-modems`，连续失败后重启 ModemManager。

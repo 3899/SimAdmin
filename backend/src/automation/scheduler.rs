@@ -146,6 +146,7 @@ async fn execute_task(
     let task_type = match &task.action {
         AutomationAction::RestartBaseband => "restart_baseband",
         AutomationAction::RebootDevice { .. } => "reboot_device",
+        AutomationAction::BackupData { .. } => "backup_data",
         AutomationAction::SendSms { .. } => "send_sms",
     };
 
@@ -166,6 +167,15 @@ async fn execute_task(
         AutomationAction::RestartBaseband => serde_json::Value::Null,
         AutomationAction::RebootDevice { delay_seconds } => {
             serde_json::json!({ "delay_seconds": delay_seconds })
+        }
+        AutomationAction::BackupData {
+            components,
+            storage,
+        } => {
+            serde_json::json!({
+                "components": components,
+                "storage": storage,
+            })
         }
         AutomationAction::SendSms {
             phone_number,

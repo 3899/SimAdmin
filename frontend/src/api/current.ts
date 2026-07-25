@@ -5,6 +5,15 @@ import type {
   ApnListResponse,
   AutomationConfig,
   AutomationLogsResponse,
+  BackupBlobResponse,
+  BackupComponentKey,
+  BackupConfig,
+  BackupExportLocalResponse,
+  BackupImportApplyResponse,
+  BackupImportMode,
+  BackupImportPreview,
+  BackupLocalFilesResponse,
+  BackupOptionsResponse,
   AuthSettingsResponse,
   AuthStatusResponse,
   BandLockRequest,
@@ -168,6 +177,117 @@ async function request<T>(
   const json = (await response.json()) as T
   throwIfApiEnvelopeError(json)
   return json
+}
+
+function contentDispositionFilename(headerValue: string | null, fallback: string) {
+  if (!headerValue) return fallback
+  const utf8Match = headerValue.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1].replace(/"/g, ''))
+    } catch {
+      return utf8Match[1].replace(/"/g, '')
+    }
+  }
+  const plainMatch = headerValue.match(/filename="?([^"]+)"?/i)
+  return plainMatch?.[1] ?? fallback
+}
+
+async function binaryJsonRequest<T>(
+  url: string,
+  body: Blob,
+  timeoutMs = 60000,
+): Promise<T> {
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs)
+
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}${url}`, {
+      method: 'POST',
+      body,
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+      },
+      signal: controller.signal,
+    })
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`Request timed out after ${timeoutMs}ms`)
+    }
+    throw err
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
+
+  if (!response.ok) {
+    if (response.status === 401) redirectToLogin()
+    throw new Error(httpStatusMessage(response.status))
+  }
+
+  const json = (await response.json()) as T
+  throwIfApiEnvelopeError(json)
+  return json
+}
+
+async function blobDownloadRequest(
+  url: string,
+  options: RequestInit = {},
+  fallbackFilename = 'simadmin-backup.zip',
+  timeoutMs = 60000,
+): Promise<BackupBlobResponse> {
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs)
+
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}${url}`, {
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+      ...options,
+      signal: controller.signal,
+    })
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`Request timed out after ${timeoutMs}ms`)
+    }
+    throw err
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
+
+  if (!response.ok) {
+    if (response.status === 401) redirectToLogin()
+    throw new Error(httpStatusMessage(response.status))
+  }
+
+  const contentType = response.headers.get('content-type') ?? ''
+  if (contentType.includes('application/json')) {
+    const payload = await response.json()
+    throwIfApiEnvelopeError(payload)
+    let message = '备份导出失败'
+    if (typeof payload === 'object' && payload !== null && 'message' in payload) {
+      const payloadMessage = (payload as { message?: unknown }).message
+      if (typeof payloadMessage === 'string') message = payloadMessage
+    }
+    throw new Error(message)
+  }
+
+  const blob = await response.blob()
+  const header = new Uint8Array(await blob.slice(0, 4).arrayBuffer())
+  const zipLike = header[0] === 0x50 && header[1] === 0x4b
+  if (!zipLike) {
+    throw new Error('下载的备份文件不是有效 ZIP，请检查登录状态或本地备份文件是否损坏')
+  }
+
+  return {
+    blob,
+    filename: contentDispositionFilename(response.headers.get('content-disposition'), fallbackFilename),
+  }
 }
 
 class SimAdminCurrentAPI {
@@ -840,6 +960,89 @@ class SimAdminCurrentAPI {
   async cancelOta() {
     return request<ApiResponse<Record<string, unknown>>>('/ota/cancel', {
       method: 'POST',
+    })
+  }
+
+  async getBackupOptions() {
+    return request<ApiResponse<BackupOptionsResponse>>('/backup/options')
+  }
+
+  async getBackupConfig() {
+    return request<ApiResponse<BackupConfig>>('/backup/config')
+  }
+
+  async setBackupConfig(config: BackupConfig) {
+    return request<ApiResponse<BackupConfig>>('/backup/config', {
+      method: 'POST',
+      body: JSON.stringify({ config }),
+    })
+  }
+
+  async exportBackup(components: BackupComponentKey[]) {
+    return blobDownloadRequest('/backup/export', {
+      method: 'POST',
+      body: JSON.stringify({ components }),
+    }, 'simadmin-backup.zip', 120000)
+  }
+
+  async exportBackupLocal(components: BackupComponentKey[]) {
+    return request<ApiResponse<BackupExportLocalResponse>>('/backup/export-local', {
+      method: 'POST',
+      body: JSON.stringify({ components }),
+      timeoutMs: 120000,
+    })
+  }
+
+  async previewBackupImport(file: Blob) {
+    return binaryJsonRequest<ApiResponse<BackupImportPreview>>('/backup/import/preview', file, 120000)
+  }
+
+  async applyBackupImport(file: Blob, mode: BackupImportMode, components: BackupComponentKey[]) {
+    const query = new URLSearchParams()
+    query.append('mode', mode)
+    query.append('components', components.join(','))
+    return binaryJsonRequest<ApiResponse<BackupImportApplyResponse>>(
+      `/backup/import/apply?${query.toString()}`,
+      file,
+      120000,
+    )
+  }
+
+  async previewBackupLocalFile(filename: string) {
+    return request<ApiResponse<BackupImportPreview>>(
+      `/backup/files/${encodeURIComponent(filename)}/preview`
+    )
+  }
+
+  async applyBackupLocalFile(filename: string, mode: BackupImportMode, components: BackupComponentKey[]) {
+    const query = new URLSearchParams()
+    query.append('mode', mode)
+    query.append('components', components.join(','))
+    return request<ApiResponse<BackupImportApplyResponse>>(
+      `/backup/files/${encodeURIComponent(filename)}/apply?${query.toString()}`,
+      {
+        method: 'POST',
+        timeoutMs: 120000,
+      },
+    )
+  }
+
+  async getBackupFiles() {
+    return request<ApiResponse<BackupLocalFilesResponse>>('/backup/files')
+  }
+
+  async downloadBackupFile(filename: string) {
+    return blobDownloadRequest(
+      `/backup/files/${encodeURIComponent(filename)}`,
+      { method: 'GET' },
+      filename,
+      120000,
+    )
+  }
+
+  async deleteBackupFile(filename: string) {
+    return request<ApiResponse<{ deleted: boolean }>>(`/backup/files/${encodeURIComponent(filename)}`, {
+      method: 'DELETE',
     })
   }
 

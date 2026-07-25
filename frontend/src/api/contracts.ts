@@ -1069,6 +1069,13 @@ export type AutomationAction =
   | { type: 'restart_baseband'; config: null | Record<string, never> }
   | { type: 'reboot_device'; config: { delay_seconds: number } }
   | {
+      type: 'backup_data'
+      config: {
+        components: BackupComponentKey[]
+        storage: BackupStorageConfig
+      }
+    }
+  | {
       type: 'send_sms'
       config: {
         phone_number: string
@@ -1099,4 +1106,118 @@ export interface AutomationLogEntry {
 export interface AutomationLogsResponse {
   logs: AutomationLogEntry[]
   total: number
+}
+
+export type BackupComponentKey =
+  | 'config'
+  | 'sms'
+  | 'notification_config'
+  | 'notification_logs'
+  | 'notification_queue'
+  | 'automation_config'
+  | 'automation_logs'
+  | 'sim_cache'
+  | 'esim_cache'
+  | 'auth'
+
+export type BackupKind = 'full' | 'slim'
+export type BackupImportMode = 'merge' | 'replace'
+export type BackupScheduleMode = 'manual' | 'fixed' | 'interval'
+export type BackupIntervalUnit = 'mins' | 'hours' | 'days'
+
+export interface BackupComponentOption {
+  key: BackupComponentKey
+  label: string
+  description: string
+  default_selected: boolean
+  sensitive: boolean
+  records?: number | null
+}
+
+export interface BackupOptionsResponse {
+  format_version: number
+  default_components: BackupComponentKey[]
+  components: BackupComponentOption[]
+  local_dir: string
+  pre_restore_dir: string
+}
+
+export interface BackupScheduleConfig {
+  mode: BackupScheduleMode
+  weekdays: number[]
+  times: string[]
+  interval_value: number
+  interval_unit: BackupIntervalUnit
+}
+
+export interface BackupCleanupConfig {
+  retention_days_enabled: boolean
+  retention_days: number
+  max_files_enabled: boolean
+  max_files: number
+}
+
+export interface BackupStorageConfig {
+  local_dir: string
+}
+
+export interface BackupConfig {
+  enabled: boolean
+  components: BackupComponentKey[]
+  schedule: BackupScheduleConfig
+  cleanup: BackupCleanupConfig
+  storage: BackupStorageConfig
+  last_run_at: string
+  last_run_key: string
+}
+
+export interface BackupLocalFile {
+  name: string
+  size: number
+  modified_at: string
+  backup_kind?: BackupKind | null
+  components: BackupComponentKey[]
+  counts: Record<string, number>
+  pre_restore: boolean
+  valid: boolean
+  error: string
+}
+
+export interface BackupExportLocalResponse {
+  file: BackupLocalFile
+}
+
+export interface BackupImportComponentPreview {
+  key: BackupComponentKey
+  label: string
+  records: number
+  sensitive: boolean
+}
+
+export interface BackupImportPreview {
+  filename?: string | null
+  backup_kind: BackupKind
+  format_version: number
+  simadmin_version: string
+  created_at: string
+  contains_sensitive_data: boolean
+  components: BackupImportComponentPreview[]
+  warnings: string[]
+}
+
+export interface BackupImportApplyResponse {
+  imported_components: BackupComponentKey[]
+  backup_kind: BackupKind
+  mode: BackupImportMode
+  pre_restore_file?: BackupLocalFile | null
+}
+
+export interface BackupLocalFilesResponse {
+  backups: BackupLocalFile[]
+  pre_restore: BackupLocalFile[]
+}
+
+export interface BackupBlobResponse {
+  blob: Blob
+  filename: string
 }

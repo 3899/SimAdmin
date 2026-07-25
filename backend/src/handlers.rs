@@ -4310,6 +4310,7 @@ pub async fn test_automation_task_handler(
         let task_type = match &task.action {
             crate::config::AutomationAction::RestartBaseband => "restart_baseband",
             crate::config::AutomationAction::RebootDevice { .. } => "reboot_device",
+            crate::config::AutomationAction::BackupData { .. } => "backup_data",
             crate::config::AutomationAction::SendSms { .. } => "send_sms",
         };
 
@@ -4329,6 +4330,15 @@ pub async fn test_automation_task_handler(
             crate::config::AutomationAction::RestartBaseband => serde_json::Value::Null,
             crate::config::AutomationAction::RebootDevice { delay_seconds } => {
                 serde_json::json!({ "delay_seconds": delay_seconds })
+            }
+            crate::config::AutomationAction::BackupData {
+                components,
+                storage,
+            } => {
+                serde_json::json!({
+                    "components": components,
+                    "storage": storage,
+                })
             }
             crate::config::AutomationAction::SendSms {
                 phone_number,

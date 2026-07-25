@@ -19,6 +19,7 @@ const SMS = lazy(() => import('./pages/SMS'))
 const NotificationCenter = lazy(() => import('./pages/NotificationCenter'))
 const Phone = lazy(() => import('./pages/Phone'))
 const Configuration = lazy(() => import('./pages/Configuration'))
+const BackupRestore = lazy(() => import('./pages/BackupRestore'))
 const OtaUpdate = lazy(() => import('./pages/OtaUpdate'))
 const Login = lazy(() => import('./pages/Login'))
 const AutomationCenter = lazy(() => import('./pages/AutomationCenter'))
@@ -136,6 +137,7 @@ function App() {
               <Route path="phone" element={<Suspense fallback={<PageLoading />}><Phone /></Suspense>} />
               <Route path="config" element={<Suspense fallback={<PageLoading />}><Configuration /></Suspense>} />
               <Route path="config/security" element={<Suspense fallback={<PageLoading />}><Configuration /></Suspense>} />
+              <Route path="config/backup" element={<Suspense fallback={<PageLoading />}><BackupRestore /></Suspense>} />
               <Route path="ota" element={<Suspense fallback={<PageLoading />}><OtaUpdate /></Suspense>} />
             </Route>
           </Routes>

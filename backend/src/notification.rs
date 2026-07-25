@@ -4070,7 +4070,10 @@ mod tests {
         assert_eq!(wecom_api_base_url(&config), "https://qyapi.weixin.qq.com");
 
         config.api_base_url = " https://relay.example.com/wecom/ ".to_string();
-        assert_eq!(wecom_api_base_url(&config), "https://relay.example.com/wecom");
+        assert_eq!(
+            wecom_api_base_url(&config),
+            "https://relay.example.com/wecom"
+        );
 
         config.api_base_url = " ".to_string();
         assert_eq!(wecom_api_base_url(&config), "https://qyapi.weixin.qq.com");
@@ -4097,16 +4100,14 @@ mod tests {
 
     #[test]
     fn query_value_encoding_preserves_unreserved_token_chars() {
-        assert_eq!(
-            encode_query_value("abc-DEF_123.~"),
-            "abc-DEF_123.~"
-        );
+        assert_eq!(encode_query_value("abc-DEF_123.~"), "abc-DEF_123.~");
         assert_eq!(encode_query_value("a+b/c=d&x y"), "a%2Bb%2Fc%3Dd%26x%20y");
     }
 
     #[test]
     fn formats_wecom_trusted_ip_error() {
-        let error = format_channel_errcode("WeCom token", 60020, "not allow to access from your ip");
+        let error =
+            format_channel_errcode("WeCom token", 60020, "not allow to access from your ip");
 
         assert!(error.contains("60020"));
         assert!(error.contains("企业可信 IP"));

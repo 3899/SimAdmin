@@ -25,6 +25,7 @@ import {
   SimCard as SimIcon,
   AutoMode as AutomationIcon,
   Shield as SecurityIcon,
+  SettingsBackupRestore as BackupRestoreIcon,
 } from '@mui/icons-material'
 
 const SIDEBAR_TRANSITION = '300ms cubic-bezier(0.4, 0, 0.2, 1)'
@@ -82,8 +83,9 @@ const menuGroups: MenuConfigItem[] = [
     type: 'group',
     label: '系统',
     items: [
-      { path: '/config', label: '基本配置', icon: SettingsIcon },
       { path: '/config/security', label: '安全性', icon: SecurityIcon },
+      { path: '/config', label: '基本配置', icon: SettingsIcon },
+      { path: '/config/backup', label: '备份与恢复', icon: BackupRestoreIcon },
       { path: '/ota', label: 'OTA 更新', icon: OtaIcon },
     ],
   },

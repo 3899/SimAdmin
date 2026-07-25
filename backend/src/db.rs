@@ -649,6 +649,25 @@ impl Database {
         })
     }
 
+    pub(crate) fn with_connection<T, F>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(&Connection) -> Result<T>,
+    {
+        let conn = self.conn.lock().unwrap();
+        f(&conn)
+    }
+
+    pub(crate) fn with_transaction<T, F>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(&rusqlite::Transaction<'_>) -> Result<T>,
+    {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let result = f(&tx)?;
+        tx.commit()?;
+        Ok(result)
+    }
+
     // ==================== 认证相关方法 ====================
 
     pub fn auth_is_configured(&self) -> Result<bool> {
@@ -745,6 +764,12 @@ impl Database {
             "DELETE FROM auth_sessions WHERE session_hash = ?1",
             params![session_hash],
         )?;
+        Ok(())
+    }
+
+    pub fn clear_auth_sessions(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM auth_sessions", [])?;
         Ok(())
     }
 

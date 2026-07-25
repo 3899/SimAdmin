@@ -26,6 +26,7 @@ use zbus::Connection;
 
 mod auth;
 mod automation;
+mod backup;
 mod cell_lock_store;
 mod config;
 mod db;
@@ -877,6 +878,55 @@ async fn main() -> Result<()> {
         .route(
             "/api/automation/test/{task_id}",
             post(test_automation_task_handler).options(options_handler),
+        )
+        // ========== 备份与恢复接口 ==========
+        .route(
+            "/api/backup/options",
+            get(backup::get_backup_options_handler).options(options_handler),
+        )
+        .route(
+            "/api/backup/config",
+            get(backup::get_backup_config_handler)
+                .post(backup::set_backup_config_handler)
+                .options(options_handler),
+        )
+        .route(
+            "/api/backup/export",
+            post(backup::export_backup_handler).options(options_handler),
+        )
+        .route(
+            "/api/backup/export-local",
+            post(backup::export_backup_local_handler).options(options_handler),
+        )
+        .route(
+            "/api/backup/import/preview",
+            post(backup::preview_backup_import_handler)
+                .options(options_handler)
+                .layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
+        )
+        .route(
+            "/api/backup/import/apply",
+            post(backup::apply_backup_import_handler)
+                .options(options_handler)
+                .layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
+        )
+        .route(
+            "/api/backup/files",
+            get(backup::get_backup_files_handler).options(options_handler),
+        )
+        .route(
+            "/api/backup/files/{filename}/preview",
+            get(backup::preview_backup_file_handler).options(options_handler),
+        )
+        .route(
+            "/api/backup/files/{filename}/apply",
+            post(backup::apply_backup_file_handler).options(options_handler),
+        )
+        .route(
+            "/api/backup/files/{filename}",
+            get(backup::download_backup_file_handler)
+                .delete(backup::delete_backup_file_handler)
+                .options(options_handler),
         )
         .route(
             "/api/ota/status",

@@ -59,26 +59,22 @@ import AdvancedClearDialog from './automation/AdvancedClearDialog'
 const LOG_PAGE_SIZE = 15
 
 const filterTextFieldSx = {
-  '& .MuiInputLabel-root': {
-    fontSize: 14,
-  },
   '& .MuiInputBase-input': {
-    fontSize: 14,
+    fontSize: '14px',
   },
-  '& .MuiOutlinedInput-root': {
-    bgcolor: 'transparent',
-    borderRadius: 1.5,
-    '& .MuiOutlinedInput-notchedOutline': {
-      borderColor: 'divider',
-    },
-    '&:hover .MuiOutlinedInput-notchedOutline': {
-      borderColor: 'text.disabled',
-    },
-    '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-      borderColor: '#1296DB',
-    },
+  '& .MuiInputBase-input::placeholder': {
+    fontSize: '14px',
   },
-}
+  '& .MuiInputLabel-root': {
+    fontSize: '14px',
+  },
+  '& .MuiSelect-select': {
+    fontSize: '14px',
+  },
+  '& .MuiFormControlLabel-label': {
+    fontSize: '14px',
+  },
+} as const
 
 export default function AutomationCenter() {
   const [tab, setTab] = useState(0)
@@ -86,6 +82,7 @@ export default function AutomationCenter() {
   const [testingTaskId, setTestingTaskId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [backupLocalDir, setBackupLocalDir] = useState('/opt/simadmin/backups')
 
   // DOM references and logic for dynamic height calculation
   const tabsRef = useRef<HTMLDivElement | null>(null)
@@ -155,6 +152,9 @@ export default function AutomationCenter() {
       if (configRes.data) {
         setConfig(configRes.data)
       }
+
+      const backupRes = await api.getBackupConfig()
+      setBackupLocalDir(backupRes.data?.storage?.local_dir || '/opt/simadmin/backups')
 
       // Load latest logs to map status
       const logsRes = await api.getAutomationLogs({ limit: 100 })
@@ -501,6 +501,7 @@ export default function AutomationCenter() {
                 <MenuItem value="">所有任务类型</MenuItem>
                 <MenuItem value="restart_baseband">基带维护</MenuItem>
                 <MenuItem value="reboot_device">系统操作</MenuItem>
+                <MenuItem value="backup_data">备份数据</MenuItem>
                 <MenuItem value="send_sms">短信发送</MenuItem>
               </TextField>
 
@@ -592,6 +593,7 @@ export default function AutomationCenter() {
                         <TableCell sx={{ width: 120, fontWeight: 400 }}>
                           {log.task_type === 'restart_baseband' && '基带维护'}
                           {log.task_type === 'reboot_device' && '系统操作'}
+                          {log.task_type === 'backup_data' && '备份数据'}
                           {log.task_type === 'send_sms' && '短信发送'}
                         </TableCell>
                         <TableCell
@@ -697,6 +699,7 @@ export default function AutomationCenter() {
         onClose={() => setTaskDialogOpen(false)}
         editingTask={editingTask}
         onSave={handleSaveTask}
+        defaultBackupLocalDir={backupLocalDir}
       />
 
       {/* 弹窗 2：自动清理配置 */}
@@ -741,6 +744,7 @@ export default function AutomationCenter() {
           </Button>
         </DialogActions>
       </Dialog>
+
     </Box>
   )
 }
