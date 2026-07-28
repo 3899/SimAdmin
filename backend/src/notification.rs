@@ -2412,7 +2412,7 @@ fn serverchan3_url(config: &ServerChan3Config) -> Result<String, String> {
     Ok(format!(
         "https://{}.push.ft07.com/send/{}.send",
         uid,
-        encode_path_segment(send_key)
+        encode_path_segment(send_key).replace("%2D", "-")
     ))
 }
 
@@ -3744,7 +3744,7 @@ mod tests {
         };
         assert_eq!(
             serverchan3_url(&manual_uid).unwrap(),
-            "https://user-1.push.ft07.com/send/manual%2Dsecret.send"
+            "https://user-1.push.ft07.com/send/manual-secret.send"
         );
     }
 
