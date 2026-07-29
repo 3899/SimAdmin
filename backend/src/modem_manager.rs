@@ -756,9 +756,7 @@ fn own_number_identity_key(identity: &SimIdentity) -> Option<String> {
     }
 }
 
-fn sms_storage_identity_key(identity: &SimIdentity) -> Option<String> {
-    own_number_identity_key(identity)
-}
+
 
 pub fn cache_smsc_for_identity(
     db: &Database,
@@ -835,45 +833,7 @@ fn cached_own_numbers_for_identity(db: &Database, identity: &SimIdentity) -> Vec
         .unwrap_or_default()
 }
 
-fn sms_storage_cache_entry_for_identity(
-    db: &Database,
-    identity: &SimIdentity,
-) -> Option<crate::db::SmsStorageCacheEntry> {
-    let Some(identity_key) = sms_storage_identity_key(identity) else {
-        return None;
-    };
-    db.get_sms_storage_cache(&[identity_key]).ok().flatten()
-}
 
-/// 缓存的存储条目若无 total（此前抓取失败写入的 "empty" 占位），视为不完整。
-/// 仅用于后台刷新流程内部的重试判断；不影响 sim_details_cache_missing 的
-/// 自动触发语义（空占位在 ICCID 变化前不重复触发探测）。
-fn sms_storage_cache_incomplete(db: &Database, identity: &SimIdentity) -> bool {
-    sms_storage_cache_entry_for_identity(db, identity)
-        .map(|entry| entry.sms_total.is_none())
-        .unwrap_or(true)
-}
-
-fn cache_sms_storage_for_identity(
-    db: &Database,
-    identity: &SimIdentity,
-    sms_used: Option<u32>,
-    sms_total: Option<u32>,
-    source: &str,
-) {
-    let Some(identity_key) = sms_storage_identity_key(identity) else {
-        return;
-    };
-    let _ = db.upsert_sms_storage_cache(
-        &identity_key,
-        &identity.iccid,
-        &identity.imsi,
-        &identity.operator_id,
-        sms_used,
-        sms_total,
-        source,
-    );
-}
 
 pub fn sim_details_cache_missing(db: &Database, identity: &SimIdentity) -> bool {
     if identity.iccid.is_empty() {
@@ -881,7 +841,6 @@ pub fn sim_details_cache_missing(db: &Database, identity: &SimIdentity) -> bool 
     }
     own_number_cache_entry_for_identity(db, identity).is_none()
         || smsc_cache_entry_for_identity(db, identity).is_none()
-        || sms_storage_cache_entry_for_identity(db, identity).is_none()
 }
 
 fn extract_mode_pairs(value: &OwnedValue) -> Vec<(u32, u32)> {
@@ -1879,22 +1838,7 @@ async fn refresh_sim_details_background_inner(conn: &Connection, db: &Database, 
         cache_smsc_for_identity(db, &identity, &sms_center, source);
     }
 
-    if force || sms_storage_cache_incomplete(db, &identity) {
-        let mut storage = None;
-        if let Some(path) = modem_path.as_deref() {
-            if let Ok(output) = send_at_via_modem_command(conn, path, "AT+CPMS?").await {
-                storage = parse_sms_storage_info(&output);
-            }
-        }
-        match storage {
-            Some((used, total)) => {
-                cache_sms_storage_for_identity(db, &identity, Some(used), Some(total), "cpms");
-            }
-            None => {
-                cache_sms_storage_for_identity(db, &identity, None, None, "empty");
-            }
-        }
-    }
+
 }
 
 async fn modem_command_smsc_fallback(conn: &Connection, modem_path: &str) -> String {
@@ -1952,41 +1896,8 @@ async fn active_protocol_smsc_fallback(conn: &Connection, modem_path: &str) -> S
     .unwrap_or_default()
 }
 
-fn parse_sms_storage_count(field: &str) -> Option<u32> {
-    let cleaned: String = field
-        .trim_matches('"')
-        .trim_matches('\'')
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
-    cleaned.parse::<u32>().ok()
-}
 
-/// 解析 AT+CPMS? 回复中的短信存储用量。
-/// 优先取 SIM 卡存储（"SM"）；部分模组默认存储为模组内存（"ME"），
-/// 回复中不含 "SM" 三元组，此时回退取第一个有效存储。
-fn parse_sms_storage_info(at_output: &str) -> Option<(u32, u32)> {
-    let pos = at_output.find("+CPMS:")?;
-    let line = &at_output[pos + 6..];
-    let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
-    let mut fallback = None;
-    for chunk in parts.chunks(3) {
-        if chunk.len() >= 3 {
-            let mem = chunk[0].trim_matches('"').trim_matches('\'');
-            let used = parse_sms_storage_count(chunk[1]);
-            let total = parse_sms_storage_count(chunk[2]);
-            if let (Some(u), Some(t)) = (used, total) {
-                if mem == "SM" {
-                    return Some((u, t));
-                }
-                if fallback.is_none() {
-                    fallback = Some((u, t));
-                }
-            }
-        }
-    }
-    fallback
-}
+
 
 pub async fn get_sim_info_data_with_cache(
     conn: &Connection,
@@ -2143,14 +2054,7 @@ pub async fn get_sim_info_data_with_cache(
         .map(extract_string)
         .unwrap_or_default();
 
-    let mut sms_used = None;
-    let mut sms_total = None;
-    if let Some(db) = db {
-        if let Some(entry) = sms_storage_cache_entry_for_identity(db, &identity) {
-            sms_used = entry.sms_used;
-            sms_total = entry.sms_total;
-        }
-    }
+
 
     Ok(SimInfoResponse {
         present: true,
@@ -2177,8 +2081,6 @@ pub async fn get_sim_info_data_with_cache(
         puk2_retries,
         carrier_config,
         carrier_config_revision,
-        sms_used,
-        sms_total,
     })
 }
 
@@ -2737,18 +2639,7 @@ LTE Timing Advance: 'unavailable'"#;
         assert_eq!(parse_smsc_from_at_output(output), "+10000");
     }
 
-    #[test]
-    fn parses_sms_storage_info_correctly() {
-        let output_1 = "+CPMS: \"SM\",2,30,\"ME\",5,50,\"SM\",2,30";
-        assert_eq!(parse_sms_storage_info(output_1), Some((2, 30)));
 
-        let output_2 = "+CPMS: \"ME\",5,50,\"SM\",10,30\n\rOK";
-        assert_eq!(parse_sms_storage_info(output_2), Some((10, 30)));
-
-        // 无 SM 三元组时回退取 ME 存储（如 QMI 直连的 Quectel 模组）
-        let output_me_only = "+CPMS: \"ME\",5,50";
-        assert_eq!(parse_sms_storage_info(output_me_only), Some((5, 50)));
-    }
 
     #[test]
     fn extracts_smsc_from_protocol_output() {
@@ -2859,7 +2750,7 @@ LTE Timing Advance: 'unavailable'"#;
 
         cache_own_numbers_for_identity(&db, &identity, &[], "empty");
         cache_smsc_for_identity(&db, &identity, "", "empty");
-        cache_sms_storage_for_identity(&db, &identity, None, None, "empty");
+
         assert!(!sim_details_cache_missing(&db, &identity));
 
         let changed_identity = SimIdentity {
@@ -3054,30 +2945,7 @@ LTE Timing Advance: 'unavailable'"#;
         );
     }
 
-    #[test]
-    fn parses_sms_storage_from_sim_triple() {
-        let output = r#"+CPMS: "SM",3,50,"SM",3,50,"SM",3,50"#;
-        assert_eq!(parse_sms_storage_info(output), Some((3, 50)));
-    }
 
-    #[test]
-    fn parses_sms_storage_falls_back_to_modem_memory() {
-        // Quectel QMI 模组默认存储为 ME，回复中不含 SM 三元组
-        let output = r#"+CPMS: "ME",0,255,"ME",0,255,"ME",0,255"#;
-        assert_eq!(parse_sms_storage_info(output), Some((0, 255)));
-    }
-
-    #[test]
-    fn parses_sms_storage_prefers_sim_over_modem_memory() {
-        let output = r#"+CPMS: "ME",7,255,"SM",3,50,"ME",7,255"#;
-        assert_eq!(parse_sms_storage_info(output), Some((3, 50)));
-    }
-
-    #[test]
-    fn parses_sms_storage_rejects_garbage() {
-        assert_eq!(parse_sms_storage_info("ERROR"), None);
-        assert_eq!(parse_sms_storage_info("+CPMS: \"ME\",x,y"), None);
-    }
 
     fn apn_ctx(
         path: &str,

@@ -179,13 +179,7 @@ pub struct OwnNumberCacheEntry {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SmsStorageCacheEntry {
-    pub sms_used: Option<u32>,
-    pub sms_total: Option<u32>,
-    pub source: String,
-    pub updated_at: String,
-}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EsimProfileCacheEntry {
@@ -1670,75 +1664,7 @@ impl Database {
         Ok(None)
     }
 
-    // ==================== SMS storage cache ====================
 
-    pub fn upsert_sms_storage_cache(
-        &self,
-        identity_key: &str,
-        iccid: &str,
-        imsi: &str,
-        operator_id: &str,
-        sms_used: Option<u32>,
-        sms_total: Option<u32>,
-        source: &str,
-    ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        let updated_at = Utc::now().to_rfc3339();
-        conn.execute(
-            "INSERT INTO sms_storage_cache (
-                identity_key, iccid, imsi, operator_id, sms_used, sms_total, source, updated_at
-             )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-             ON CONFLICT(identity_key) DO UPDATE SET
-                iccid = excluded.iccid,
-                imsi = excluded.imsi,
-                operator_id = excluded.operator_id,
-                sms_used = excluded.sms_used,
-                sms_total = COALESCE(excluded.sms_total, sms_storage_cache.sms_total),
-                source = excluded.source,
-                updated_at = excluded.updated_at",
-            params![
-                identity_key,
-                iccid,
-                imsi,
-                operator_id,
-                sms_used,
-                sms_total,
-                source,
-                updated_at
-            ],
-        )?;
-        Ok(())
-    }
-
-    pub fn get_sms_storage_cache(
-        &self,
-        identity_keys: &[String],
-    ) -> Result<Option<SmsStorageCacheEntry>> {
-        let conn = self.conn.lock().unwrap();
-        for key in identity_keys {
-            let entry = conn
-                .query_row(
-                    "SELECT sms_used, sms_total, source, updated_at
-                     FROM sms_storage_cache
-                     WHERE identity_key = ?1",
-                    params![key],
-                    |row| {
-                        Ok(SmsStorageCacheEntry {
-                            sms_used: row.get(0)?,
-                            sms_total: row.get(1)?,
-                            source: row.get(2)?,
-                            updated_at: row.get(3)?,
-                        })
-                    },
-                )
-                .optional()?;
-            if entry.is_some() {
-                return Ok(entry);
-            }
-        }
-        Ok(None)
-    }
 
     // ==================== eSIM Profile cache ====================
 
@@ -2340,30 +2266,7 @@ mod tests {
         assert!(!entry.updated_at.is_empty());
     }
 
-    #[test]
-    fn sms_storage_cache_allows_empty_result() {
-        let db = test_db();
 
-        db.upsert_sms_storage_cache(
-            "iccid:TEST_ICCID_001",
-            "TEST_ICCID_001",
-            "001010",
-            "00101",
-            None,
-            None,
-            "empty",
-        )
-        .unwrap();
-
-        let entry = db
-            .get_sms_storage_cache(&["iccid:TEST_ICCID_001".to_string()])
-            .unwrap()
-            .unwrap();
-        assert_eq!(entry.sms_used, None);
-        assert_eq!(entry.sms_total, None);
-        assert_eq!(entry.source, "empty");
-        assert!(!entry.updated_at.is_empty());
-    }
 
     #[test]
     fn esim_profile_cache_persists_state_permissions_and_updated_at() {

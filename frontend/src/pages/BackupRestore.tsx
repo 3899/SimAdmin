@@ -222,7 +222,7 @@ const COMPONENT_FALLBACK: Record<BackupComponentKey, BackupComponentOption> = {
   sim_cache: {
     key: 'sim_cache',
     label: 'SIM 缓存',
-    description: 'SMSC、本机号码和短信容量缓存',
+    description: 'SMSC、本机号码缓存',
     default_selected: true,
     sensitive: true,
   },

@@ -113,7 +113,7 @@ impl BackupComponent {
             BackupComponent::NotificationQueue => "通知待重试和失败队列",
             BackupComponent::AutomationConfig => "自动化任务配置",
             BackupComponent::AutomationLogs => "自动化任务执行日志",
-            BackupComponent::SimCache => "SMSC、本机号码和短信容量缓存",
+            BackupComponent::SimCache => "SMSC、本机号码缓存",
             BackupComponent::EsimCache => {
                 "eSIM Profile 缓存和 eUICC 缓存，不包含运营商 Profile 内容"
             }
@@ -976,11 +976,6 @@ fn export_component(
                 "own_number_cache",
                 &["identity_key", "iccid", "imsi", "operator_id", "phone_numbers", "source", "updated_at"],
             )?,
-            "sms_storage_cache": export_table_rows(
-                &app.database,
-                "sms_storage_cache",
-                &["identity_key", "iccid", "imsi", "operator_id", "sms_used", "sms_total", "source", "updated_at"],
-            )?,
         }),
         BackupComponent::EsimCache => json!({
             "esim_profile_cache": export_table_rows(
@@ -1085,7 +1080,7 @@ fn component_record_count(component: BackupComponent, value: &Value) -> usize {
             .and_then(Value::as_array)
             .map(Vec::len)
             .unwrap_or(0),
-        BackupComponent::SimCache => ["smsc_cache", "own_number_cache", "sms_storage_cache"]
+        BackupComponent::SimCache => ["smsc_cache", "own_number_cache"]
             .iter()
             .filter_map(|key| value.get(*key).and_then(Value::as_array).map(Vec::len))
             .sum(),
@@ -1582,7 +1577,6 @@ fn import_sim_cache(tx: &Transaction<'_>, value: Value, mode: ImportMode) -> rus
     if mode == ImportMode::Replace {
         tx.execute("DELETE FROM smsc_cache", [])?;
         tx.execute("DELETE FROM own_number_cache", [])?;
-        tx.execute("DELETE FROM sms_storage_cache", [])?;
     }
 
     for row in array_rows(&value, "smsc_cache")? {
@@ -1633,32 +1627,7 @@ fn import_sim_cache(tx: &Transaction<'_>, value: Value, mode: ImportMode) -> rus
             ],
         )?;
     }
-    for row in array_rows(&value, "sms_storage_cache")? {
-        tx.execute(
-            "INSERT INTO sms_storage_cache (
-                identity_key, iccid, imsi, operator_id, sms_used, sms_total, source, updated_at
-             )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-             ON CONFLICT(identity_key) DO UPDATE SET
-                iccid = excluded.iccid,
-                imsi = excluded.imsi,
-                operator_id = excluded.operator_id,
-                sms_used = excluded.sms_used,
-                sms_total = COALESCE(excluded.sms_total, sms_storage_cache.sms_total),
-                source = excluded.source,
-                updated_at = excluded.updated_at",
-            params![
-                string_value(row, "identity_key"),
-                string_value(row, "iccid"),
-                string_value(row, "imsi"),
-                string_value(row, "operator_id"),
-                optional_i64_value(row, "sms_used"),
-                optional_i64_value(row, "sms_total"),
-                non_empty_string(row, "source", "backup"),
-                string_value(row, "updated_at"),
-            ],
-        )?;
-    }
+
     Ok(())
 }
 

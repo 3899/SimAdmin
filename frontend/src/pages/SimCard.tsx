@@ -14,7 +14,6 @@ import {
   TextField,
   Snackbar,
   Alert,
-  LinearProgress,
 } from '@mui/material'
 import Grid from '@mui/material/Grid'
 import {
@@ -151,29 +150,7 @@ function InfoField({ label, value, sensitive = false, showSensitive, extra }: {
   )
 }
 
-function SmsCapacityProgress({ used, total }: { used?: number, total?: number }) {
-  if (used === undefined || total === undefined || total === 0) return <Typography variant="body2" sx={{ fontSize: '0.825rem' }}>N/A</Typography>;
-  const percentage = Math.min((used / total) * 100, 100);
-  const isFull = used >= total;
-  return (
-    <Box display="flex" flexDirection="column" width="100%" gap={0.25}>
-      <Box display="flex" justifyContent="space-between" alignItems="center">
-        <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.825rem' }}>
-          {used} / {total} 条
-        </Typography>
-        {isFull && (
-          <Chip label="已满" color="error" size="small" sx={{ height: 16, fontSize: '0.65rem' }} />
-        )}
-      </Box>
-      <LinearProgress
-        variant="determinate"
-        value={percentage}
-        color={isFull ? "error" : percentage > 80 ? "warning" : "primary"}
-        sx={{ height: 5, borderRadius: 3, mt: 0.5 }}
-      />
-    </Box>
-  );
-}
+
 
 function SimBasicInfo() {
   const { mode } = useWorkMode()
@@ -221,7 +198,7 @@ function SimBasicInfo() {
         setSimInfo(simRes.data)
         const data = simRes.data
         const missingSlowFields =
-          data.present && (!data.phone_numbers?.length || !data.sms_center || data.sms_total === undefined || data.sms_total === 0)
+          data.present && (!data.phone_numbers?.length || !data.sms_center)
         if (missingSlowFields && data.iccid && autoDetailsRefreshIccidRef.current !== data.iccid) {
           autoDetailsRefreshIccidRef.current = data.iccid
           setDetailsRefreshing(true)
@@ -548,32 +525,22 @@ function SimBasicInfo() {
               </CardContent>
             </Card>
 
-            {/* Card 4: 短信存储与系统信息 */}
+            {/* Card 4: 对象路径 */}
             <Card sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
               <CardHeader
                 avatar={<StorageIcon color="primary" />}
-                title="短信存储与系统信息"
+                title="对象路径"
                 titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
               />
               <CardContent sx={{ pt: 0, flexGrow: 1 }}>
                 <Grid container spacing={2}>
                   <Grid size={12}>
-                    <Box>
-                      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500 }}>
-                        SIM 卡短信容量
-                      </Typography>
-                      <Box display="flex" alignItems="center" mt={0.5} width="100%">
-                        <SmsCapacityProgress used={simInfo?.sms_used} total={simInfo?.sms_total} />
-                      </Box>
-                    </Box>
-                  </Grid>
-                  <Grid size={6}>
                     <InfoField
                       label="SIM 路径"
                       value={simInfo?.sim_path || 'N/A'}
                     />
                   </Grid>
-                  <Grid size={6}>
+                  <Grid size={12}>
                     <InfoField
                       label="Modem 路径"
                       value={simInfo?.modem_path || 'N/A'}

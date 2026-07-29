@@ -314,8 +314,6 @@ pub struct SimInfoResponse {
     pub puk2_retries: Option<u32>,
     pub carrier_config: String,
     pub carrier_config_revision: String,
-    pub sms_used: Option<u32>,
-    pub sms_total: Option<u32>,
 }
 
 #[derive(Debug, Default, Serialize)]
