@@ -2408,11 +2408,15 @@ fn serverchan3_url(config: &ServerChan3Config) -> Result<String, String> {
     if !is_valid_serverchan3_uid(&uid) {
         return Err("Server酱3 UID 只能包含字母、数字或短横线".to_string());
     }
+    let encoded_send_key = send_key
+        .split('-')
+        .map(encode_path_segment)
+        .collect::<Vec<_>>()
+        .join("-");
 
     Ok(format!(
         "https://{}.push.ft07.com/send/{}.send",
-        uid,
-        encode_path_segment(send_key).replace("%2D", "-")
+        uid, encoded_send_key
     ))
 }
 
@@ -3735,6 +3739,15 @@ mod tests {
         assert_eq!(
             serverchan3_url(&from_key).unwrap(),
             "https://12345.push.ft07.com/send/sctp12345tsecret.send"
+        );
+
+        let from_app_key = ServerChan3Config {
+            send_key: "sctp12345ta-app-key".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            serverchan3_url(&from_app_key).unwrap(),
+            "https://12345.push.ft07.com/send/sctp12345ta-app-key.send"
         );
 
         let manual_uid = ServerChan3Config {
