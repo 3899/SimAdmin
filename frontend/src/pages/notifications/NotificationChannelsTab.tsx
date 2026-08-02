@@ -551,7 +551,7 @@ export default function NotificationChannelsTab({
       case 'serverchan3':
         return (
           <Box sx={fieldStackSx}>
-            {renderStringField(channel, 'send_key', 'SendKey', { password: true })}
+            {renderStringField(channel, 'send_key', 'SendKey / AppKey', { password: true })}
             {renderStringField(channel, 'uid', 'UID（可选）')}
             {renderStringField(channel, 'channel', '发送通道（可选）')}
             {renderStringField(channel, 'openid', 'OpenID / Group（可选）')}
