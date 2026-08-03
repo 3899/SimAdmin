@@ -65,6 +65,11 @@ const QUERY_VALUE_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'{')
     .add(b'|')
     .add(b'}');
+const SERVERCHAN3_SEND_KEY_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
 
 /// Notification sender for all configured notification channels.
 pub struct NotificationSender {
@@ -2408,11 +2413,10 @@ fn serverchan3_url(config: &ServerChan3Config) -> Result<String, String> {
     if !is_valid_serverchan3_uid(&uid) {
         return Err("Server酱3 UID 只能包含字母、数字或短横线".to_string());
     }
-
     Ok(format!(
         "https://{}.push.ft07.com/send/{}.send",
         uid,
-        encode_path_segment(send_key)
+        encode_serverchan3_send_key(send_key)
     ))
 }
 
@@ -3238,6 +3242,10 @@ fn encode_path_segment(value: &str) -> String {
     utf8_percent_encode(value, NON_ALPHANUMERIC).to_string()
 }
 
+fn encode_serverchan3_send_key(value: &str) -> String {
+    utf8_percent_encode(value, SERVERCHAN3_SEND_KEY_ENCODE_SET).to_string()
+}
+
 fn current_timestamp_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -3737,6 +3745,15 @@ mod tests {
             "https://12345.push.ft07.com/send/sctp12345tsecret.send"
         );
 
+        let from_app_key = ServerChan3Config {
+            send_key: "sctp12345ta-app-key".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            serverchan3_url(&from_app_key).unwrap(),
+            "https://12345.push.ft07.com/send/sctp12345ta-app-key.send"
+        );
+
         let manual_uid = ServerChan3Config {
             uid: "user-1".to_string(),
             send_key: "manual-secret".to_string(),
@@ -3744,7 +3761,27 @@ mod tests {
         };
         assert_eq!(
             serverchan3_url(&manual_uid).unwrap(),
-            "https://user-1.push.ft07.com/send/manual%2Dsecret.send"
+            "https://user-1.push.ft07.com/send/manual-secret.send"
+        );
+
+        let unreserved_chars = ServerChan3Config {
+            uid: "user-1".to_string(),
+            send_key: "manual-secret._~".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            serverchan3_url(&unreserved_chars).unwrap(),
+            "https://user-1.push.ft07.com/send/manual-secret._~.send"
+        );
+
+        let reserved_chars = ServerChan3Config {
+            uid: "user-1".to_string(),
+            send_key: "manual/secret?x#y z".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            serverchan3_url(&reserved_chars).unwrap(),
+            "https://user-1.push.ft07.com/send/manual%2Fsecret%3Fx%23y%20z.send"
         );
     }
 
