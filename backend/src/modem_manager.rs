@@ -789,8 +789,7 @@ fn smsc_cache_entry_for_identity(
     db.get_smsc_cache(&keys).ok().flatten()
 }
 
-#[allow(dead_code)]
-fn cached_smsc_for_identity(db: &Database, identity: &SimIdentity) -> String {
+pub fn cached_smsc_for_identity(db: &Database, identity: &SimIdentity) -> String {
     smsc_cache_entry_for_identity(db, identity)
         .map(|entry| normalize_smsc(&entry.sms_center))
         .unwrap_or_default()
@@ -826,8 +825,7 @@ fn own_number_cache_entry_for_identity(
     db.get_own_number_cache(&[identity_key]).ok().flatten()
 }
 
-#[allow(dead_code)]
-fn cached_own_numbers_for_identity(db: &Database, identity: &SimIdentity) -> Vec<String> {
+pub fn cached_own_numbers_for_identity(db: &Database, identity: &SimIdentity) -> Vec<String> {
     own_number_cache_entry_for_identity(db, identity)
         .map(|entry| normalize_phone_numbers(entry.phone_numbers))
         .unwrap_or_default()

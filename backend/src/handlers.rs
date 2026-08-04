@@ -22,20 +22,21 @@ use zbus::Connection;
 
 use crate::{
     config::ApnConfig,
+    db::{Database, EsimEuiccCacheEntry, EsimProfileCacheEntry},
     esim::EsimApiError,
     models::*,
     modem_manager::{
-        self, answer_call, apply_roaming_policy, current_sim_identity,
-        find_nm_modem_connection_pub, get_airplane_mode, get_band_lock_status,
-        get_baseband_restart_progress, get_call_by_path, get_call_settings, get_cell_location,
-        get_cells_data, get_data_connection_status, get_device_info_data, get_is_roaming_mm,
-        get_network_info_data, get_operators_list, get_radio_mode, get_signal_strength,
-        get_sim_info_data_with_cache, hangup_all_calls, hangup_call, list_apn_contexts,
-        list_current_calls, make_call, nm_set_autoconnect_pub, power_cycle_sim_for_profile_switch,
-        refresh_sim_details_background, register_operator_auto, register_operator_manual,
-        restart_baseband, scan_operators, send_sms, set_airplane_mode, set_apn_on_bearer,
-        set_band_lock, set_call_waiting, set_data_connection_with_apn, set_radio_mode,
-        sim_details_cache_missing, start_cell_monitoring, stop_cell_monitoring,
+        self, answer_call, apply_roaming_policy, cached_own_numbers_for_identity,
+        cached_smsc_for_identity, current_sim_identity, find_nm_modem_connection_pub,
+        get_airplane_mode, get_band_lock_status, get_baseband_restart_progress, get_call_by_path,
+        get_call_settings, get_cell_location, get_cells_data, get_data_connection_status,
+        get_device_info_data, get_is_roaming_mm, get_network_info_data, get_operators_list,
+        get_radio_mode, get_signal_strength, get_sim_info_data_with_cache, hangup_all_calls,
+        hangup_call, list_apn_contexts, list_current_calls, make_call, nm_set_autoconnect_pub,
+        power_cycle_sim_for_profile_switch, refresh_sim_details_background, register_operator_auto,
+        register_operator_manual, restart_baseband, scan_operators, send_sms, set_airplane_mode,
+        set_apn_on_bearer, set_band_lock, set_call_waiting, set_data_connection_with_apn,
+        set_radio_mode, sim_details_cache_missing, start_cell_monitoring, stop_cell_monitoring,
     },
     state::AppState,
     system_event::{
@@ -161,6 +162,11 @@ fn sort_esim_profiles_for_display(profiles: &mut [EsimProfile]) {
     });
 }
 
+fn esim_profile_sim_details_missing(profile: &EsimProfile) -> bool {
+    profile.msisdn.as_deref().unwrap_or("").trim().is_empty()
+        || profile.smsc.as_deref().unwrap_or("").trim().is_empty()
+}
+
 fn split_profile_operator_code(code: &str) -> (String, String) {
     let digits: String = code.chars().filter(|ch| ch.is_ascii_digit()).collect();
     if digits.len() >= 6 {
@@ -175,6 +181,7 @@ fn split_profile_operator_code(code: &str) -> (String, String) {
 fn enrich_profiles_with_current_identity(
     profiles: &mut [EsimProfile],
     identity: &crate::modem_manager::SimIdentity,
+    db: Option<&Database>,
 ) {
     let current_index = profiles
         .iter()
@@ -199,6 +206,22 @@ fn enrich_profiles_with_current_identity(
     }
     if profile.mnc.is_none() && !mnc.is_empty() {
         profile.mnc = Some(mnc);
+    }
+    if let Some(db) = db {
+        if profile.msisdn.as_deref().unwrap_or("").trim().is_empty() {
+            if let Some(phone_number) = cached_own_numbers_for_identity(db, identity)
+                .into_iter()
+                .find(|value| !value.trim().is_empty())
+            {
+                profile.msisdn = Some(phone_number);
+            }
+        }
+        if profile.smsc.as_deref().unwrap_or("").trim().is_empty() {
+            let sms_center = cached_smsc_for_identity(db, identity);
+            if !sms_center.trim().is_empty() {
+                profile.smsc = Some(sms_center);
+            }
+        }
     }
 
     if !identity.iccid.is_empty() {
@@ -737,9 +760,10 @@ pub async fn get_esim_profiles_handler(
             Ok(entries) => {
                 let mut profiles: Vec<EsimProfile> =
                     entries.into_iter().map(profile_from_cache_entry).collect();
-                let needs_identity = profiles
-                    .iter()
-                    .any(|profile| esim_profile_state_is_unknown(&profile.state));
+                let needs_identity = profiles.iter().any(|profile| {
+                    esim_profile_state_is_unknown(&profile.state)
+                        || esim_profile_is_active(profile) && esim_profile_sim_details_missing(profile)
+                });
                 if needs_identity {
                     match tokio::time::timeout(
                         std::time::Duration::from_millis(ESIM_CACHED_SIM_IDENTITY_TIMEOUT_MS),
@@ -748,7 +772,12 @@ pub async fn get_esim_profiles_handler(
                     .await
                     {
                         Ok(Some(identity)) => {
-                            enrich_profiles_with_current_identity(&mut profiles, &identity)
+                            enrich_profiles_with_current_identity(
+                                &mut profiles,
+                                &identity,
+                                Some(app.database.as_ref()),
+                            );
+                            cache_esim_profiles(&app.database, &profiles);
                         }
                         Ok(None) => {}
                         Err(_) => warn!(
@@ -784,9 +813,11 @@ pub async fn get_esim_profiles_handler(
             )
             .await
             {
-                Ok(Some(identity)) => {
-                    enrich_profiles_with_current_identity(&mut data.profiles, &identity)
-                }
+                Ok(Some(identity)) => enrich_profiles_with_current_identity(
+                    &mut data.profiles,
+                    &identity,
+                    Some(app.database.as_ref()),
+                ),
                 Ok(None) => {}
                 Err(_) => warn!(
                     timeout_secs = ESIM_SIM_IDENTITY_TIMEOUT_SECS,
@@ -2570,8 +2601,6 @@ pub async fn get_airplane_mode_handler(State(conn): State<Arc<Connection>>) -> i
 }
 
 // ============ 短信功能 ============
-
-use crate::db::{Database, EsimEuiccCacheEntry, EsimProfileCacheEntry};
 
 fn schedule_sms_db_maintenance(app: &AppState, deleted: usize) {
     if deleted < SMS_DB_MAINTENANCE_DELETE_THRESHOLD {
@@ -4421,13 +4450,67 @@ mod tests {
             operator_id: "234336".to_string(),
         };
 
-        enrich_profiles_with_current_identity(&mut profiles, &identity);
+        enrich_profiles_with_current_identity(&mut profiles, &identity, None);
 
         assert_eq!(profiles[1].state, "enabled");
         assert_eq!(profiles[1].imsi.as_deref(), Some("234336"));
         assert_eq!(profiles[1].mcc.as_deref(), Some("234"));
         assert_eq!(profiles[1].mnc.as_deref(), Some("336"));
         assert!(profiles[0].mcc.is_none());
+    }
+
+    #[test]
+    fn enriches_current_esim_profile_with_sim_detail_cache() {
+        let db = Database::new(std::path::PathBuf::from(":memory:")).unwrap();
+        let identity = SimIdentity {
+            iccid: "profile-b".to_string(),
+            imsi: "234336".to_string(),
+            operator_id: "234336".to_string(),
+        };
+        crate::modem_manager::cache_own_numbers_for_identity(
+            &db,
+            &identity,
+            &["+441234567890".to_string()],
+            "background",
+        );
+        crate::modem_manager::cache_smsc_for_identity(
+            &db,
+            &identity,
+            "+447785016005",
+            "background",
+        );
+        let mut profiles = vec![
+            EsimProfile {
+                iccid: "profile-a".to_string(),
+                state: "disabled".to_string(),
+                ..Default::default()
+            },
+            EsimProfile {
+                iccid: "profile-b".to_string(),
+                state: "enabled".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        enrich_profiles_with_current_identity(&mut profiles, &identity, Some(&db));
+
+        assert_eq!(profiles[1].msisdn.as_deref(), Some("+441234567890"));
+        assert_eq!(profiles[1].smsc.as_deref(), Some("+447785016005"));
+        assert!(profiles[0].msisdn.is_none());
+        assert!(profiles[0].smsc.is_none());
+    }
+
+    #[test]
+    fn enabled_profile_missing_sim_details_needs_enrichment() {
+        let profile = EsimProfile {
+            iccid: "profile-b".to_string(),
+            state: "enabled".to_string(),
+            smsc: Some("+447785016005".to_string()),
+            ..Default::default()
+        };
+
+        assert!(esim_profile_is_active(&profile));
+        assert!(esim_profile_sim_details_missing(&profile));
     }
 
     #[test]
@@ -4450,7 +4533,7 @@ mod tests {
             operator_id: String::new(),
         };
 
-        enrich_profiles_with_current_identity(&mut profiles, &identity);
+        enrich_profiles_with_current_identity(&mut profiles, &identity, None);
 
         assert_eq!(profiles[0].state, "disabled");
         assert_eq!(profiles[1].state, "enabled");
