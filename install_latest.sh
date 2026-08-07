@@ -781,12 +781,57 @@ write_lpac_version_file() {
   chmod 0644 "${lpac_home}/VERSION.txt" || true
 }
 
+lpac_installed_compat_revision() {
+  lpac_path="$1"
+  revision_file="$(dirname "$lpac_path")/COMPAT_REVISION.txt"
+  [ -f "$revision_file" ] || return 1
+
+  revision="$(tr -d '[:space:]' < "$revision_file")"
+  case "$revision" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  printf '%s\n' "$revision"
+}
+
+compat_lpac_release_revision() {
+  lpac_url="$1"
+  manifest_url="${LPAC_COMPAT_RELEASE_BASE_URL}/${LPAC_COMPAT_MANIFEST_NAME}"
+  manifest="$(read_with_proxies "$manifest_url" 2>/dev/null || true)"
+  [ -n "$manifest" ] || return 1
+
+  asset_name="$(lpac_asset_name_from_url "$lpac_url")"
+  [ -n "$asset_name" ] || return 1
+  asset_record="$(printf '%s\n' "$manifest" \
+    | tr '\n' ' ' \
+    | sed 's/}[[:space:]]*,[[:space:]]*{/}\
+{/g' \
+    | grep "\"name\"[[:space:]]*:[[:space:]]*\"${asset_name}\"" \
+    | head -n 1 || true)"
+  revision="$(printf '%s\n' "$asset_record" | json_string_field compat_revision)"
+  [ -n "$revision" ] || revision="$(printf '%s\n' "$manifest" | json_string_field compat_revision)"
+  case "$revision" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  printf '%s\n' "$revision"
+}
+
+write_lpac_compat_revision_file() {
+  lpac_home="$1"
+  revision="$2"
+  case "$revision" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  printf '%s\n' "$revision" > "${lpac_home}/COMPAT_REVISION.txt"
+  chmod 0644 "${lpac_home}/COMPAT_REVISION.txt" || true
+}
+
 lpac_install_needed() {
   lpac_path="$1"
   lpac_url="$2"
   LPAC_INSTALL_REASON=""
   LPAC_TARGET_RELEASE_VERSION=""
   LPAC_TARGET_RELEASE_SOURCE=""
+  LPAC_TARGET_COMPAT_REVISION=""
 
   if [ -z "$lpac_path" ] || [ ! -x "$lpac_path" ]; then
     LPAC_INSTALL_REASON="not installed"
@@ -804,10 +849,23 @@ lpac_install_needed() {
     return 0
   fi
 
+  LPAC_TARGET_RELEASE_SOURCE="$(lpac_url_source "$lpac_url")"
   LPAC_TARGET_RELEASE_VERSION="$(resolve_lpac_target_version "$lpac_url" || true)"
   if [ -z "$LPAC_TARGET_RELEASE_VERSION" ]; then
     LPAC_INSTALL_REASON="latest version could not be verified"
     return 0
+  fi
+
+  if [ "$LPAC_TARGET_RELEASE_SOURCE" = "compat" ]; then
+    LPAC_TARGET_COMPAT_REVISION="$(compat_lpac_release_revision "$lpac_url" || true)"
+    if [ -n "$LPAC_TARGET_COMPAT_REVISION" ]; then
+      installed_compat_revision="$(lpac_installed_compat_revision "$lpac_path" || true)"
+      if [ -z "$installed_compat_revision" ] \
+        || version_lt "$installed_compat_revision" "$LPAC_TARGET_COMPAT_REVISION"; then
+        LPAC_INSTALL_REASON="compatibility bundle revision ${installed_compat_revision:-0} -> ${LPAC_TARGET_COMPAT_REVISION}"
+        return 0
+      fi
+    fi
   fi
 
   if version_lt "$current_version" "$LPAC_TARGET_RELEASE_VERSION"; then
@@ -868,6 +926,7 @@ install_lpac() {
       detected_version="$LPAC_TARGET_RELEASE_VERSION"
     fi
     write_lpac_version_file "$lpac_stage" "$detected_version"
+    write_lpac_compat_revision_file "$lpac_stage" "$LPAC_TARGET_COMPAT_REVISION"
     if ! lpac_binary_usable "$lpac_stage"; then
       echo "warning: downloaded lpac does not provide the required qmi/curl drivers or has missing libraries; keeping existing lpac" >&2
       return 0

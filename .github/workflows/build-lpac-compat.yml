@@ -24,17 +24,21 @@ jobs:
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
       lpac_ref: ${{ steps.check.outputs.lpac_ref }}
+      compat_revision: ${{ steps.check.outputs.compat_revision }}
     steps:
       - name: Check whether compatibility assets need rebuilding
         id: check
         env:
           MANUAL_REF: ${{ inputs.lpac_ref }}
+          CURRENT_REPOSITORY: ${{ github.repository }}
+          COMPAT_REVISION: "2"
         run: |
           set -euo pipefail
           official_tag="$(curl -fsSL https://api.github.com/repos/estkme-group/lpac/releases/latest | jq -r .tag_name)"
           lpac_ref="${MANUAL_REF:-$official_tag}"
-          manifest="$(curl -fsSL https://github.com/3899/SimAdmin/releases/download/lpac/lpac.json || printf '{}')"
+          manifest="$(curl -fsSL "https://github.com/${CURRENT_REPOSITORY}/releases/download/lpac/lpac.json" || printf '{}')"
           bundled_version="$(printf '%s' "$manifest" | jq -r '.version // empty')"
+          bundled_revision="$(printf '%s' "$manifest" | jq -r '.compat_revision // empty')"
           has_all_assets="$(printf '%s' "$manifest" | jq -r '
             [.assets[]?.name] as $assets
             | (["lpac-linux-aarch64-glibc2.31.zip", "lpac-linux-x86_64-glibc2.31.zip"]
@@ -42,8 +46,10 @@ jobs:
           ' 2>/dev/null || printf false)"
 
           echo "lpac_ref=$lpac_ref" >> "$GITHUB_OUTPUT"
+          echo "compat_revision=$COMPAT_REVISION" >> "$GITHUB_OUTPUT"
           if [ "$MANUAL_REF" = "" ] \
             && [ "$bundled_version" = "$official_tag" ] \
+            && [ "$bundled_revision" = "$COMPAT_REVISION" ] \
             && [ "$has_all_assets" = "true" ]; then
             echo "Compatibility bundles already match $official_tag."
             echo 'should_build=false' >> "$GITHUB_OUTPUT"
@@ -72,6 +78,7 @@ jobs:
         env:
           LPAC_REF: ${{ needs.prepare.outputs.lpac_ref }}
           ASSET_NAME: ${{ matrix.asset }}
+          COMPAT_REVISION: ${{ needs.prepare.outputs.compat_revision }}
         run: |
           set -euo pipefail
           mkdir -p release
@@ -83,7 +90,7 @@ jobs:
 
               apt-get update
               apt-get install -y --no-install-recommends \
-                build-essential cmake git ca-certificates zip \
+                build-essential binutils cmake git ca-certificates zip \
                 pkg-config python3 python3-pip ninja-build \
                 libcurl4-openssl-dev libglib2.0-dev \
                 libpcsclite-dev libgudev-1.0-dev libglib2.0-doc \
@@ -106,7 +113,8 @@ jobs:
               cmake -S /lpac -B /lpac/build \
                 -DCMAKE_BUILD_TYPE=Release -DSTANDALONE_MODE=ON \
                 -DLPAC_WITH_APDU_PCSC=OFF -DLPAC_WITH_APDU_AT=ON \
-                -DLPAC_WITH_APDU_QMI=ON
+                -DLPAC_WITH_APDU_QMI=ON \
+                -DCMAKE_INSTALL_RPATH="\$ORIGIN/lib"
               cmake --build /lpac/build --parallel
               DESTDIR=/tmp/lpac-install cmake --install /lpac/build
 
@@ -122,9 +130,12 @@ jobs:
               qmi_basename="$(basename "$qmi_so")"
               ln -s "$qmi_basename" "$bundle/lib/libqmi-glib.so.5"
               ln -s "$qmi_basename" "$bundle/lib/libqmi-glib.so"
+              printf '%s\n' "$COMPAT_REVISION" > "$bundle/COMPAT_REVISION.txt"
 
-              LD_LIBRARY_PATH="$bundle/lib" LPAC_APDU=stdio LPAC_HTTP=stdio \
-                "$bundle/lpac" driver list | tee /tmp/lpac-drivers.json
+              readelf -d "$bundle/lpac" | grep -E "\(RPATH\)|\(RUNPATH\)" | grep -F ORIGIN/lib
+              ldd "$bundle/lpac" | grep -F "$bundle/lib/libqmi-glib.so.5"
+              LPAC_APDU=stdio LPAC_HTTP=stdio "$bundle/lpac" driver list \
+                | tee /tmp/lpac-drivers.json
               grep -Fq qmi /tmp/lpac-drivers.json
               grep -Fq curl /tmp/lpac-drivers.json
 
@@ -162,6 +173,7 @@ jobs:
       - name: Generate manifest and checksums
         env:
           LPAC_REF: ${{ needs.prepare.outputs.lpac_ref }}
+          COMPAT_REVISION: ${{ needs.prepare.outputs.compat_revision }}
         run: |
           set -euo pipefail
           test -f release/lpac-linux-aarch64-glibc2.31.zip
@@ -170,6 +182,7 @@ jobs:
           cat > release/lpac.json <<EOF
           {
             "version": "${LPAC_REF}",
+            "compat_revision": "${COMPAT_REVISION}",
             "assets": [
               {
                 "name": "lpac-linux-aarch64-glibc2.31.zip",

@@ -76,6 +76,23 @@ if lpac_binary_path_usable "${test_dir}/lpac-no-qmi"; then
   fail "lpac without QMI must fail the installer probe"
 fi
 
+read_with_proxies() {
+  printf '%s\n' '{"version":"v2.3.0","compat_revision":"2","assets":[{"name":"lpac-linux-x86_64-glibc2.31.zip","arch":"x86_64"}]}'
+}
+
+compat_existing="${test_dir}/compat-existing"
+mkdir -p "$compat_existing"
+cp "${test_dir}/lpac-qmi" "${compat_existing}/lpac"
+printf '%s\n' 2.3.0 > "${compat_existing}/VERSION.txt"
+printf '%s\n' 1 > "${compat_existing}/COMPAT_REVISION.txt"
+if ! lpac_install_needed \
+  "${compat_existing}/lpac" \
+  "${LPAC_COMPAT_RELEASE_BASE_URL}/lpac-linux-x86_64-glibc2.31.zip"; then
+  fail "newer compatibility bundle revision must trigger an lpac upgrade"
+fi
+assert_eq 2 "$LPAC_TARGET_COMPAT_REVISION" \
+  "compatibility manifest revision must be retained for installation"
+
 download_with_proxies() {
   :
 }
