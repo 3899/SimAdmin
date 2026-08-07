@@ -4,6 +4,8 @@ set -eu
 
 repo_root="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 SIMADMIN_INSTALL_LIBRARY_ONLY=1
+REPO=monlor/SimAdmin
+unset LPAC_COMPAT_RELEASE_BASE_URL
 export SIMADMIN_INSTALL_LIBRARY_ONLY
 . "${repo_root}/install_latest.sh"
 
@@ -22,6 +24,11 @@ assert_eq() {
 }
 
 LPAC_ASSET_FLAVOR=compat
+assert_eq \
+  "https://github.com/monlor/SimAdmin/releases/download/lpac" \
+  "$LPAC_COMPAT_RELEASE_BASE_URL" \
+  "compatibility release must follow REPO"
+
 assert_eq \
   "lpac-linux-x86_64-glibc2.31.zip" \
   "$(resolve_lpac_compat_asset_name x86_64 2.39)" \
