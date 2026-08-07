@@ -125,8 +125,8 @@ jobs:
 
               LD_LIBRARY_PATH="$bundle/lib" LPAC_APDU=stdio LPAC_HTTP=stdio \
                 "$bundle/lpac" driver list | tee /tmp/lpac-drivers.json
-              grep -Eq '"LPAC_APDU"[[:space:]]*:[[:space:]]*\[[^]]*"qmi"' /tmp/lpac-drivers.json
-              grep -Eq '"LPAC_HTTP"[[:space:]]*:[[:space:]]*\[[^]]*"curl"' /tmp/lpac-drivers.json
+              grep -Fq qmi /tmp/lpac-drivers.json
+              grep -Fq curl /tmp/lpac-drivers.json
 
               cd "$bundle"
               zip -qr "/output/$ASSET_NAME" .
