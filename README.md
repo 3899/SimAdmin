@@ -180,7 +180,7 @@ SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的
 - 基带重启流程和进度查询。
 - 数据连接 watchdog，每 15 秒检查连接状态、iptables 规则数量和 modem 可用性；检测到宿主机防火墙规则时仅记录诊断日志，不自动清空规则。
 - ModemManager 丢失时触发 `mmcli --scan-modems`，连续失败后重启 ModemManager。
-- NetworkManager `wwan*` unmanaged 配置。
+- 安装时补齐并启动 ModemManager / NetworkManager，清理历史 `wwan*` unmanaged 配置，并重新触发 udev modem 候选识别。
 - 设备侧 WLAN 客户端连接管理，通过 NetworkManager/nmcli 扫描和连接无线局域网，WLAN 在线时优先作为设备默认出口。
 - 原生 DDNS 同步，支持腾讯云 DNSPod、阿里云 AliDNS 和 Cloudflare，支持 IPv4/IPv6 独立配置、API/网卡取 IP 和变更/失败事件通知；默认通过网卡取 IP，可切换为内置多接口 API fallback。
 - 短信发送、接收监听、SQLite 持久化和多渠道通知转发。
@@ -190,7 +190,7 @@ SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的
 - APN 列表读取和 APN 修改。
 - 运营商列表、扫描、手动注册、自动注册。
 - eSIM 模式下按需调用 `lpac` 管理实体 eUICC SIM 卡 Profiles；普通 SIM 模式下不调用 eSIM 能力。
-- 安装脚本按设备架构自动准备私有 `lpac`；OTA 包本身不绑定 `lpac` 架构或版本。
+- 安装脚本按设备架构自动准备带 QMI APDU 后端的私有 `lpac`，并校验 `qmi` / `curl` 驱动能力；OTA 包本身不绑定 `lpac` 架构或版本。
 - OTA 上传、在线下载、校验、替换二进制和前端资源。
 
 ---

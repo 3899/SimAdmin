@@ -423,7 +423,15 @@ fn recommended_lpac_asset_name(arch: &str, glibc_version: &str) -> String {
     if arch == "aarch64" && version_le("2.31", glibc_version).unwrap_or(false) {
         return "lpac-linux-aarch64-glibc2.31.zip".to_string();
     }
-    format!("lpac-linux-{arch}.zip")
+    format!("lpac-linux-{arch}-with-qmi.zip")
+}
+
+fn official_lpac_asset_names(arch: &str) -> [String; 3] {
+    [
+        format!("lpac-linux-{arch}-with-qmi.zip"),
+        format!("lpac-linux-{arch}.zip"),
+        format!("lpac-linux-{arch}-without-lto.zip"),
+    ]
 }
 
 async fn resolve_lpac_asset_candidates(
@@ -439,11 +447,7 @@ async fn resolve_lpac_asset_candidates(
         candidates.append(&mut manifest_candidates);
     }
 
-    for name in [
-        format!("lpac-linux-{arch}.zip"),
-        format!("lpac-linux-{arch}-with-qmi.zip"),
-        format!("lpac-linux-{arch}-without-lto.zip"),
-    ] {
+    for name in official_lpac_asset_names(arch) {
         candidates.push(LpacAssetCandidate {
             url: format!("{LPAC_OFFICIAL_RELEASE_BASE_URL}/{name}"),
             name,
@@ -532,7 +536,10 @@ fn parse_version_parts(value: &str) -> Vec<u32> {
 
 async fn probe_lpac_binary(command_path: &Path) -> LpacProbe {
     let mut command = tokio::process::Command::new(command_path);
+    command.args(["driver", "list"]);
     configure_lpac_environment(&mut command, command_path);
+    command.env("LPAC_APDU", "stdio");
+    command.env("LPAC_HTTP", "stdio");
 
     let output = match tokio::time::timeout(
         Duration::from_secs(LPAC_PROBE_TIMEOUT_SECS),
@@ -567,14 +574,28 @@ async fn probe_lpac_binary(command_path: &Path) -> LpacProbe {
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     let combined = format!("{stdout}\n{stderr}");
-    if combined.contains("GLIBC_")
-        || combined.contains("No such file or directory")
-        || combined.contains("Permission denied")
-    {
+    if !output.status.success() {
         return LpacProbe {
             installed: true,
             usable: false,
-            message: if stderr.is_empty() { stdout } else { stderr },
+            message: if stderr.is_empty() {
+                if stdout.is_empty() {
+                    format!("lpac driver probe exited with {}", output.status)
+                } else {
+                    stdout
+                }
+            } else {
+                stderr
+            },
+        };
+    }
+
+    if !lpac_driver_list_has_required_drivers(&combined) {
+        return LpacProbe {
+            installed: true,
+            usable: false,
+            message: "lpac does not provide the required qmi APDU and curl HTTP drivers"
+                .to_string(),
         };
     }
 
@@ -583,6 +604,25 @@ async fn probe_lpac_binary(command_path: &Path) -> LpacProbe {
         usable: true,
         message: "lpac is available".to_string(),
     }
+}
+
+fn lpac_driver_list_has_required_drivers(output: &str) -> bool {
+    let value = output
+        .lines()
+        .rev()
+        .find_map(|line| serde_json::from_str::<Value>(line.trim()).ok());
+    let Some(value) = value else {
+        return false;
+    };
+    let payload = value.get("payload").unwrap_or(&value);
+    let has_driver = |kind: &str, name: &str| {
+        payload
+            .get(kind)
+            .and_then(Value::as_array)
+            .map(|drivers| drivers.iter().any(|driver| driver.as_str() == Some(name)))
+            .unwrap_or(false)
+    };
+    has_driver("LPAC_APDU", "qmi") && has_driver("LPAC_HTTP", "curl")
 }
 
 fn read_lpac_source() -> Option<String> {
@@ -982,7 +1022,8 @@ fn resolve_lpac_path(lpac_path: &str) -> PathBuf {
 fn configure_lpac_environment(command: &mut tokio::process::Command, command_path: &Path) {
     set_env_default(command, "LPAC_APDU", "qmi");
     set_env_default(command, "LPAC_HTTP", "curl");
-    set_env_default(command, "LPAC_APDU_QMI_DEVICE", "/dev/wwan0qmi0");
+    let qmi_device = discover_lpac_qmi_device();
+    set_env_default(command, "LPAC_APDU_QMI_DEVICE", &qmi_device);
     set_env_default(command, "LPAC_APDU_QMI_UIM_SLOT", "1");
     set_env_default(command, "LPAC_APDU_AT_DEVICE", "/dev/wwan0at0");
 
@@ -1000,6 +1041,42 @@ fn configure_lpac_environment(command: &mut tokio::process::Command, command_pat
             command.env("LD_LIBRARY_PATH", ld_library_path);
         }
     }
+}
+
+fn discover_lpac_qmi_device() -> String {
+    let candidates = fs::read_dir("/dev")
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            name.starts_with("cdc-wdm") || (name.starts_with("wwan") && name.contains("qmi"))
+        })
+        .collect::<Vec<_>>();
+
+    select_lpac_qmi_device(candidates)
+        .unwrap_or_else(|| PathBuf::from("/dev/cdc-wdm0"))
+        .to_string_lossy()
+        .to_string()
+}
+
+fn select_lpac_qmi_device(mut candidates: Vec<PathBuf>) -> Option<PathBuf> {
+    candidates.sort_by(|left, right| {
+        let priority = |path: &Path| {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            (!name.starts_with("cdc-wdm"), name.to_string())
+        };
+        priority(left).cmp(&priority(right))
+    });
+    candidates.into_iter().next()
 }
 
 fn set_env_default(command: &mut tokio::process::Command, key: &str, value: &str) {
@@ -1513,6 +1590,52 @@ fn policy_allows(value: &Value, deny_markers: &[&str]) -> Option<bool> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn recommends_qmi_lpac_for_x86_64() {
+        assert_eq!(
+            recommended_lpac_asset_name("x86_64", "2.39"),
+            "lpac-linux-x86_64-with-qmi.zip"
+        );
+        assert_eq!(
+            official_lpac_asset_names("x86_64")[0],
+            "lpac-linux-x86_64-with-qmi.zip"
+        );
+    }
+
+    #[test]
+    fn validates_required_lpac_drivers() {
+        let valid = json!({
+            "type": "driver",
+            "payload": {
+                "LPAC_APDU": ["qmi", "pcsc", "stdio"],
+                "LPAC_HTTP": ["curl", "stdio"]
+            }
+        });
+        let missing_qmi = json!({
+            "type": "driver",
+            "payload": {
+                "LPAC_APDU": ["pcsc", "at", "stdio"],
+                "LPAC_HTTP": ["curl", "stdio"]
+            }
+        });
+
+        assert!(lpac_driver_list_has_required_drivers(&valid.to_string()));
+        assert!(!lpac_driver_list_has_required_drivers(
+            &missing_qmi.to_string()
+        ));
+    }
+
+    #[test]
+    fn qmi_device_selection_prefers_cdc_wdm() {
+        let selected = select_lpac_qmi_device(vec![
+            PathBuf::from("/dev/wwan0qmi0"),
+            PathBuf::from("/dev/cdc-wdm1"),
+            PathBuf::from("/dev/cdc-wdm0"),
+        ]);
+
+        assert_eq!(selected, Some(PathBuf::from("/dev/cdc-wdm0")));
+    }
 
     #[test]
     fn parses_lpac_chip_info_aliases() {

@@ -15,6 +15,9 @@ MODEM_RECOVERY_SERVICE_URL="${MODEM_RECOVERY_SERVICE_URL:-${RAW_BASE}/main/scrip
 ASSET_URL="${ASSET_URL:-}"
 ASSET_NAME="${ASSET_NAME:-}"
 SIMADMIN_TARGET_ARCH="${SIMADMIN_TARGET_ARCH:-}"
+SIMADMIN_INSTALL_SYSTEM_DEPS="${SIMADMIN_INSTALL_SYSTEM_DEPS:-1}"
+SIMADMIN_ENABLE_NETWORKMANAGER="${SIMADMIN_ENABLE_NETWORKMANAGER:-1}"
+SIMADMIN_REFRESH_MODEM_DEVICES="${SIMADMIN_REFRESH_MODEM_DEVICES:-1}"
 SIMADMIN_INSTALL_LPAC="${SIMADMIN_INSTALL_LPAC:-1}"
 LPAC_REPO="${LPAC_REPO:-estkme-group/lpac}"
 LPAC_RELEASE_BASE_URL="${LPAC_RELEASE_BASE_URL:-https://github.com/${LPAC_REPO}/releases/latest/download}"
@@ -47,6 +50,75 @@ truthy() {
     1|true|TRUE|yes|YES|y|Y|on|ON) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+install_system_dependencies() {
+  if ! truthy "$SIMADMIN_INSTALL_SYSTEM_DEPS"; then
+    echo "==> skipping system dependency installation (SIMADMIN_INSTALL_SYSTEM_DEPS=${SIMADMIN_INSTALL_SYSTEM_DEPS})"
+    return 0
+  fi
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "warning: apt-get is unavailable; install ModemManager, NetworkManager, libqmi, libmbim and libpcsclite manually" >&2
+    return 0
+  fi
+
+  echo "==> installing Debian/Ubuntu runtime dependencies"
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    dbus \
+    iproute2 \
+    libmbim-utils \
+    libpcsclite1 \
+    libqmi-utils \
+    modemmanager \
+    network-manager \
+    tar \
+    udev \
+    unzip
+}
+
+remove_legacy_networkmanager_modem_unmanaged() {
+  nm_conf="/etc/NetworkManager/conf.d/99-simadmin-unmanaged-modem.conf"
+  if [ -f "$nm_conf" ]; then
+    echo "==> removing legacy NetworkManager wwan unmanaged configuration"
+    rm -f "$nm_conf"
+  fi
+}
+
+start_runtime_services() {
+  echo "==> enabling ModemManager"
+  systemctl enable --now ModemManager.service >/dev/null
+
+  if truthy "$SIMADMIN_ENABLE_NETWORKMANAGER"; then
+    echo "==> enabling NetworkManager"
+    systemctl enable --now NetworkManager.service >/dev/null
+  else
+    echo "==> leaving NetworkManager inactive (SIMADMIN_ENABLE_NETWORKMANAGER=${SIMADMIN_ENABLE_NETWORKMANAGER})"
+    echo "    nmcli-dependent WLAN and cellular data features will remain unavailable"
+  fi
+}
+
+refresh_modem_devices() {
+  if ! truthy "$SIMADMIN_REFRESH_MODEM_DEVICES"; then
+    echo "==> skipping modem udev refresh (SIMADMIN_REFRESH_MODEM_DEVICES=${SIMADMIN_REFRESH_MODEM_DEVICES})"
+    return 0
+  fi
+
+  if command -v udevadm >/dev/null 2>&1; then
+    echo "==> reloading udev rules and refreshing modem candidates"
+    udevadm control --reload-rules
+    for subsystem in usb tty usbmisc net; do
+      udevadm trigger --action=change --subsystem-match="$subsystem" || true
+    done
+    udevadm settle --timeout=15 || true
+  else
+    echo "warning: udevadm is unavailable; reconnect the modem after installation" >&2
+  fi
+
+  systemctl restart ModemManager.service
 }
 
 download_with_proxies() {
@@ -252,24 +324,6 @@ install_modem_recovery_service() {
   systemctl enable simadmin-modem-recovery.service >/dev/null
 }
 
-configure_networkmanager_modem_unmanaged() {
-  if [ ! -d /etc/NetworkManager ]; then
-    return 0
-  fi
-
-  echo "==> configuring NetworkManager to ignore wwan modem"
-  mkdir -p /etc/NetworkManager/conf.d
-  nm_conf="/etc/NetworkManager/conf.d/99-simadmin-unmanaged-modem.conf"
-  {
-    printf '%s\n' '[keyfile]'
-    printf '%s\n' 'unmanaged-devices=interface-name:wwan*'
-  } > "$nm_conf"
-
-  if systemctl is-active --quiet NetworkManager.service; then
-    systemctl restart NetworkManager.service || true
-  fi
-}
-
 normalize_lpac_arch() {
   case "$1" in
     aarch64|arm64)
@@ -366,7 +420,7 @@ resolve_lpac_asset_name() {
       if [ "$arch" = "aarch64" ] && version_le "2.31" "$glibc_version"; then
         printf 'lpac-linux-aarch64-glibc2.31.zip\n'
       else
-        printf 'lpac-linux-%s.zip\n' "$arch"
+        printf 'lpac-linux-%s-with-qmi.zip\n' "$arch"
       fi
       ;;
     ""|default)
@@ -493,12 +547,24 @@ lpac_binary_path_usable() {
     return 1
   fi
 
-  output=$(LD_LIBRARY_PATH="$(lpac_env_prefix "$lpac_path")" "$lpac_path" 2>&1 || true)
+  if ! output=$(LPAC_APDU=stdio LPAC_HTTP=stdio \
+    LD_LIBRARY_PATH="$(lpac_env_prefix "$lpac_path")" \
+    "$lpac_path" driver list 2>&1); then
+    return 1
+  fi
   case "$output" in
-    *GLIBC_*|*No\ such\ file\ or\ directory*)
+    *GLIBC_*|*No\ such\ file\ or\ directory*|*Permission\ denied*|*error\ while\ loading\ shared\ libraries*)
       return 1
       ;;
   esac
+
+  compact_output="$(printf '%s' "$output" | tr -d '[:space:]')"
+  if ! printf '%s\n' "$compact_output" | grep -Eq '"LPAC_APDU":\[[^]]*"qmi"'; then
+    return 1
+  fi
+  if ! printf '%s\n' "$compact_output" | grep -Eq '"LPAC_HTTP":\[[^]]*"curl"'; then
+    return 1
+  fi
 
   return 0
 }
@@ -745,6 +811,7 @@ install_lpac() {
   lpac_dst="${INSTALL_DIR}/lpac"
   lpac_archive="${tmp_dir}/lpac.zip"
   lpac_extract="${tmp_dir}/lpac-extract"
+  lpac_stage="${tmp_dir}/lpac-stage"
 
   if ! truthy "$SIMADMIN_INSTALL_LPAC"; then
     echo "==> skipping lpac install (SIMADMIN_INSTALL_LPAC=${SIMADMIN_INSTALL_LPAC})"
@@ -783,20 +850,39 @@ install_lpac() {
     return 0
   fi
 
-  if copy_lpac_tree "$lpac_extract" "$lpac_dst" "$lpac_url"; then
-    detected_version="$(lpac_command_version "${lpac_dst}/lpac" || true)"
+  if copy_lpac_tree "$lpac_extract" "$lpac_stage" "$lpac_url"; then
+    detected_version="$(lpac_command_version "${lpac_stage}/lpac" || true)"
     if [ -z "$detected_version" ]; then
       detected_version="$LPAC_TARGET_RELEASE_VERSION"
     fi
-    write_lpac_version_file "$lpac_dst" "$detected_version"
-    if lpac_binary_usable "$lpac_dst"; then
-      if [ -n "$detected_version" ]; then
-        echo "==> lpac ${detected_version} installed to ${lpac_dst}"
-      else
-        echo "==> lpac installed to ${lpac_dst}"
+    write_lpac_version_file "$lpac_stage" "$detected_version"
+    if ! lpac_binary_usable "$lpac_stage"; then
+      echo "warning: downloaded lpac does not provide the required qmi/curl drivers or has missing libraries; keeping existing lpac" >&2
+      return 0
+    fi
+
+    lpac_previous="${lpac_dst}.previous"
+    rm -rf "$lpac_previous"
+    had_existing=0
+    if [ -e "$lpac_dst" ] || [ -L "$lpac_dst" ]; then
+      mv "$lpac_dst" "$lpac_previous"
+      had_existing=1
+    fi
+    if ! mv "$lpac_stage" "$lpac_dst"; then
+      if [ "$had_existing" -eq 1 ]; then
+        mv "$lpac_previous" "$lpac_dst" || true
       fi
+      echo "warning: failed to activate lpac, restored previous installation" >&2
+      return 0
+    fi
+    if [ "$had_existing" -eq 1 ]; then
+      rm -rf "$lpac_previous"
+    fi
+
+    if [ -n "$detected_version" ]; then
+      echo "==> lpac ${detected_version} installed to ${lpac_dst}"
     else
-      echo "warning: lpac was installed but may not be executable on this device; check glibc/architecture compatibility" >&2
+      echo "==> lpac installed to ${lpac_dst}"
     fi
   else
     echo "warning: failed to install lpac, keeping existing lpac if present" >&2
@@ -807,9 +893,14 @@ install_lpac() {
 
 main() {
   require_root
-  require_cmd curl
   require_cmd systemctl
   require_cmd mktemp
+
+  install_system_dependencies
+  require_cmd curl
+  remove_legacy_networkmanager_modem_unmanaged
+  start_runtime_services
+  refresh_modem_devices
 
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "$tmp_dir"' EXIT INT TERM
@@ -879,8 +970,6 @@ main() {
   echo "==> installing modem recovery service"
   install_modem_recovery_service
 
-  configure_networkmanager_modem_unmanaged
-
   echo "==> starting service"
   systemctl restart "${SERVICE_NAME}.service"
 
@@ -891,4 +980,6 @@ main() {
   systemctl status "${SERVICE_NAME}.service" --no-pager
 }
 
-main "$@"
+if [ "${SIMADMIN_INSTALL_LIBRARY_ONLY:-0}" != "1" ]; then
+  main "$@"
+fi

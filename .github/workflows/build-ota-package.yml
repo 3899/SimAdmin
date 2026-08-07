@@ -39,6 +39,11 @@ jobs:
       version_source: ${{ steps.version.outputs.version_source }}
     steps:
       - uses: actions/checkout@v4
+      - name: Validate installer
+        run: |
+          sh -n install_latest.sh
+          sh -n tests/install_latest_test.sh
+          tests/install_latest_test.sh
       - name: Read VERSION
         id: version
         env:
