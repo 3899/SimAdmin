@@ -76,4 +76,37 @@ if lpac_binary_path_usable "${test_dir}/lpac-no-qmi"; then
   fail "lpac without QMI must fail the installer probe"
 fi
 
+download_with_proxies() {
+  :
+}
+
+extract_lpac_archive() {
+  mkdir -p "$2"
+  cp "${test_dir}/lpac-qmi" "$2/lpac"
+}
+
+lpac_install_needed() {
+  LPAC_INSTALL_REASON="test install"
+  return 0
+}
+
+install_root="${test_dir}/install-root"
+tmp_dir="${test_dir}/install-tmp"
+INSTALL_DIR="$install_root"
+LPAC_TARGET_ARCH=x86_64
+LPAC_ASSET_NAME=lpac-linux-x86_64-glibc2.31.zip
+LPAC_ASSET_FLAVOR=compat
+LPAC_TARGET_RELEASE_VERSION=
+mkdir -p "${INSTALL_DIR}/lpac"
+printf '%s\n' old > "${INSTALL_DIR}/lpac/previous-marker"
+
+install_lpac
+
+[ -x "${INSTALL_DIR}/lpac/lpac" ] \
+  || fail "validated lpac stage must be activated at the install destination"
+[ ! -e "${INSTALL_DIR}/lpac/previous-marker" ] \
+  || fail "previous lpac tree must be replaced after successful activation"
+[ ! -e "${INSTALL_DIR}/lpac.previous" ] \
+  || fail "previous lpac tree must be cleaned after successful activation"
+
 echo "install_latest tests passed"

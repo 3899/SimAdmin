@@ -504,43 +504,43 @@ PY
 }
 
 copy_lpac_tree() {
-  extract_dir="$1"
-  lpac_dst="$2"
-  asset_url="$3"
+  copy_extract_dir="$1"
+  copy_destination="$2"
+  copy_asset_url="$3"
 
-  if [ -f "${extract_dir}/lpac" ]; then
-    bundle_root="${extract_dir}"
-  elif [ -f "${extract_dir}/executables/lpac" ]; then
-    bundle_root="${extract_dir}/executables"
+  if [ -f "${copy_extract_dir}/lpac" ]; then
+    copy_bundle_root="${copy_extract_dir}"
+  elif [ -f "${copy_extract_dir}/executables/lpac" ]; then
+    copy_bundle_root="${copy_extract_dir}/executables"
   else
-    bundle_root="$(find "$extract_dir" -type f -name lpac -exec dirname {} \; | head -n 1 || true)"
+    copy_bundle_root="$(find "$copy_extract_dir" -type f -name lpac -exec dirname {} \; | head -n 1 || true)"
   fi
 
-  if [ -z "$bundle_root" ] || [ ! -f "${bundle_root}/lpac" ]; then
+  if [ -z "$copy_bundle_root" ] || [ ! -f "${copy_bundle_root}/lpac" ]; then
     echo "warning: downloaded lpac asset does not contain lpac executable" >&2
     return 1
   fi
 
-  rm -rf "${lpac_dst}"
-  mkdir -p "${lpac_dst}"
-  cp -R "${bundle_root}/." "${lpac_dst}/"
+  rm -rf "${copy_destination}"
+  mkdir -p "${copy_destination}"
+  cp -R "${copy_bundle_root}/." "${copy_destination}/"
 
-  if [ -d "${extract_dir}/lib" ] && [ ! -d "${lpac_dst}/lib" ]; then
-    mkdir -p "${lpac_dst}/lib"
-    cp -R "${extract_dir}/lib/." "${lpac_dst}/lib/"
+  if [ -d "${copy_extract_dir}/lib" ] && [ ! -d "${copy_destination}/lib" ]; then
+    mkdir -p "${copy_destination}/lib"
+    cp -R "${copy_extract_dir}/lib/." "${copy_destination}/lib/"
   fi
 
-  if [ -d "${extract_dir}/libraries" ] && [ ! -d "${lpac_dst}/lib" ]; then
-    mkdir -p "${lpac_dst}/lib"
-    cp -R "${extract_dir}/libraries/." "${lpac_dst}/lib/"
+  if [ -d "${copy_extract_dir}/libraries" ] && [ ! -d "${copy_destination}/lib" ]; then
+    mkdir -p "${copy_destination}/lib"
+    cp -R "${copy_extract_dir}/libraries/." "${copy_destination}/lib/"
   fi
 
-  chmod -R a+rX "${lpac_dst}"
-  chmod 0755 "${lpac_dst}/lpac"
+  chmod -R a+rX "${copy_destination}"
+  chmod 0755 "${copy_destination}/lpac"
 
-  cat > "${lpac_dst}/SOURCE.txt" <<EOF
+  cat > "${copy_destination}/SOURCE.txt" <<EOF
 lpac is installed from:
-${asset_url}
+${copy_asset_url}
 
 Project:
 https://github.com/estkme-group/lpac
