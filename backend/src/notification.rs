@@ -3613,6 +3613,193 @@ fn response_result(label: &str, status: StatusCode, body: String) -> Result<Stri
     Ok(format!("{} test successful (status: {})", label, status))
 }
 
+fn contains_verification_code_placeholder(s: &str) -> bool {
+    s.contains("{{验证码}}") || s.contains("{{verification_code}}")
+}
+
+fn is_standalone_verification_code_line(line: &str) -> bool {
+    let rem = line
+        .replace("{{验证码}}", "")
+        .replace("{{verification_code}}", "");
+    let trimmed = rem.trim();
+
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    let lower = trimmed.to_lowercase();
+    let keywords = [
+        "验证码",
+        "动态验证码",
+        "verification code",
+        "verification_code",
+        "code",
+        "otp",
+        "captcha",
+        "passcode",
+    ];
+
+    let mut stripped = lower;
+    for kw in keywords {
+        stripped = stripped.replace(kw, "");
+    }
+
+    stripped.chars().all(|c| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                ':' | '：'
+                    | '-'
+                    | '—'
+                    | '|'
+                    | ','
+                    | '，'
+                    | ';'
+                    | '；'
+                    | '['
+                    | ']'
+                    | '【'
+                    | '】'
+                    | '('
+                    | ')'
+                    | '（'
+                    | '）'
+                    | '"'
+                    | '\''
+                    | '📱'
+                    | '💬'
+                    | '🔑'
+                    | '🔒'
+            )
+    })
+}
+
+fn clean_inline_verification_code_placeholder(text: &str) -> String {
+    let mut result = text.to_string();
+
+    let bracketed_patterns = [
+        "（验证码: {{验证码}}）",
+        "（验证码：{{验证码}}）",
+        "（验证码{{验证码}}）",
+        "(验证码: {{验证码}})",
+        "(验证码：{{验证码}})",
+        "(验证码{{验证码}})",
+        "【验证码: {{验证码}}】",
+        "【验证码：{{验证码}}】",
+        "[验证码: {{验证码}}]",
+        "[验证码：{{验证码}}]",
+        "(Code: {{verification_code}})",
+        "(Verification Code: {{verification_code}})",
+        "（verification_code: {{verification_code}}）",
+    ];
+    for p in bracketed_patterns {
+        result = result.replace(p, "");
+    }
+
+    let prefix_patterns = [
+        "：验证码: {{验证码}}",
+        "：验证码：{{验证码}}",
+        "：验证码{{验证码}}",
+        ": 验证码: {{验证码}}",
+        ": 验证码：{{验证码}}",
+        ": 验证码{{验证码}}",
+        " - 验证码: {{验证码}}",
+        " - 验证码：{{验证码}}",
+        " - 验证码{{验证码}}",
+        " | 验证码: {{验证码}}",
+        " | 验证码：{{验证码}}",
+        " | 验证码{{验证码}}",
+        "，验证码: {{验证码}}",
+        "，验证码：{{验证码}}",
+        "，验证码{{验证码}}",
+        ", 验证码: {{验证码}}",
+        ", 验证码：{{验证码}}",
+        ", 验证码{{验证码}}",
+        "；验证码: {{验证码}}",
+        "；验证码：{{验证码}}",
+        "；验证码{{验证码}}",
+        "; 验证码: {{验证码}}",
+        "; 验证码：{{验证码}}",
+        "; 验证码{{验证码}}",
+        "：Code: {{verification_code}}",
+        ": Code: {{verification_code}}",
+        " - Code: {{verification_code}}",
+        " | Code: {{verification_code}}",
+        ", Code: {{verification_code}}",
+        "：{{verification_code}}",
+        ": {{verification_code}}",
+        " - {{verification_code}}",
+        " | {{verification_code}}",
+        "：{{验证码}}",
+        ": {{验证码}}",
+        " - {{验证码}}",
+        " | {{验证码}}",
+    ];
+    for p in prefix_patterns {
+        result = result.replace(p, "");
+    }
+
+    let suffix_patterns = [
+        "验证码: {{验证码}}，",
+        "验证码：{{验证码}}，",
+        "验证码: {{验证码}}, ",
+        "验证码：{{验证码}}, ",
+        "验证码: {{验证码}}；",
+        "验证码：{{验证码}}；",
+        "验证码: {{验证码}}; ",
+        "验证码：{{验证码}}; ",
+        "验证码: {{验证码}} - ",
+        "验证码：{{验证码}} - ",
+        "验证码: {{验证码}} | ",
+        "验证码：{{验证码}} | ",
+        "验证码: {{验证码}}",
+        "验证码：{{验证码}}",
+        "验证码 {{验证码}}",
+        "验证码{{验证码}}",
+        "动态验证码: {{验证码}}",
+        "动态验证码：{{验证码}}",
+        "动态验证码{{验证码}}",
+        "Verification Code: {{verification_code}}, ",
+        "Verification Code: {{verification_code}}",
+        "Code: {{verification_code}}, ",
+        "Code: {{verification_code}}",
+        "Code {{verification_code}}",
+        "code: {{verification_code}}",
+    ];
+    for p in suffix_patterns {
+        result = result.replace(p, "");
+    }
+
+    result
+        .replace("{{验证码}}", "")
+        .replace("{{verification_code}}", "")
+}
+
+fn clean_empty_verification_code_template(template: &str) -> String {
+    if !contains_verification_code_placeholder(template) {
+        return template.to_string();
+    }
+
+    let original_lines: Vec<&str> = template.split('\n').collect();
+    let mut lines = Vec::new();
+
+    for line in original_lines {
+        let trimmed_line = line.trim_end_matches('\r');
+        if contains_verification_code_placeholder(trimmed_line) {
+            if is_standalone_verification_code_line(trimmed_line) {
+                continue;
+            } else {
+                lines.push(clean_inline_verification_code_placeholder(trimmed_line));
+            }
+        } else {
+            lines.push(trimmed_line.to_string());
+        }
+    }
+
+    let joined = lines.join("\n");
+    clean_inline_verification_code_placeholder(&joined)
+}
+
 fn render_sms_template(
     template: &str,
     message: &SmsMessage,
@@ -3637,7 +3824,13 @@ fn render_sms_template(
     let timestamp = render_time_value(&message.timestamp, escape_json);
     let verification_code = extract_verification_code(&message.content).unwrap_or_default();
 
-    let rendered = template
+    let template_to_use = if verification_code.is_empty() {
+        clean_empty_verification_code_template(template)
+    } else {
+        template.to_string()
+    };
+
+    let rendered = template_to_use
         .replace("{{id}}", &message.id.to_string())
         .replace("{{phone_number}}", &message.phone_number)
         .replace("{{发送方号码}}", &message.phone_number)
@@ -3849,6 +4042,7 @@ mod tests {
             event_codes: Vec::new(),
             title_template: String::new(),
             template: String::new(),
+            custom_body: String::new(),
             quiet_hours: Vec::new(),
             ddns_failure_threshold: 1,
             device_status_items: crate::config::default_device_status_items(),
@@ -3880,6 +4074,7 @@ mod tests {
             event_codes: Vec::new(),
             title_template: String::new(),
             template: String::new(),
+            custom_body: String::new(),
             quiet_hours: Vec::new(),
             ddns_failure_threshold: 5,
             device_status_items: crate::config::default_device_status_items(),
@@ -4306,19 +4501,34 @@ mod tests {
         assert_eq!(sms_event.render_title(""), "16600001111：验证码123456");
 
         let sms_without_code = SmsMessage {
-            content: "普通短信内容".to_string(),
+            content: "xxx气象台2026年07月27日00时25分发布暴雨橙色预警信号".to_string(),
+            phone_number: "1063".to_string(),
             ..sms_with_code
         };
         let sms_event = NotificationEvent::Sms {
             message: &sms_without_code,
             context: &context,
         };
-        assert_eq!(sms_event.render_title(""), "16600001111");
+        assert_eq!(sms_event.render_title(""), "1063");
         assert_eq!(
             sms_event.render_title(&crate::config::default_rule_title_template(
                 NotificationEventType::Sms
             )),
-            "16600001111"
+            "1063"
+        );
+
+        let multiline_template = "📱 短信通知\n号码: {{发送方号码}}\n验证码: {{验证码}}\n内容: {{短信内容}}";
+        let rendered_multiline = render_sms_template(multiline_template, &sms_without_code, &context, false);
+        assert_eq!(
+            rendered_multiline,
+            "📱 短信通知\n号码: 1063\n内容: xxx气象台2026年07月27日00时25分发布暴雨橙色预警信号"
+        );
+
+        let inline_template = "号码: {{发送方号码}}, 验证码: {{验证码}}, 内容: {{短信内容}}";
+        let rendered_inline = render_sms_template(inline_template, &sms_without_code, &context, false);
+        assert_eq!(
+            rendered_inline,
+            "号码: 1063, 内容: xxx气象台2026年07月27日00时25分发布暴雨橙色预警信号"
         );
 
         let ddns = DdnsEvent::default();
