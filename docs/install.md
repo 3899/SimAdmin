@@ -24,12 +24,16 @@ curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.s
 
 ### 安装脚本动作说明
 
-- 从 GitHub Release 下载 `simadmin.tar.gz`。
+- 根据 `uname -m` 自动选择 GitHub Release 中的 ARM64 或 x86_64 musl 包。
+- ARM64 新包不可用时会回退到历史兼容文件名 `simadmin.tar.gz`；x86_64 不会使用该 ARM64 旧包。
+- 解压后校验 `meta.json` 中的架构，再替换当前程序。
 - 安装后端二进制到 `/opt/simadmin/simadmin`。
 - 安装前端到 `/opt/simadmin/www`。
 - 安装并启用 `simadmin.service`。
 - 安装并启用 `simadmin-modem-recovery.service`。
 - 配置 NetworkManager 忽略 `wwan*` 接口，避免与 SimAdmin 抢占蜂窝连接管理。
+
+当前官方构建目标为 `aarch64-unknown-linux-musl` 和 `x86_64-unknown-linux-musl`。如需覆盖自动检测，可设置 `SIMADMIN_TARGET_ARCH=arm64` 或 `SIMADMIN_TARGET_ARCH=amd64`；也可以通过 `ASSET_NAME` / `ASSET_URL` 指定自定义产物。
 
 ---
 

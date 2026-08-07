@@ -13,7 +13,8 @@ SERVICE_URL="${SERVICE_URL:-${RAW_BASE}/main/scripts/simadmin.service}"
 MODEM_RECOVERY_SCRIPT_URL="${MODEM_RECOVERY_SCRIPT_URL:-${RAW_BASE}/main/scripts/simadmin-modem-recovery.sh}"
 MODEM_RECOVERY_SERVICE_URL="${MODEM_RECOVERY_SERVICE_URL:-${RAW_BASE}/main/scripts/simadmin-modem-recovery.service}"
 ASSET_URL="${ASSET_URL:-}"
-ASSET_NAME="${ASSET_NAME:-simadmin.tar.gz}"
+ASSET_NAME="${ASSET_NAME:-}"
+SIMADMIN_TARGET_ARCH="${SIMADMIN_TARGET_ARCH:-}"
 SIMADMIN_INSTALL_LPAC="${SIMADMIN_INSTALL_LPAC:-1}"
 LPAC_REPO="${LPAC_REPO:-estkme-group/lpac}"
 LPAC_RELEASE_BASE_URL="${LPAC_RELEASE_BASE_URL:-https://github.com/${LPAC_REPO}/releases/latest/download}"
@@ -106,7 +107,44 @@ version_to_tag() {
 
 asset_url_from_tag() {
   tag="$1"
-  printf 'https://github.com/%s/releases/download/%s/simadmin.tar.gz\n' "$REPO" "$tag"
+  simadmin_asset_name="$(resolve_simadmin_asset_name)"
+  printf 'https://github.com/%s/releases/download/%s/%s\n' "$REPO" "$tag" "$simadmin_asset_name"
+}
+
+normalize_simadmin_arch() {
+  case "$1" in
+    aarch64|arm64)
+      printf '%s\n' "aarch64"
+      ;;
+    x86_64|amd64)
+      printf '%s\n' "x86_64"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+detect_simadmin_arch() {
+  if [ -n "$SIMADMIN_TARGET_ARCH" ]; then
+    normalize_simadmin_arch "$SIMADMIN_TARGET_ARCH"
+    return $?
+  fi
+
+  normalize_simadmin_arch "$(uname -m)"
+}
+
+resolve_simadmin_asset_name() {
+  if [ -n "$ASSET_NAME" ]; then
+    printf '%s\n' "$ASSET_NAME"
+    return 0
+  fi
+
+  simadmin_arch="$(detect_simadmin_arch)" || {
+    echo "error: unsupported architecture: $(uname -m)" >&2
+    return 1
+  }
+  printf 'simadmin-%s-unknown-linux-musl.tar.gz\n' "$simadmin_arch"
 }
 
 repo_version() {
@@ -124,7 +162,7 @@ resolve_asset_url() {
   fi
 
   if [ "$VERSION" = "latest" ]; then
-    printf 'https://github.com/%s/releases/latest/download/%s\n' "$REPO" "$ASSET_NAME"
+    printf 'https://github.com/%s/releases/latest/download/%s\n' "$REPO" "$(resolve_simadmin_asset_name)"
   else
     asset_url_from_tag "$(version_to_tag "$VERSION")"
   fi
@@ -141,10 +179,26 @@ fallback_asset_url() {
   return 1
 }
 
+legacy_arm64_asset_url() {
+  if [ -n "$ASSET_URL" ] || [ -n "$ASSET_NAME" ]; then
+    return 1
+  fi
+  if [ "$(detect_simadmin_arch)" != "aarch64" ]; then
+    return 1
+  fi
+
+  if [ "$VERSION" = "latest" ]; then
+    printf 'https://github.com/%s/releases/latest/download/simadmin.tar.gz\n' "$REPO"
+  else
+    printf 'https://github.com/%s/releases/download/%s/simadmin.tar.gz\n' "$REPO" "$(version_to_tag "$VERSION")"
+  fi
+}
+
 download_release_asset() {
   archive_path="$1"
   primary_url="$2"
   fallback_url=""
+  legacy_url=""
 
   echo "==> downloading release asset"
   if download_with_proxies "$primary_url" "$archive_path"; then
@@ -158,10 +212,22 @@ download_release_asset() {
     fi
   fi
 
+  if legacy_url="$(legacy_arm64_asset_url)" \
+    && [ "$legacy_url" != "$primary_url" ] \
+    && [ "$legacy_url" != "$fallback_url" ]; then
+    echo "==> architecture-specific asset unavailable, trying legacy arm64 asset"
+    if download_with_proxies "$legacy_url" "$archive_path"; then
+      return 0
+    fi
+  fi
+
   echo "error: failed to download OTA asset" >&2
   echo "       tried: $primary_url" >&2
   if [ -n "$fallback_url" ]; then
     echo "       tried: $fallback_url" >&2
+  fi
+  if [ -n "$legacy_url" ]; then
+    echo "       tried: $legacy_url" >&2
   fi
   exit 1
 }
@@ -775,6 +841,21 @@ main() {
   if [ ! -d "${tmp_dir}/pkg/www" ]; then
     echo "error: invalid package, missing frontend www directory" >&2
     exit 1
+  fi
+
+  expected_arch="$(detect_simadmin_arch)-unknown-linux-musl"
+  if [ -f "${tmp_dir}/pkg/meta.json" ]; then
+    package_arch="$(json_string_field arch < "${tmp_dir}/pkg/meta.json")"
+    if [ -z "$package_arch" ]; then
+      echo "error: invalid package, meta.json is missing arch" >&2
+      exit 1
+    fi
+    if [ "$package_arch" != "$expected_arch" ]; then
+      echo "error: package architecture mismatch: expected $expected_arch, got $package_arch" >&2
+      exit 1
+    fi
+  else
+    echo "warning: package has no meta.json; architecture could not be verified" >&2
   fi
 
   echo "==> stopping existing service"

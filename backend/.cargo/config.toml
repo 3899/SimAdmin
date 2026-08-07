@@ -2,7 +2,10 @@
 linker = "aarch64-unknown-linux-musl-gcc"
 rustflags = ["-C", "target-feature=+crt-static"]
 
+[target.x86_64-unknown-linux-musl]
+linker = "x86_64-unknown-linux-musl-gcc"
+rustflags = ["-C", "target-feature=+crt-static"]
+
 # 为构建脚本配置本地编译器
 [target.aarch64-apple-darwin]
 linker = "cc"
-

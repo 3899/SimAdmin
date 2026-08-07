@@ -81,6 +81,7 @@ SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的
 - 后端：Rust + Axum + zbus，主要通过 ModemManager D-Bus 接口管理 modem，并在部分场景使用 `mmcli`、`qmicli` 或 AT 直连兜底。
 - 前端：React + Vite + Material UI，提供仪表盘、SIM 卡管理、蜂窝网络、设备网络、短信管理、通知中心、自动化中心和 OTA 更新页面。
 - 部署形态：后端二进制同进程托管前端 SPA，默认安装到 `/opt/simadmin`，通过 systemd 运行。
+- 发布架构：提供 `aarch64-unknown-linux-musl` 与 `x86_64-unknown-linux-musl` 两种静态构建，安装脚本会按设备架构选择。
 
 健康检查整体按支持 ModemManager 的 Linux 蜂窝设备组织，不同 modem 固件、内核、ModemManager 版本暴露的能力不同，具体功能以实际设备为准。
 

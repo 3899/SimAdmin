@@ -30,335 +30,209 @@ permissions:
   contents: write
 
 jobs:
-  build-ota:
-    name: Build OTA Package
-    runs-on: ubuntu-24.04-arm
-    
+  prepare:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      current_version: ${{ steps.version.outputs.current_version }}
+      version_source: ${{ steps.version.outputs.version_source }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # 获取完整历史，用于 git commit hash
-      
+      - uses: actions/checkout@v4
       - name: Read VERSION
         id: version
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          CURRENT_VERSION=$(cat VERSION | tr -d '[:space:]')
-          VERSION=$(echo "$INPUT_VERSION" | tr -d '[:space:]')
-
+          CURRENT_VERSION=$(tr -d '[:space:]' < VERSION)
+          VERSION=$(printf '%s' "$INPUT_VERSION" | tr -d '[:space:]')
           if [ -z "$VERSION" ] || [ "$VERSION" = "auto" ]; then
             VERSION="$CURRENT_VERSION"
             SOURCE="VERSION file"
           else
             SOURCE="workflow input"
           fi
-
-          if [ -z "$VERSION" ]; then
-            echo "❌ 错误: 版本号不能为空"
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+(\.[0-9]+){1,3}([-.][0-9A-Za-z]+)*$'; then
+            echo "Invalid version: $VERSION" >&2
             exit 1
           fi
+          {
+            echo "version=$VERSION"
+            echo "current_version=$CURRENT_VERSION"
+            echo "version_source=$SOURCE"
+          } >> "$GITHUB_OUTPUT"
 
-          if ! echo "$VERSION" | grep -Eq '^[0-9]+(\.[0-9]+){1,3}([-.][0-9A-Za-z]+)*$'; then
-            echo "❌ 错误: 版本号格式不合法: $VERSION"
-            echo "示例: 1.0.0, 1.0.0-beta.1"
-            exit 1
-          fi
+  build:
+    name: Build ${{ matrix.target }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-          echo "version_source=$SOURCE" >> $GITHUB_OUTPUT
-          echo "📦 当前 VERSION 文件版本: $CURRENT_VERSION"
-          echo "📦 本次打包版本号: $VERSION ($SOURCE)"
-      
-      # ==================== 安装 Rust 工具链 ====================
+      - name: Sync version numbers
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          printf '%s\n' "$VERSION" > VERSION
+          sed -i "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" backend/Cargo.toml
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" frontend/package.json
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-unknown-linux-musl
-      
-      # ==================== 安装交叉编译工具链 ====================
-      - name: Install cross-compilation toolchain
+          targets: ${{ matrix.target }}
+
+      - name: Install native build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
+          if [ "${{ inputs.use_upx }}" = "true" ]; then
+            sudo apt-get install -y upx-ucl
+          fi
           musl-gcc --version
-      
-      # ==================== 安装 UPX (可选) ====================
-      - name: Install UPX
-        if: inputs.use_upx == true
-        run: |
-          sudo apt-get install -y upx-ucl
-          upx --version
-      
-      # ==================== 缓存 Rust 依赖 ====================
+
       - name: Cache Rust dependencies
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             backend/target/
-          key: ${{ runner.os }}-musl-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-musl-cargo-
-      
-      # ==================== 同步版本号 ====================
-      - name: Sync version numbers
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          echo "同步版本号: $VERSION"
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-cargo-${{ hashFiles('backend/Cargo.lock') }}
 
-          # 更新根目录 VERSION，确保 build.rs 注入的 APP_VERSION 与本次 OTA 包一致
-          printf "%s\n" "$VERSION" > VERSION
-          
-          # 更新 backend/Cargo.toml
-          sed -i "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" backend/Cargo.toml
-          
-          # 更新 frontend/package.json
-          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" frontend/package.json
-          
-          echo "✅ 版本号同步完成"
-      
-      # ==================== 构建后端 ====================
-      - name: Build backend (aarch64-unknown-linux-musl)
+      - name: Build backend
         working-directory: backend
+        env:
+          TARGET: ${{ matrix.target }}
+          SQLITE3_STATIC: '1'
+          LIBSQLITE3_SYS_USE_PKG_CONFIG: '0'
         run: |
-          echo "🦀 构建后端 (aarch64-unknown-linux-musl)..."
-          
-          # 设置交叉编译环境变量
-          export CC_AARCH64_UNKNOWN_LINUX_MUSL=musl-gcc
-          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
-          export SQLITE3_STATIC=1
-          export LIBSQLITE3_SYS_USE_PKG_CONFIG=0
-          
-          # 构建
-          cargo build --release --target aarch64-unknown-linux-musl
-          
-          BINARY_PATH="target/aarch64-unknown-linux-musl/release/simadmin"
-          
-          echo "✅ 后端构建完成！"
-          ls -lh "$BINARY_PATH"
-          file "$BINARY_PATH"
-      
-      # ==================== UPX 压缩 (可选) ====================
-      - name: Compress binary with UPX
+          case "$TARGET" in
+            aarch64-unknown-linux-musl)
+              export CC_aarch64_unknown_linux_musl=musl-gcc
+              export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
+              ;;
+            x86_64-unknown-linux-musl)
+              export CC_x86_64_unknown_linux_musl=musl-gcc
+              export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
+              ;;
+          esac
+          cargo build --locked --release --target "$TARGET"
+          file "target/$TARGET/release/simadmin"
+
+      - name: Compress backend with UPX
         if: inputs.use_upx == true
-        run: |
-          BINARY_PATH="backend/target/aarch64-unknown-linux-musl/release/simadmin"
-          
-          echo "🗜️  UPX 压缩中..."
-          BEFORE_SIZE=$(stat -c%s "$BINARY_PATH")
-          
-          upx --best --lzma "$BINARY_PATH"
-          
-          AFTER_SIZE=$(stat -c%s "$BINARY_PATH")
-          RATIO=$(echo "scale=1; 100 - ($AFTER_SIZE * 100 / $BEFORE_SIZE)" | bc)
-          
-          echo "✅ 压缩完成！节省: ${RATIO}%"
-          ls -lh "$BINARY_PATH"
-      
-      # ==================== 设置 Node.js 环境 ====================
+        env:
+          TARGET: ${{ matrix.target }}
+        run: upx --best --lzma "backend/target/$TARGET/release/simadmin"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-      
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 9
-      
-      - name: Get pnpm store directory
-        shell: bash
-        run: |
-          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-      
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-      
-      # ==================== 构建前端 ====================
+
       - name: Build frontend
         working-directory: frontend
         run: |
-          echo "🎨 构建前端..."
           pnpm install --frozen-lockfile
-          pnpm run build
-          
-          echo "✅ 前端构建完成！"
-          ls -lh dist/
-      
-      # ==================== 打包 OTA ====================
-      - name: Package OTA
-        run: |
-          echo "=========================================="
-          echo "  生成 OTA 更新包"
-          echo "=========================================="
-          echo ""
-          
-          VERSION="${{ steps.version.outputs.version }}"
-          COMMIT=$(git rev-parse --short HEAD)
-          BUILD_TIME=$(TZ=Asia/Shanghai date +"%Y-%m-%dT%H:%M:%S+08:00")
-          ARCH="aarch64-unknown-linux-musl"
-          
-          BINARY_PATH="backend/target/aarch64-unknown-linux-musl/release/simadmin"
-          FRONTEND_DIR="frontend/dist"
-          
-          # 检查构建产物
-          if [ ! -f "$BINARY_PATH" ]; then
-            echo "❌ 错误: 后端二进制不存在"
-            exit 1
-          fi
-          
-          if [ ! -d "$FRONTEND_DIR" ]; then
-            echo "❌ 错误: 前端构建产物不存在"
-            exit 1
-          fi
-          
-          # 创建临时目录
-          OTA_TMP=$(mktemp -d)
-          
-          echo "📦 版本: $VERSION"
-          echo "📝 Commit: $COMMIT"
-          echo "🕐 构建时间: $BUILD_TIME"
-          echo "📍 架构: $ARCH"
-          echo ""
-          
-          # 复制后端二进制
-          echo "📋 复制后端二进制..."
-          cp "$BINARY_PATH" "$OTA_TMP/simadmin"
-          chmod 755 "$OTA_TMP/simadmin"
-          
-          # 计算二进制 MD5 (Linux)
-          BINARY_MD5=$(md5sum "$OTA_TMP/simadmin" | cut -d' ' -f1)
-          echo "   MD5: $BINARY_MD5"
-          
-          # 复制前端文件
-          echo "📋 复制前端文件..."
-          mkdir -p "$OTA_TMP/www"
-          cp -r "$FRONTEND_DIR"/* "$OTA_TMP/www/"
+          pnpm run lint
+          pnpm exec vite build
 
-          # 计算前端 MD5 (Linux)
-          echo "📋 计算前端 MD5..."
-          FRONTEND_MD5=$(find "$OTA_TMP/www" -type f -exec md5sum {} \; | cut -d' ' -f1 | sort | md5sum | cut -d' ' -f1)
-          echo "   MD5: $FRONTEND_MD5"
-          
-          # 生成 meta.json
-          echo "📋 生成 meta.json..."
-          cat > "$OTA_TMP/meta.json" << EOF
+      - name: Package OTA
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          ./scripts/pack-ota.sh --target="$TARGET"
+          SOURCE="release/simadmin_${VERSION}_${TARGET}.tar.gz"
+          DEST="release/simadmin-${TARGET}.tar.gz"
+          mv "$SOURCE" "$DEST"
+          if [ "$TARGET" = "aarch64-unknown-linux-musl" ]; then
+            cp "$DEST" release/simadmin.tar.gz
+          fi
+          sha256sum release/*.tar.gz
+
+      - name: Upload OTA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ota-${{ matrix.target }}
+          path: release/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download OTA artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ota-*
+          path: release
+          merge-multiple: true
+
+      - name: Generate checksums and release notes
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          cd release
+          sha256sum -- ./*.tar.gz > SHA256SUMS
           {
-              "version": "$VERSION",
-              "commit": "$COMMIT",
-              "build_time": "$BUILD_TIME",
-              "binary_md5": "$BINARY_MD5",
-              "frontend_md5": "$FRONTEND_MD5",
-              "arch": "$ARCH"
-          }
-          EOF
-          
-          cat "$OTA_TMP/meta.json"
-          echo ""
-          
-          # 创建输出目录
-          mkdir -p release
-          
-          # 打包
-          OTA_FILE="release/simadmin.tar.gz"
-          echo "📦 打包 OTA 更新包..."
-          cd "$OTA_TMP"
-          tar -czf "$GITHUB_WORKSPACE/$OTA_FILE" meta.json simadmin www
-          cd "$GITHUB_WORKSPACE"
-          
-          # 显示结果
-          echo ""
-          echo "=========================================="
-          echo "✅ OTA 更新包打包完成！"
-          echo "=========================================="
-          echo ""
-          echo "📍 输出文件: $OTA_FILE"
-          ls -lh "$OTA_FILE"
-          echo ""
-          echo "📋 包内容:"
-          tar -tzf "$OTA_FILE" | head -20
-          echo ""
-          
-          # 计算包的 MD5 和 SHA-256
-          OTA_MD5=$(md5sum "$OTA_FILE" | cut -d' ' -f1)
-          OTA_SHA256=$(sha256sum "$OTA_FILE" | cut -d' ' -f1)
-          echo "📝 OTA 包 MD5: $OTA_MD5"
-          echo "📝 OTA 包 SHA-256: $OTA_SHA256"
-          echo ""
-          
-          # 保存到输出
-          echo "ota_file=$OTA_FILE" >> $GITHUB_OUTPUT
-          echo "ota_md5=$OTA_MD5" >> $GITHUB_OUTPUT
-          echo "ota_sha256=$OTA_SHA256" >> $GITHUB_OUTPUT
-          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
-        id: package
-      
-      # ==================== 发布 OTA 包为 Release Asset ====================
-      - name: Publish OTA package
+            echo '## OTA 更新包'
+            echo
+            echo "版本: $VERSION"
+            echo
+            echo "- \`simadmin-aarch64-unknown-linux-musl.tar.gz\`: ARM64"
+            echo "- \`simadmin-x86_64-unknown-linux-musl.tar.gz\`: x86_64 / AMD64"
+            echo "- \`simadmin.tar.gz\`: ARM64 兼容别名"
+            echo
+            echo '安装脚本会自动选择与设备匹配的架构。'
+            echo
+            echo '### SHA-256'
+            echo "\`\`\`text"
+            cat SHA256SUMS
+            echo "\`\`\`"
+          } > RELEASE_BODY.md
+
+      - name: Publish OTA packages
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: SimAdmin_v${{ steps.version.outputs.version }}
-          files: |
-            release/simadmin.tar.gz
+          tag_name: v${{ needs.prepare.outputs.version }}
+          name: SimAdmin_v${{ needs.prepare.outputs.version }}
+          files: release/*.tar.gz
+          body_path: release/RELEASE_BODY.md
           overwrite_files: true
           generate_release_notes: true
-          body: |
-            ## OTA 更新包
-            
-            ### 版本信息
-            
-            - **版本**: ${{ steps.version.outputs.version }}
-            - **Commit**: ${{ github.sha }}
-            - **构建时间**: ${{ steps.package.outputs.build_time }}
-            - **发布类型**: ${{ inputs.release_type }}
-            - **文件名**: `simadmin.tar.gz`
-            - **MD5**: `${{ steps.package.outputs.ota_md5 }}`
-            - **SHA-256**: `${{ steps.package.outputs.ota_sha256 }}`
-            
-            ### 安装说明
-            
-            ```bash
-            # 上传 OTA 包到设备
-            curl -X POST http://IP:3000/api/ota/upload \
-              -F "file=@simadmin.tar.gz"
-            
-            # 开始 OTA 更新
-            curl -X POST http://IP:3000/api/ota/apply
-            ```
           draft: false
           prerelease: ${{ inputs.release_type == '预发布版（pre-release）' }}
           make_latest: ${{ inputs.release_type == '最新正式版（latest release）' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-      # ==================== 构建摘要 ====================
-      - name: Build Summary
+
+      - name: Build summary
         run: |
-          echo "## 🎉 OTA 包构建完成" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| 项目 | 值 |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-----|" >> $GITHUB_STEP_SUMMARY
-          echo "| VERSION 文件版本 | ${{ steps.version.outputs.current_version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 版本 | ${{ steps.version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 版本来源 | ${{ steps.version.outputs.version_source }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 发布类型 | ${{ inputs.release_type }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 架构 | aarch64-unknown-linux-musl |" >> $GITHUB_STEP_SUMMARY
-          echo "| UPX 压缩 | ${{ inputs.use_upx }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📦 产物" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ steps.package.outputs.ota_file }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- MD5: \`${{ steps.package.outputs.ota_md5 }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- SHA-256: \`${{ steps.package.outputs.ota_sha256 }}\`" >> $GITHUB_STEP_SUMMARY
+          {
+            echo '## OTA 多架构构建完成'
+            echo
+            echo '- aarch64-unknown-linux-musl'
+            echo '- x86_64-unknown-linux-musl'
+            echo
+            cat release/SHA256SUMS
+          } >> "$GITHUB_STEP_SUMMARY"

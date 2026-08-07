@@ -3,6 +3,7 @@
 ## 目标设备运行要求
 
 - **操作系统**：Linux / Debian 系统。
+- **CPU 架构**：ARM64 (`aarch64`) 或 x86_64 (`amd64`)；安装与 OTA 包必须和设备架构一致。
 - **系统管理器**：systemd。
 - **权限**：需要 root 运行权限。
 - **IPC 机制**：system D-Bus。

@@ -7,7 +7,23 @@ set -euo pipefail
 # 切换到项目根目录
 cd "$(dirname "$0")/.."
 
-TARGET="aarch64-unknown-linux-musl"
+TARGET="${TARGET:-aarch64-unknown-linux-musl}"
+
+normalize_target() {
+    case "$1" in
+        aarch64|arm64|aarch64-unknown-linux-musl)
+            echo "aarch64-unknown-linux-musl"
+            ;;
+        x86_64|amd64|x86_64-unknown-linux-musl)
+            echo "x86_64-unknown-linux-musl"
+            ;;
+        *)
+            echo "❌ 错误: 不支持的构建目标: $1" >&2
+            echo "支持: aarch64-unknown-linux-musl, x86_64-unknown-linux-musl" >&2
+            exit 1
+            ;;
+    esac
+}
 
 is_macos() {
     [[ "${OSTYPE:-}" == darwin* ]]
@@ -43,7 +59,7 @@ run_sed_in_place() {
 print_windows_notice() {
     if is_windows_bash; then
         echo "⚠️  检测到 Windows Bash 环境。"
-        echo "   完整 OTA 后端需要 Linux aarch64 musl 交叉工具链。"
+        echo "   完整 OTA 后端需要 Linux musl 交叉工具链 ($TARGET)。"
         echo "   推荐在 WSL2 Ubuntu 中运行: ./scripts/build.sh --no-upx"
         echo ""
     fi
@@ -78,6 +94,9 @@ for arg in "$@"; do
         --no-ota)
             SKIP_OTA=true
             ;;
+        --target=*)
+            TARGET="${arg#*=}"
+            ;;
         --help|-h)
             echo "用法: ./scripts/build.sh [选项]"
             echo ""
@@ -86,6 +105,7 @@ for arg in "$@"; do
             echo "  --frontend-only  只构建前端"
             echo "  --no-upx         禁用 UPX 压缩 (默认启用)"
             echo "  --no-ota         跳过 OTA 包生成"
+            echo "  --target=TARGET   构建目标: aarch64 或 x86_64 (默认: aarch64)"
             echo "  --help, -h       显示帮助信息"
             echo ""
             echo "示例:"
@@ -93,10 +113,13 @@ for arg in "$@"; do
             echo "  ./scripts/build.sh --no-upx           # 不压缩"
             echo "  ./scripts/build.sh --no-ota           # 不生成 OTA 包"
             echo "  ./scripts/build.sh --frontend-only    # 仅构建前端"
+            echo "  ./scripts/build.sh --target=x86_64    # 构建 x86_64 OTA 包"
             exit 0
             ;;
     esac
 done
+
+TARGET="$(normalize_target "$TARGET")"
 
 print_windows_notice
 
@@ -175,31 +198,36 @@ if [ "$BUILD_BACKEND" = true ]; then
         fi
     fi
 
-    # 检查交叉编译器
-    if ! command -v aarch64-unknown-linux-musl-gcc &> /dev/null; then
-        echo "❌ 错误: 未找到 aarch64-unknown-linux-musl-gcc"
-        echo ""
-        echo "请安装 aarch64 Linux musl 交叉编译工具链。"
-        if is_windows_bash; then
-            echo "Windows 原生环境不建议直接构建后端 OTA 包，推荐使用 WSL2 Ubuntu。"
-        fi
-        echo ""
-        echo "macOS 可参考:"
-        echo "  brew tap messense/macos-cross-toolchains"
-        echo "  brew install aarch64-unknown-linux-musl"
-        echo ""
-        echo "WSL/Linux 请安装可提供 aarch64-unknown-linux-musl-gcc 的交叉工具链，"
-        echo "或使用 GitHub Actions 的 OTA 打包工作流。"
-        exit 1
-    fi
+    case "$TARGET" in
+        aarch64-unknown-linux-musl)
+            MUSL_CC="aarch64-unknown-linux-musl-gcc"
+            if ! command -v "$MUSL_CC" >/dev/null 2>&1; then
+                echo "❌ 错误: 未找到 $MUSL_CC"
+                echo "请安装 aarch64 Linux musl 交叉编译工具链，或使用 GitHub Actions。"
+                exit 1
+            fi
+            export CC_aarch64_unknown_linux_musl="$MUSL_CC"
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$MUSL_CC"
+            ;;
+        x86_64-unknown-linux-musl)
+            if command -v x86_64-unknown-linux-musl-gcc >/dev/null 2>&1; then
+                MUSL_CC="x86_64-unknown-linux-musl-gcc"
+            elif [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]] \
+                && command -v musl-gcc >/dev/null 2>&1; then
+                MUSL_CC="musl-gcc"
+            else
+                echo "❌ 错误: 未找到 x86_64 musl 编译器"
+                echo "请安装 x86_64-unknown-linux-musl-gcc；x86_64 Linux 也可安装 musl-tools。"
+                exit 1
+            fi
+            export CC_x86_64_unknown_linux_musl="$MUSL_CC"
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$MUSL_CC"
+            ;;
+    esac
     
     cd backend
 
     # 设置交叉编译环境变量
-    export CC_aarch64_unknown_linux_musl=aarch64-unknown-linux-musl-gcc
-    export CXX_aarch64_unknown_linux_musl=aarch64-unknown-linux-musl-g++
-    export AR_aarch64_unknown_linux_musl=aarch64-unknown-linux-musl-ar
-    export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-unknown-linux-musl-gcc
     export SQLITE3_STATIC=1
     export LIBSQLITE3_SYS_USE_PKG_CONFIG=0
 
@@ -334,7 +362,7 @@ EOF
         mkdir -p release
         
         # 打包
-        OTA_FILE="release/simadmin_${VERSION}.tar.gz"
+        OTA_FILE="release/simadmin_${VERSION}_${TARGET}.tar.gz"
         echo "打包 OTA..."
         cd "$OTA_TMP"
         tar -czf - meta.json simadmin www > "$OLDPWD/$OTA_FILE"
