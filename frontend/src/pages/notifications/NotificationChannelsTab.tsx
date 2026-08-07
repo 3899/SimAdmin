@@ -61,6 +61,9 @@ const channelTextFieldSx = {
   '& .MuiFormControlLabel-label': {
     fontSize: '14px',
   },
+  '& .MuiMenuItem-root': {
+    fontSize: '14px',
+  },
 } as const
 
 type ApiBaseUrlHelpKind = 'wecom_app' | 'telegram'
@@ -204,6 +207,7 @@ export default function NotificationChannelsTab({
       minRows={extra?.multiline ? 3 : undefined}
       fullWidth
       sx={channelTextFieldSx}
+      SelectProps={{ MenuProps: { PaperProps: { sx: { '& .MuiMenuItem-root': { fontSize: '14px' } } } } }}
       slotProps={extra?.endAdornment ? {
         input: {
           endAdornment: extra.endAdornment,
@@ -211,7 +215,7 @@ export default function NotificationChannelsTab({
       } : undefined}
     >
       {extra?.select?.map((option) => (
-        <MenuItem key={option} value={option}>{option || '默认'}</MenuItem>
+        <MenuItem key={option} value={option} sx={{ fontSize: '14px' }}>{option || '默认'}</MenuItem>
       ))}
     </TextField>
   )
@@ -415,6 +419,7 @@ export default function NotificationChannelsTab({
       case 'webhook':
         return (
           <Box sx={fieldStackSx}>
+            {renderStringField(channel, 'http_method', '请求方式', { select: ['POST', 'GET'] })}
             {renderStringField(channel, 'url', 'Webhook URL')}
             {renderStringField(channel, 'secret', '签名密钥', { password: true })}
             <TextField
@@ -526,10 +531,10 @@ export default function NotificationChannelsTab({
               value={emailPresetValue(channel)}
               onChange={(event: ChangeEvent<HTMLInputElement>) => applyEmailPreset(channel, event.target.value)}
               fullWidth
-              sx={channelTextFieldSx}
+              SelectProps={{ MenuProps: { PaperProps: { sx: { '& .MuiMenuItem-root': { fontSize: '14px' } } } } }}
             >
               {EMAIL_PROVIDER_PRESETS.map((preset) => (
-                <MenuItem key={preset.value} value={preset.value}>{preset.label}</MenuItem>
+                <MenuItem key={preset.value} value={preset.value} sx={{ fontSize: '14px' }}>{preset.label}</MenuItem>
               ))}
             </TextField>
             <Box display="grid" gridTemplateColumns={{ xs: '1fr', sm: 'minmax(0, 1fr) 160px' }} gap={2}>

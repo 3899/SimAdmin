@@ -77,9 +77,10 @@ export default function DeviceStatusRuleEditor({
           label="推送方式"
           value={schedule.mode}
           onChange={(event: ChangeEvent<HTMLInputElement>) => patchSchedule({ mode: event.target.value as DeviceStatusSchedule['mode'] })}
+          SelectProps={{ MenuProps: { PaperProps: { sx: { '& .MuiMenuItem-root': { fontSize: '14px' } } } } }}
         >
-          <MenuItem value="fixed">定时</MenuItem>
-          <MenuItem value="interval">间隔</MenuItem>
+          <MenuItem value="fixed" sx={{ fontSize: '14px' }}>定时</MenuItem>
+          <MenuItem value="interval" sx={{ fontSize: '14px' }}>间隔</MenuItem>
         </TextField>
         {schedule.mode === 'interval' ? (
           <TextField
@@ -179,8 +180,9 @@ export default function DeviceStatusRuleEditor({
                             onClick={(event) => event.stopPropagation()}
                             onChange={(event: ChangeEvent<HTMLInputElement>) => onSmsPeriodChange(event.target.value)}
                             sx={{ minWidth: 132 }}
+                            SelectProps={{ MenuProps: { PaperProps: { sx: { '& .MuiMenuItem-root': { fontSize: '14px' } } } } }}
                           >
-                            {PERIODS.map((period) => <MenuItem key={period.value} value={period.value}>{period.label}</MenuItem>)}
+                            {PERIODS.map((period) => <MenuItem key={period.value} value={period.value} sx={{ fontSize: '14px' }}>{period.label}</MenuItem>)}
                           </TextField>
                         )}
                       </Box>

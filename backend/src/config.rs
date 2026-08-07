@@ -19,6 +19,8 @@ pub struct WebhookConfig {
     pub enabled: bool,
     #[serde(default)]
     pub url: String,
+    #[serde(default = "default_webhook_http_method")]
+    pub http_method: String,
     #[serde(default = "default_true")]
     pub forward_sms: bool,
     #[serde(default = "default_true")]
@@ -455,6 +457,10 @@ pub struct NotificationRule {
     pub title_template: String,
     #[serde(default)]
     pub template: String,
+    /// 自定义请求体 JSON 模板。非空时覆盖默认的纯文本发送逻辑，
+    /// 直接将渲染后的 JSON 作为通道的 HTTP 请求体发送。
+    #[serde(default)]
+    pub custom_body: String,
     #[serde(default)]
     pub quiet_hours: Vec<QuietHoursSchedule>,
     #[serde(default = "default_ddns_failure_threshold")]
@@ -771,11 +777,16 @@ fn default_email_message_format() -> String {
     "plain".to_string()
 }
 
+fn default_webhook_http_method() -> String {
+    "POST".to_string()
+}
+
 impl Default for WebhookConfig {
     fn default() -> Self {
         Self {
             enabled: false,
             url: String::new(),
+            http_method: default_webhook_http_method(),
             forward_sms: true,
             forward_calls: true,
             forward_ddns: true,
@@ -1270,6 +1281,7 @@ fn push_legacy_rule(
         event_codes: Vec::new(),
         title_template: default_rule_title_template(event_type),
         template,
+        custom_body: String::new(),
         quiet_hours: Vec::new(),
         ddns_failure_threshold: default_ddns_failure_threshold(),
         device_status_items: default_device_status_items(),
@@ -1705,6 +1717,7 @@ mod tests {
             event_codes: Vec::new(),
             title_template: String::new(),
             template: "版本号: {{版本号}}\nCommit: {{Commit}}\n构建时间: {{构建时间}}\nMD5: {{MD5}}\n来源: {{本机号码}}".to_string(),
+            custom_body: String::new(),
             quiet_hours: Vec::new(),
             ddns_failure_threshold: 1,
             device_status_items: default_device_status_items(),

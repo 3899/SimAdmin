@@ -576,6 +576,7 @@ export interface ConnectivityCheckResponse {
 export interface WebhookConfig {
   enabled: boolean
   url: string
+  http_method: string
   forward_sms: boolean
   forward_calls: boolean
   forward_ddns: boolean
@@ -766,6 +767,7 @@ export interface NotificationRule {
   event_codes: string[]
   title_template: string
   template: string
+  custom_body: string
   quiet_hours: QuietHoursSchedule[]
   ddns_failure_threshold: number
   device_status_items: string[]

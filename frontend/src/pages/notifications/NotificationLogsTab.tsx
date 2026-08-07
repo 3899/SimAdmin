@@ -54,6 +54,9 @@ const filterTextFieldSx = {
   '& .MuiInputBase-input': {
     fontSize: 14,
   },
+  '& .MuiMenuItem-root': {
+    fontSize: 14,
+  },
   '& .MuiOutlinedInput-root': {
     bgcolor: 'transparent',
     borderRadius: 1.5,
@@ -241,9 +244,10 @@ export default function NotificationLogsTab({
             value={logType}
             onChange={(event: ChangeEvent<HTMLInputElement>) => onLogTypeChange(event.target.value)}
             sx={[{ minWidth: 150 }, filterTextFieldSx]}
+            SelectProps={{ MenuProps: { PaperProps: { sx: { '& .MuiMenuItem-root': { fontSize: '14px' } } } } }}
           >
-            <MenuItem value="">所有消息类型</MenuItem>
-            {EVENT_TYPES.map((type) => <MenuItem key={type.key} value={type.key}>{type.label}</MenuItem>)}
+            <MenuItem value="" sx={{ fontSize: '14px' }}>所有消息类型</MenuItem>
+            {EVENT_TYPES.map((type) => <MenuItem key={type.key} value={type.key} sx={{ fontSize: '14px' }}>{type.label}</MenuItem>)}
           </TextField>
           <TextField
             select
@@ -252,9 +256,10 @@ export default function NotificationLogsTab({
             value={logStatus}
             onChange={(event: ChangeEvent<HTMLInputElement>) => onLogStatusChange(event.target.value)}
             sx={[{ minWidth: 140 }, filterTextFieldSx]}
+            SelectProps={{ MenuProps: { PaperProps: { sx: { '& .MuiMenuItem-root': { fontSize: '14px' } } } } }}
           >
-            <MenuItem value="">所有状态</MenuItem>
-            {LOG_STATUS_OPTIONS.map((status) => <MenuItem key={status.value} value={status.value}>{status.label}</MenuItem>)}
+            <MenuItem value="" sx={{ fontSize: '14px' }}>所有状态</MenuItem>
+            {LOG_STATUS_OPTIONS.map((status) => <MenuItem key={status.value} value={status.value} sx={{ fontSize: '14px' }}>{status.label}</MenuItem>)}
           </TextField>
           <DateRangePicker startDate={logStartDate} endDate={logEndDate} onChange={onLogDateRangeChange} minWidth={280} />
           <TextField
@@ -433,10 +438,10 @@ export default function NotificationLogsTab({
               value={clearType}
               onChange={(event: ChangeEvent<HTMLInputElement>) => setClearType(event.target.value)}
               fullWidth
-              sx={filterTextFieldSx}
+              SelectProps={{ MenuProps: { PaperProps: { sx: { '& .MuiMenuItem-root': { fontSize: '14px' } } } } }}
             >
-              <MenuItem value="">所有类型 (不限)</MenuItem>
-              {EVENT_TYPES.map((type) => <MenuItem key={type.key} value={type.key}>{type.label}</MenuItem>)}
+              <MenuItem value="" sx={{ fontSize: '14px' }}>所有类型 (不限)</MenuItem>
+              {EVENT_TYPES.map((type) => <MenuItem key={type.key} value={type.key} sx={{ fontSize: '14px' }}>{type.label}</MenuItem>)}
             </TextField>
             <TextField
               select
@@ -446,9 +451,10 @@ export default function NotificationLogsTab({
               onChange={(event: ChangeEvent<HTMLInputElement>) => setClearStatus(event.target.value)}
               fullWidth
               sx={filterTextFieldSx}
+              SelectProps={{ MenuProps: { PaperProps: { sx: { '& .MuiMenuItem-root': { fontSize: '14px' } } } } }}
             >
-              <MenuItem value="">所有状态 (不限)</MenuItem>
-              {LOG_STATUS_OPTIONS.map((status) => <MenuItem key={status.value} value={status.value}>{status.label}</MenuItem>)}
+              <MenuItem value="" sx={{ fontSize: '14px' }}>所有状态 (不限)</MenuItem>
+              {LOG_STATUS_OPTIONS.map((status) => <MenuItem key={status.value} value={status.value} sx={{ fontSize: '14px' }}>{status.label}</MenuItem>)}
             </TextField>
             <Box>
               <Typography variant="body2" color="text.secondary" mb={1}>时间范围 (按日计算)</Typography>

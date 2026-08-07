@@ -1,8 +1,9 @@
-import { type ChangeEvent, type MutableRefObject, useRef } from 'react'
+import { type ChangeEvent, type MutableRefObject, useRef, useState } from 'react'
 import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
+  Alert,
   Avatar,
   Box,
   Button,
@@ -11,6 +12,7 @@ import {
   Checkbox,
   Chip,
   CircularProgress,
+  Collapse,
   FormControlLabel,
   IconButton,
   List,
@@ -20,11 +22,14 @@ import {
   Paper,
   Switch,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
+  Tooltip,
   Typography,
   useMediaQuery,
 } from '@mui/material'
 import { alpha, type Theme } from '@mui/material/styles'
-import { Add, DeleteOutline, Dns, ExpandMore, NotificationsActive, QueryStats, Save, Sms, SystemUpdateAlt, AutoMode } from '@mui/icons-material'
+import { Add, Code, DeleteOutline, Dns, ExpandMore, HelpOutline, NotificationsActive, QueryStats, Save, Sms, SystemUpdateAlt, AutoMode } from '@mui/icons-material'
 import type {
   MatcherOperator,
   NotificationConfig,
@@ -72,6 +77,9 @@ const ruleTextFieldSx = {
   '& .MuiFormControlLabel-label': {
     fontSize: '14px',
   },
+  '& .MuiMenuItem-root': {
+    fontSize: '14px',
+  },
 } as const
 
 type NotificationRulesTabProps = {
@@ -97,6 +105,41 @@ export default function NotificationRulesTab({
 }: NotificationRulesTabProps) {
   const titleInputRefs = useRef<Record<string, HTMLTextAreaElement | HTMLInputElement | null>>({})
   const bodyTextareaRefs = useRef<Record<string, HTMLTextAreaElement | HTMLInputElement | null>>({})
+  const customBodyTextareaRefs = useRef<Record<string, HTMLTextAreaElement | HTMLInputElement | null>>({})
+  const [showExamples, setShowExamples] = useState<Record<string, boolean>>({})
+
+  const isJsonValid = (text: string): boolean => {
+    if (!text.trim()) return true
+    try {
+      JSON.parse(text)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  const formatJson = (text: string): string => {
+    try {
+      return JSON.stringify(JSON.parse(text), null, 2)
+    } catch {
+      return text
+    }
+  }
+
+  const CUSTOM_BODY_EXAMPLES = [
+    {
+      label: '飞书卡片消息',
+      body: `{\n  "msg_type": "interactive",\n  "card": {\n    "header": {\n      "title": { "tag": "plain_text", "content": "📱 短信通知" },\n      "template": "blue"\n    },\n    "elements": [\n      {\n        "tag": "div",\n        "text": { "tag": "lark_md", "content": "**号码:** {{发送方号码}}\\n**内容:** {{短信内容}}\\n**时间:** {{时间}}" }\n      }\n    ]\n  }\n}`,
+    },
+    {
+      label: 'Quicker 推送',
+      body: `{\n  "toUser": "替换为你的邮箱",\n  "code": "替换为推送验证码",\n  "toDevice": "",\n  "operation": "action",\n  "data": "📱 {{发送方号码}}: {{短信内容}}",\n  "action": "替换为动作ID",\n  "wait": false,\n  "maxWaitMs": 5000,\n  "txt": false\n}`,
+    },
+    {
+      label: '钉钉 Markdown',
+      body: `{\n  "msgtype": "markdown",\n  "markdown": {\n    "title": "短信通知",\n    "text": "### 📱 短信通知\\n- **号码:** {{发送方号码}}\\n- **内容:** {{短信内容}}\\n- **时间:** {{时间}}"\n  }\n}`,
+    },
+  ]
 
   const insertToken = (
     refs: MutableRefObject<Record<string, HTMLTextAreaElement | HTMLInputElement | null>>,
@@ -275,7 +318,7 @@ export default function NotificationRulesTab({
                   {EVENT_TYPES.map((type) => {
                     const stats = ruleCountForType(type.key)
                     return (
-                      <MenuItem key={type.key} value={type.key}>
+                      <MenuItem key={type.key} value={type.key} sx={{ fontSize: '14px' }}>
                         {`${type.label} (${stats.enabled}/${stats.total})`}
                       </MenuItem>
                     )
@@ -337,16 +380,18 @@ export default function NotificationRulesTab({
                             label="匹配字段"
                             value={rule.matcher.field}
                             onChange={(event: ChangeEvent<HTMLInputElement>) => onPatchRule(rule.id, { matcher: { ...rule.matcher, field: event.target.value } })}
+                            slotProps={{ select: { MenuProps: { PaperProps: { sx: { '& .MuiMenuItem-root': { fontSize: '14px' } } } } } }}
                           >
-                            {MATCH_FIELDS[rule.type].map((field) => <MenuItem key={field.value} value={field.value}>{field.label}</MenuItem>)}
+                            {MATCH_FIELDS[rule.type].map((field) => <MenuItem key={field.value} value={field.value} sx={{ fontSize: '14px' }}>{field.label}</MenuItem>)}
                           </TextField>
                           <TextField
                             select
                             label="匹配方式"
                             value={rule.matcher.operator}
                             onChange={(event: ChangeEvent<HTMLInputElement>) => onPatchRule(rule.id, { matcher: { ...rule.matcher, operator: event.target.value as MatcherOperator } })}
+                            slotProps={{ select: { MenuProps: { PaperProps: { sx: { '& .MuiMenuItem-root': { fontSize: '14px' } } } } } }}
                           >
-                            {MATCHER_OPERATORS.map((operator) => <MenuItem key={operator.value} value={operator.value}>{operator.label}</MenuItem>)}
+                            {MATCHER_OPERATORS.map((operator) => <MenuItem key={operator.value} value={operator.value} sx={{ fontSize: '14px' }}>{operator.label}</MenuItem>)}
                           </TextField>
                           <TextField
                             label="匹配内容"
@@ -480,8 +525,47 @@ export default function NotificationRulesTab({
                     </Box>
 
                     <Box mt={2}>
-                      <Box display="flex" alignItems="center" gap={1} mb={1} flexWrap="wrap">
-                        <Typography variant="subtitle2">文本模板</Typography>
+                      <Box display="flex" alignItems="center" gap={1.5} mb={1.5} flexWrap="wrap">
+                        <Typography variant="subtitle2">消息模板</Typography>
+                        <ToggleButtonGroup
+                          size="small"
+                          value={rule.custom_body !== '' ? 'custom' : 'text'}
+                          exclusive
+                          onChange={(_event, value) => {
+                            if (value === 'custom') {
+                              // Use a single space as sentinel to indicate custom mode
+                              onPatchRule(rule.id, { custom_body: ' ' })
+                            } else if (value === 'text') {
+                              onPatchRule(rule.id, { custom_body: '' })
+                            }
+                          }}
+                          sx={{
+                            '& .MuiToggleButton-root': {
+                              px: 2,
+                              minWidth: 115,
+                              fontWeight: 500,
+                              fontSize: '13px',
+                              '&.Mui-selected': {
+                                color: 'primary.main',
+                                fontWeight: 700,
+                                backgroundColor: 'transparent !important',
+                                borderColor: (theme) => `${theme.palette.primary.main} !important`,
+                                '&:hover': {
+                                  backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.04),
+                                },
+                              },
+                            },
+                          }}
+                        >
+                          <ToggleButton value="text">纯文本</ToggleButton>
+                          <ToggleButton value="custom">自定义请求体</ToggleButton>
+                        </ToggleButtonGroup>
+                      </Box>
+
+                      <Box display="flex" alignItems="center" gap={1} my={1.5} flexWrap="wrap">
+                        <Typography variant="body2" color="text.secondary" sx={{ mr: 0.5, fontWeight: 500, fontSize: '13px' }}>
+                          支持变量
+                        </Typography>
                         {TEMPLATE_VARIABLES[rule.type].map((variable) => (
                           <Chip
                             key={variable.token}
@@ -489,24 +573,110 @@ export default function NotificationRulesTab({
                             label={variable.label}
                             variant="outlined"
                             onClick={() => {
-                              const nextTemplate = insertToken(bodyTextareaRefs, rule.id, rule.template, variable.token)
-                              onPatchRule(rule.id, { template: nextTemplate })
+                              if (rule.custom_body !== '') {
+                                const nextBody = insertToken(customBodyTextareaRefs, rule.id, rule.custom_body, variable.token)
+                                onPatchRule(rule.id, { custom_body: nextBody })
+                              } else {
+                                const nextTemplate = insertToken(bodyTextareaRefs, rule.id, rule.template, variable.token)
+                                onPatchRule(rule.id, { template: nextTemplate })
+                              }
                             }}
                           />
                         ))}
                       </Box>
-                      <TextField
-                        fullWidth
-                        multiline
-                        minRows={5}
-                        value={rule.template}
-                        inputRef={(el) => {
-                          bodyTextareaRefs.current[rule.id] = el
-                        }}
-                        onChange={(event: ChangeEvent<HTMLInputElement>) => onPatchRule(rule.id, { template: event.target.value })}
-                      />
-                      <Button size="small" sx={{ mt: 1 }} onClick={() => onPatchRule(rule.id, { template: DEFAULT_TEMPLATES[rule.type] })}>恢复默认模板</Button>
                     </Box>
+
+                    {rule.custom_body !== '' ? (
+                      <Box mt={1.5}>
+                        <TextField
+                          fullWidth
+                          multiline
+                          minRows={8}
+                          value={rule.custom_body}
+                          placeholder={'输入 JSON 格式的请求体模板，例如：\n{\n  "msg_type": "text",\n  "content": {\n    "text": "{{短信内容}}"\n  }\n}'}
+                          inputRef={(el) => {
+                            customBodyTextareaRefs.current[rule.id] = el
+                          }}
+                          onChange={(event: ChangeEvent<HTMLInputElement>) => onPatchRule(rule.id, { custom_body: event.target.value })}
+                          slotProps={{
+                            input: {
+                              sx: {
+                                fontFamily: 'Consolas, Monaco, "Andale Mono", "Ubuntu Mono", monospace',
+                                fontSize: '13px',
+                                lineHeight: 1.6,
+                              },
+                            },
+                          }}
+                        />
+                        <Box display="flex" alignItems="center" gap={1} mt={1} flexWrap="wrap">
+                          <Button
+                            size="small"
+                            startIcon={<HelpOutline />}
+                            onClick={() => setShowExamples((prev) => ({ ...prev, [rule.id]: !prev[rule.id] }))}
+                          >
+                            {showExamples[rule.id] ? '收起示例' : '使用示例'}
+                          </Button>
+                          <Tooltip
+                            title={
+                              !rule.custom_body.trim()
+                                ? '请输入 JSON 模板'
+                                : !isJsonValid(rule.custom_body)
+                                  ? 'JSON 格式无效，无法格式化'
+                                  : '格式化 JSON'
+                            }
+                          >
+                            <span>
+                              <Button
+                                size="small"
+                                startIcon={<Code />}
+                                disabled={!rule.custom_body.trim() || !isJsonValid(rule.custom_body)}
+                                onClick={() => onPatchRule(rule.id, { custom_body: formatJson(rule.custom_body) })}
+                              >
+                                格式化
+                              </Button>
+                            </span>
+                          </Tooltip>
+                          <Box flexGrow={1} />
+                          {rule.custom_body.trim() && (
+                            <Typography variant="body2" color={isJsonValid(rule.custom_body) ? 'success.main' : 'error.main'}>
+                              {isJsonValid(rule.custom_body) ? '✅ JSON 格式有效' : '❌ JSON 格式无效'}
+                            </Typography>
+                          )}
+                        </Box>
+                        <Collapse in={showExamples[rule.id]}>
+                          <Box display="flex" gap={1} mt={1} flexWrap="wrap">
+                            {CUSTOM_BODY_EXAMPLES.map((example) => (
+                              <Chip
+                                key={example.label}
+                                label={example.label}
+                                variant="outlined"
+                                size="small"
+                                onClick={() => onPatchRule(rule.id, { custom_body: example.body })}
+                              />
+                            ))}
+                          </Box>
+                        </Collapse>
+                        {rule.channel_ids.length > 1 && (
+                          <Alert severity="info" sx={{ mt: 1 }}>
+                            自定义请求体模式下，请确保请求体格式与所选通道兼容。不兼容的通道将发送失败但不影响其他通道。
+                          </Alert>
+                        )}
+                      </Box>
+                    ) : (
+                      <Box mt={1.5}>
+                        <TextField
+                          fullWidth
+                          multiline
+                          minRows={5}
+                          value={rule.template}
+                          inputRef={(el) => {
+                            bodyTextareaRefs.current[rule.id] = el
+                          }}
+                          onChange={(event: ChangeEvent<HTMLInputElement>) => onPatchRule(rule.id, { template: event.target.value })}
+                        />
+                        <Button size="small" sx={{ mt: 1 }} onClick={() => onPatchRule(rule.id, { template: DEFAULT_TEMPLATES[rule.type] })}>恢复默认模板</Button>
+                      </Box>
+                    )}
 
                     {renderQuietHours(rule)}
 
@@ -527,6 +697,6 @@ export default function NotificationRulesTab({
           </Box>
         </Box>
       </CardContent>
-    </Card>
+    </Card >
   )
 }
