@@ -69,9 +69,10 @@ cargo run -- --host :: --port 3000
 ./scripts/build.sh --frontend-only
 ./scripts/build.sh --no-upx
 ./scripts/build.sh --no-ota
+./scripts/build.sh --target=x86_64
 ```
 
-*Windows 下建议在 WSL2 Ubuntu 中执行完整 OTA 构建。原生 PowerShell 不能直接运行 Bash 脚本；Git Bash 容易受 Node/npm/pnpm PATH 影响，完整 OTA 仍需要 `aarch64-unknown-linux-musl-gcc` 等 Linux 交叉编译工具链：*
+*Windows 下建议在 WSL2 Ubuntu 中执行完整 OTA 构建。原生 PowerShell 不能直接运行 Bash 脚本；Git Bash 容易受 Node/npm/pnpm PATH 影响，完整 OTA 仍需要目标架构对应的 Linux musl 工具链：*
 
 ```bash
 ./scripts/build.sh --no-upx
@@ -81,9 +82,11 @@ cargo run -- --host :: --port 3000
 
 - 同步 `VERSION` 到 `backend/Cargo.toml` 和 `frontend/package.json`。
 - 使用 `pnpm-lock.yaml` 时通过 `pnpm install --frozen-lockfile`、`pnpm run lint` 和 `pnpm exec vite build` 构建前端到 `frontend/dist/`。
-- 交叉编译后端到 `backend/target/aarch64-unknown-linux-musl/release/simadmin`。
+- 默认交叉编译后端到 `backend/target/aarch64-unknown-linux-musl/release/simadmin`；传入 `--target=x86_64` 时生成 `backend/target/x86_64-unknown-linux-musl/release/simadmin`。
 - 可选使用 UPX 压缩后端二进制；未安装 UPX 时会自动跳过压缩。
-- 生成 `release/simadmin_<version>.tar.gz` OTA 包。
+- 生成 `release/simadmin_<version>_<target>.tar.gz` OTA 包，并在 `meta.json` 中写入相同 target triple。
+
+GitHub Actions 会在 ARM64 与 x86_64 原生 runner 上并行构建，发布两个带架构名称的 OTA 包；`simadmin.tar.gz` 继续作为 ARM64 兼容别名。
 
 ### 通过 ADB 部署
 
@@ -98,6 +101,7 @@ cargo run -- --host :: --port 3000
 ./scripts/deploy.sh --frontend-only
 ./scripts/deploy.sh --no-restart
 ./scripts/deploy.sh --target=/opt/simadmin
+./scripts/deploy.sh --build-target=x86_64
 ```
 
 ---

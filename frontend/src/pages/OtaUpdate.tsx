@@ -122,7 +122,7 @@ function getReleaseAsset(release: OtaLatestReleaseResponse) {
 function inferArch(assetName?: string) {
   if (!assetName) return '未知'
   if (/aarch64|arm64/i.test(assetName)) return 'aarch64-unknown-linux-musl'
-  if (/x86_64|amd64/i.test(assetName)) return 'x86_64-unknown-linux-gnu'
+  if (/x86_64|amd64/i.test(assetName)) return 'x86_64-unknown-linux-musl'
   if (/armv7|armhf/i.test(assetName)) return 'armv7-unknown-linux-musleabihf'
   return '未知'
 }

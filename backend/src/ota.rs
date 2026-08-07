@@ -26,6 +26,7 @@ const NM_CONF_DIR: &str = "/etc/NetworkManager/conf.d";
 const NM_CONF_PATH: &str = "/etc/NetworkManager/conf.d/99-simadmin-unmanaged-modem.conf";
 const NM_UNMANAGED_WWAN_CONFIG: &str = "[keyfile]\nunmanaged-devices=interface-name:wwan*\n";
 const LATEST_RELEASE_API: &str = "https://api.github.com/repos/3899/SimAdmin/releases/latest";
+const CURRENT_TARGET_TRIPLE: &str = env!("APP_TARGET_TRIPLE");
 const BEIJING_UTC_OFFSET_SECONDS: i32 = 8 * 60 * 60;
 const UPDATE_CHECK_HOURS: [u32; 2] = [9, 18];
 const OTA_HTTP_TIMEOUT_SECS: u64 = 30;
@@ -143,14 +144,64 @@ pub fn ota_request_urls(
 
 pub fn is_supported_ota_asset(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    lower.ends_with(".tar.gz") || lower.ends_with(".tgz") || lower.ends_with(".zip")
+    lower.starts_with("simadmin")
+        && (lower.ends_with(".tar.gz") || lower.ends_with(".tgz") || lower.ends_with(".zip"))
 }
 
-pub fn supported_release_asset(release: &OtaLatestReleaseResponse) -> Option<&OtaReleaseAsset> {
+fn ota_asset_score(name: &str, target: &str) -> Option<u8> {
+    if !is_supported_ota_asset(name) {
+        return None;
+    }
+
+    let lower = name.to_ascii_lowercase();
+    let target = target.to_ascii_lowercase();
+    if lower.contains(&target) {
+        return Some(3);
+    }
+
+    // A fully-qualified package for another libc/ABI is not an architecture
+    // alias and must not be selected as a fallback.
+    if lower.contains("unknown-linux-") {
+        return None;
+    }
+
+    let arch_match = match target.as_str() {
+        "aarch64-unknown-linux-musl" => lower.contains("aarch64") || lower.contains("arm64"),
+        "x86_64-unknown-linux-musl" => lower.contains("x86_64") || lower.contains("amd64"),
+        _ => false,
+    };
+    if arch_match {
+        return Some(2);
+    }
+
+    // `simadmin.tar.gz` was the historical aarch64-only release name. Keep it
+    // as an arm64 fallback, but never install it on x86_64.
+    if target == "aarch64-unknown-linux-musl"
+        && matches!(
+            lower.as_str(),
+            "simadmin.tar.gz" | "simadmin.tgz" | "simadmin.zip"
+        )
+    {
+        return Some(1);
+    }
+
+    None
+}
+
+fn supported_release_asset_for_target<'a>(
+    release: &'a OtaLatestReleaseResponse,
+    target: &str,
+) -> Option<&'a OtaReleaseAsset> {
     release
         .assets
         .iter()
-        .find(|asset| is_supported_ota_asset(&asset.name))
+        .filter_map(|asset| ota_asset_score(&asset.name, target).map(|score| (score, asset)))
+        .max_by_key(|(score, _)| *score)
+        .map(|(_, asset)| asset)
+}
+
+pub fn supported_release_asset(release: &OtaLatestReleaseResponse) -> Option<&OtaReleaseAsset> {
+    supported_release_asset_for_target(release, CURRENT_TARGET_TRIPLE)
 }
 
 pub async fn fetch_latest_github_release(
@@ -437,8 +488,8 @@ fn validate_ota_package(meta: &OtaMeta) -> Result<OtaValidation, String> {
     // 前端目录存在即可（MD5 跨平台难以保持一致）
     let frontend_md5_match = true; // 跳过前端 MD5 验证
 
-    // 检查架构（只接受 musl）
-    let arch_match = meta.arch == "aarch64-unknown-linux-musl";
+    // OTA 二进制必须与当前运行实例的编译目标完全一致。
+    let arch_match = meta.arch == CURRENT_TARGET_TRIPLE;
 
     // 比较版本
     let is_newer = compare_versions(&meta.version, CURRENT_VERSION);
@@ -457,8 +508,8 @@ fn validate_ota_package(meta: &OtaMeta) -> Result<OtaValidation, String> {
         }
         if !arch_match {
             errors.push(format!(
-                "Arch mismatch: expected=aarch64-unknown-linux-musl, actual={}",
-                meta.arch
+                "Arch mismatch: expected={}, actual={}",
+                CURRENT_TARGET_TRIPLE, meta.arch
             ));
         }
         Some(errors.join("; "))
@@ -744,6 +795,71 @@ mod tests {
         assert!(compare_versions("v1.0.4", "1.0.3"));
         assert!(!compare_versions("v1.0.3", "1.0.3"));
         assert!(!compare_versions("v1.0.2", "1.0.3"));
+    }
+
+    #[test]
+    fn selects_the_release_asset_for_the_requested_architecture() {
+        let release = OtaLatestReleaseResponse {
+            assets: vec![
+                OtaReleaseAsset {
+                    name: "simadmin.tar.gz".to_string(),
+                    ..Default::default()
+                },
+                OtaReleaseAsset {
+                    name: "simadmin-aarch64-unknown-linux-musl.tar.gz".to_string(),
+                    ..Default::default()
+                },
+                OtaReleaseAsset {
+                    name: "simadmin-x86_64-unknown-linux-musl.tar.gz".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            supported_release_asset_for_target(&release, "aarch64-unknown-linux-musl")
+                .map(|asset| asset.name.as_str()),
+            Some("simadmin-aarch64-unknown-linux-musl.tar.gz")
+        );
+        assert_eq!(
+            supported_release_asset_for_target(&release, "x86_64-unknown-linux-musl")
+                .map(|asset| asset.name.as_str()),
+            Some("simadmin-x86_64-unknown-linux-musl.tar.gz")
+        );
+    }
+
+    #[test]
+    fn generic_legacy_asset_is_arm64_only() {
+        let release = OtaLatestReleaseResponse {
+            assets: vec![OtaReleaseAsset {
+                name: "simadmin.tar.gz".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert!(
+            supported_release_asset_for_target(&release, "aarch64-unknown-linux-musl").is_some()
+        );
+        assert!(
+            supported_release_asset_for_target(&release, "x86_64-unknown-linux-musl").is_none()
+        );
+    }
+
+    #[test]
+    fn rejects_a_fully_qualified_asset_for_another_abi() {
+        let release = OtaLatestReleaseResponse {
+            assets: vec![OtaReleaseAsset {
+                name: "simadmin-x86_64-unknown-linux-gnu.tar.gz".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert!(
+            supported_release_asset_for_target(&release, "x86_64-unknown-linux-musl").is_none()
+        );
     }
 
     #[test]

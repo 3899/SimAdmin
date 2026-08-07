@@ -1,16 +1,15 @@
-name: Build-Lpac-Compat
+name: Build lpac compatibility bundles
 
-# 从 lpac 官方源码编译兼容老版本 glibc (2.31) 的 aarch64 二进制。
-# 产物上传到 GitHub Release (固定标签为 lpac)，供安装脚本和后端一键修复功能使用。
+# Build self-contained lpac bundles for the oldest supported glibc baseline.
+# They ship their own libqmi, avoiding a host libqmi ABI dependency.
 
 on:
   schedule:
-    # 每天凌晨 0:00 自动检查官方是否有更新
     - cron: '0 0 5,20 * *'
   workflow_dispatch:
     inputs:
       lpac_ref:
-        description: '手动指定官方构建的分支或 Tag (例如: v2.3.0, main)'
+        description: 'Official lpac branch, tag, or commit (for example: v2.3.0)'
         required: false
         type: string
         default: ''
@@ -19,201 +18,203 @@ permissions:
   contents: write
 
 jobs:
-  build-lpac-compat:
-    name: Build lpac (glibc 2.31, aarch64)
-    runs-on: ubuntu-24.04-arm
-
+  prepare:
+    name: Resolve lpac source
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      lpac_ref: ${{ steps.check.outputs.lpac_ref }}
+      compat_revision: ${{ steps.check.outputs.compat_revision }}
     steps:
-      - name: Checkout SimAdmin (for workflow context)
-        uses: actions/checkout@v4
-
-      - name: Check for lpac updates
+      - name: Check whether compatibility assets need rebuilding
         id: check
+        env:
+          MANUAL_REF: ${{ inputs.lpac_ref }}
+          CURRENT_REPOSITORY: ${{ github.repository }}
+          COMPAT_REVISION: "2"
         run: |
-          # 1. 获取官方最新 release tag
-          OFFICIAL_TAG=$(curl -s https://api.github.com/repos/estkme-group/lpac/releases/latest | jq -r .tag_name)
-          echo "Official latest lpac tag: $OFFICIAL_TAG"
-          
-          # 2. 如果输入了手动参数，以手动参数为准
-          MANUAL_REF="${{ github.event.inputs.lpac_ref }}"
-          if [ -n "$MANUAL_REF" ]; then
-            echo "Using manually specified ref: $MANUAL_REF"
-            echo "should_build=true" >> $GITHUB_OUTPUT
-            echo "lpac_ref=$MANUAL_REF" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          # 3. 读取我们当前打包的版本 (从我们仓库 releases/download/lpac/lpac.json)
-          OUR_MANIFEST=$(curl -sL -f https://github.com/3899/SimAdmin/releases/download/lpac/lpac.json || echo "{}")
-          OUR_TAG=$(echo "$OUR_MANIFEST" | jq -r '.version // empty' || echo "")
-          echo "Our current compiled lpac tag: $OUR_TAG"
-          
-          if [ "$OFFICIAL_TAG" = "$OUR_TAG" ] && [ -n "$OUR_TAG" ]; then
-            echo "No new updates found. Skipping build."
-            echo "should_build=false" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          official_tag="$(curl -fsSL https://api.github.com/repos/estkme-group/lpac/releases/latest | jq -r .tag_name)"
+          lpac_ref="${MANUAL_REF:-$official_tag}"
+          manifest="$(curl -fsSL "https://github.com/${CURRENT_REPOSITORY}/releases/download/lpac/lpac.json" || printf '{}')"
+          bundled_version="$(printf '%s' "$manifest" | jq -r '.version // empty')"
+          bundled_revision="$(printf '%s' "$manifest" | jq -r '.compat_revision // empty')"
+          has_all_assets="$(printf '%s' "$manifest" | jq -r '
+            [.assets[]?.name] as $assets
+            | (["lpac-linux-aarch64-glibc2.31.zip", "lpac-linux-x86_64-glibc2.31.zip"]
+              | all(. as $name | $assets | index($name)))
+          ' 2>/dev/null || printf false)"
+
+          echo "lpac_ref=$lpac_ref" >> "$GITHUB_OUTPUT"
+          echo "compat_revision=$COMPAT_REVISION" >> "$GITHUB_OUTPUT"
+          if [ "$MANUAL_REF" = "" ] \
+            && [ "$bundled_version" = "$official_tag" ] \
+            && [ "$bundled_revision" = "$COMPAT_REVISION" ] \
+            && [ "$has_all_assets" = "true" ]; then
+            echo "Compatibility bundles already match $official_tag."
+            echo 'should_build=false' >> "$GITHUB_OUTPUT"
           else
-            echo "New version detected ($OFFICIAL_TAG) or our release is missing. Building..."
-            echo "should_build=true" >> $GITHUB_OUTPUT
-            echo "lpac_ref=$OFFICIAL_TAG" >> $GITHUB_OUTPUT
+            echo "Building compatibility bundles from $lpac_ref."
+            echo 'should_build=true' >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build lpac inside Debian 11 container
-        if: steps.check.outputs.should_build == 'true'
+  build:
+    name: Build ${{ matrix.arch }} compatibility bundle
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            asset: lpac-linux-aarch64-glibc2.31.zip
+          - arch: x86_64
+            runner: ubuntu-latest
+            asset: lpac-linux-x86_64-glibc2.31.zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Build lpac with bundled libqmi in Debian 11
+        env:
+          LPAC_REF: ${{ needs.prepare.outputs.lpac_ref }}
+          ASSET_NAME: ${{ matrix.asset }}
+          COMPAT_REVISION: ${{ needs.prepare.outputs.compat_revision }}
         run: |
+          set -euo pipefail
           mkdir -p release
           docker run --rm \
+            -e LPAC_REF -e ASSET_NAME -e COMPAT_REVISION \
             -v "$GITHUB_WORKSPACE/release:/output" \
             debian:11 bash -c '
               set -eux
 
               apt-get update
               apt-get install -y --no-install-recommends \
-                build-essential cmake git ca-certificates zip \
+                build-essential binutils cmake git ca-certificates zip \
                 pkg-config python3 python3-pip ninja-build \
                 libcurl4-openssl-dev libglib2.0-dev \
                 libpcsclite-dev libgudev-1.0-dev libglib2.0-doc \
                 libudev-dev udev
-
-              # Debian 11 自带的 meson 太老，通过 pip 安装新版
               pip3 install meson
 
-              # ── 第一步：从源码编译 libqmi (Debian 11 自带版本 1.26 太老，lpac 要求 >=1.35) ──
-              echo ">>> Building libqmi from source..."
-              git clone --depth 1 --branch 1.36.0 https://gitlab.freedesktop.org/mobile-broadband/libqmi.git /libqmi-src
-              cd /libqmi-src
-              meson setup build \
-                --prefix=/usr/local \
-                --libdir=lib \
-                --buildtype=release \
-                -Dcollection=full \
-                -Dmbim_qmux=false \
-                -Dqrtr=false \
-                -Dintrospection=false \
-                -Dman=false \
-                -Dbash_completion=false \
+              git clone --depth 1 --branch 1.36.0 \
+                https://gitlab.freedesktop.org/mobile-broadband/libqmi.git /libqmi-src
+              meson setup /libqmi-src/build /libqmi-src \
+                --prefix=/usr/local --libdir=lib --buildtype=release \
+                -Dcollection=full -Dmbim_qmux=false -Dqrtr=false \
+                -Dintrospection=false -Dman=false -Dbash_completion=false \
                 -Dqmi_username=root
-              ninja -C build
-              ninja -C build install
+              ninja -C /libqmi-src/build
+              ninja -C /libqmi-src/build install
               ldconfig
-              echo ">>> libqmi installed: $(pkg-config --modversion qmi-glib)"
 
-              # ── 第二步：编译 lpac ──
-              git clone --depth 1 --branch "$0" https://github.com/estkme-group/lpac /lpac
-              cd /lpac
+              git clone --depth 1 --branch "$LPAC_REF" \
+                https://github.com/estkme-group/lpac /lpac
+              cmake -S /lpac -B /lpac/build \
+                -DCMAKE_BUILD_TYPE=Release -DSTANDALONE_MODE=ON \
+                -DLPAC_WITH_APDU_PCSC=OFF -DLPAC_WITH_APDU_AT=ON \
+                -DLPAC_WITH_APDU_QMI=ON \
+                -DCMAKE_INSTALL_RPATH="\$ORIGIN/lib"
+              cmake --build /lpac/build --parallel
+              DESTDIR=/tmp/lpac-install cmake --install /lpac/build
 
-              # 解析出实际编译版本
-              RESOLVED_VER=$(git describe --tags --always || git rev-parse --short HEAD || echo "$0")
-              echo "$RESOLVED_VER" > /output/resolved_version.txt
+              bundle=/tmp/lpac-bundle
+              mkdir -p "$bundle/lib"
+              lpac_bin="$(find /tmp/lpac-install -type f -name lpac -print -quit)"
+              test -n "$lpac_bin"
+              install -m 0755 "$lpac_bin" "$bundle/lpac"
 
-              mkdir build && cd build
-              cmake .. \
-                -DCMAKE_BUILD_TYPE=Release \
-                -DSTANDALONE_MODE=ON \
-                -DLPAC_WITH_APDU_PCSC=OFF \
-                -DLPAC_WITH_APDU_AT=ON \
-                -DLPAC_WITH_APDU_QMI=ON
-              make -j$(nproc)
+              qmi_so="$(find /usr/local/lib -type f -name "libqmi-glib.so.*.*.*" -print -quit)"
+              test -n "$qmi_so"
+              cp -L "$qmi_so" "$bundle/lib/"
+              qmi_basename="$(basename "$qmi_so")"
+              ln -s "$qmi_basename" "$bundle/lib/libqmi-glib.so.5"
+              ln -s "$qmi_basename" "$bundle/lib/libqmi-glib.so"
+              printf "%s\n" "$COMPAT_REVISION" > "$bundle/COMPAT_REVISION.txt"
 
-              # 安装到临时目录 (STANDALONE_MODE 输出到 executables/)
-              DESTDIR=/tmp/lpac-install cmake --install .
+              readelf -d "$bundle/lpac" | grep -E "\(RPATH\)|\(RUNPATH\)" | grep -F ORIGIN/lib
+              ldd "$bundle/lpac" | grep -F "$bundle/lib/libqmi-glib.so.5"
+              LPAC_APDU=stdio LPAC_HTTP=stdio "$bundle/lpac" driver list \
+                | tee /tmp/lpac-drivers.json
+              grep -Fq qmi /tmp/lpac-drivers.json
+              grep -Fq curl /tmp/lpac-drivers.json
 
-              # 创建打包目录
-              BUNDLE_ROOT="/tmp/lpac-bundle"
-              mkdir -p "$BUNDLE_ROOT"
+              cd "$bundle"
+              zip -qr "/output/$ASSET_NAME" .
+              chmod 0644 "/output/$ASSET_NAME"
+            '
 
-              # 动态查找编译并安装好的 lpac 二进制文件
-              LPAC_BIN=$(find /tmp/lpac-install -name lpac -type f | head -1)
-              if [ -z "$LPAC_BIN" ] || [ ! -f "$LPAC_BIN" ]; then
-                echo "ERROR: lpac binary not found in /tmp/lpac-install"
-                ls -laR /tmp/lpac-install/ || true
-                exit 1
-              fi
-              cp "$LPAC_BIN" "$BUNDLE_ROOT/lpac"
-              chmod 755 "$BUNDLE_ROOT/lpac"
-
-              # 将自编译的 libqmi-glib.so 复制到 lib/ 目录中，使 zip 包自包含
-              mkdir -p "$BUNDLE_ROOT/lib"
-              QMI_SO=$(find /usr/local/lib -name "libqmi-glib.so.*.*.*" -type f | head -1)
-              if [ -n "$QMI_SO" ]; then
-                cp -L "$QMI_SO" "$BUNDLE_ROOT/lib/"
-                QMI_BASENAME=$(basename "$QMI_SO")
-                ln -sf "$QMI_BASENAME" "$BUNDLE_ROOT/lib/libqmi-glib.so.5"
-                ln -sf "$QMI_BASENAME" "$BUNDLE_ROOT/lib/libqmi-glib.so"
-              fi
-
-              # 验证
-              echo "=== Bundle contents ==="
-              ls -laR "$BUNDLE_ROOT"
-              ldd "$BUNDLE_ROOT/lpac" || true
-
-              # 打包
-              cd "$BUNDLE_ROOT"
-              zip -r /output/lpac-linux-aarch64-glibc2.31.zip .
-
-              # 改变输出目录下的权限，防止主机 runner 权限不足
-              chmod -R 777 /output
-              echo "✅ Build complete"
-            ' "${{ steps.check.outputs.lpac_ref }}"
-
-      - name: Verify output
-        if: steps.check.outputs.should_build == 'true'
+      - name: Verify bundle contents
         run: |
-          ls -lh release/
-          file release/lpac-linux-aarch64-glibc2.31.zip
+          set -euo pipefail
+          unzip -l "release/${{ matrix.asset }}"
+          unzip -p "release/${{ matrix.asset }}" lpac >/dev/null
 
-      - name: Resolve version info
-        id: resolve_ver
-        if: steps.check.outputs.should_build == 'true'
-        run: |
-          LPAC_VER=$(cat release/resolved_version.txt)
-          echo "lpac_ver=$LPAC_VER" >> $GITHUB_OUTPUT
+      - name: Upload compatibility bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: lpac-${{ matrix.arch }}
+          path: release/${{ matrix.asset }}
+          if-no-files-found: error
 
-      - name: Generate lpac.json manifest
-        if: steps.check.outputs.should_build == 'true'
+  publish:
+    name: Publish lpac compatibility assets
+    needs: [prepare, build]
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lpac-*
+          path: release
+          merge-multiple: true
+
+      - name: Generate manifest and checksums
+        env:
+          LPAC_REF: ${{ needs.prepare.outputs.lpac_ref }}
+          COMPAT_REVISION: ${{ needs.prepare.outputs.compat_revision }}
         run: |
-          cat > release/lpac.json << MANIFEST
+          set -euo pipefail
+          test -f release/lpac-linux-aarch64-glibc2.31.zip
+          test -f release/lpac-linux-x86_64-glibc2.31.zip
+          sha256sum release/lpac-linux-*.zip > release/SHA256SUMS
+          cat > release/lpac.json <<EOF
           {
-            "version": "${{ steps.resolve_ver.outputs.lpac_ver }}",
+            "version": "${LPAC_REF}",
+            "compat_revision": "${COMPAT_REVISION}",
             "assets": [
               {
                 "name": "lpac-linux-aarch64-glibc2.31.zip",
                 "arch": "aarch64",
                 "glibc": "2.31",
-                "description": "lpac for aarch64 built against glibc 2.31 (Debian 11)"
+                "description": "lpac with bundled libqmi for aarch64"
+              },
+              {
+                "name": "lpac-linux-x86_64-glibc2.31.zip",
+                "arch": "x86_64",
+                "glibc": "2.31",
+                "description": "lpac with bundled libqmi for x86_64"
               }
             ]
           }
-          MANIFEST
+          EOF
+          jq -e . release/lpac.json
 
-      - name: Upload to SimAdmin Release
-        if: steps.check.outputs.should_build == 'true'
+      - name: Publish to the compatibility release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: lpac
-          name: eSIM lpac Compatibility Assets
+          name: eSIM lpac compatibility assets
           body: |
-            eSIM lpac compatibility assets for legacy device environments:
-            * **lpac Source**: `estkme-group/lpac@${{ steps.resolve_ver.outputs.lpac_ver }}`
-            * **Glibc version**: `2.31` (Debian 11)
-            * **Architecture**: `aarch64` (ARM64)
+            Self-contained lpac builds with bundled libqmi for ARM64 and x86_64.
+            Source: `estkme-group/lpac@${{ needs.prepare.outputs.lpac_ref }}`
           draft: false
-          prerelease: true # 标记为预发布版，防止其成为最新版
-          make_latest: false # ⚠️ 重要：请勿修改为 true！此 workflow 仅打包兼容版 lpac 静态资源，非项目主版本 Release，决不能发布为 Latest。
+          prerelease: true
+          make_latest: false
           files: |
-            release/lpac-linux-aarch64-glibc2.31.zip
+            release/lpac-linux-*.zip
             release/lpac.json
-          overwrite_files: true
+            release/SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Summary
-        if: steps.check.outputs.should_build == 'true'
-        run: |
-          echo "## 🎉 lpac compat build complete" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| lpac source | estkme-group/lpac@${{ steps.resolve_ver.outputs.lpac_ver }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Target glibc | 2.31 (Debian 11) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Architecture | aarch64 (native ARM64 runner) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Attached to Release | lpac |" >> $GITHUB_STEP_SUMMARY
