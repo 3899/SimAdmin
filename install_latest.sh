@@ -417,11 +417,7 @@ resolve_lpac_asset_name() {
   case "$LPAC_ASSET_FLAVOR" in
     compat)
       glibc_version="$(detect_glibc_version)"
-      if [ "$arch" = "aarch64" ] && version_le "2.31" "$glibc_version"; then
-        printf 'lpac-linux-aarch64-glibc2.31.zip\n'
-      else
-        printf 'lpac-linux-%s-with-qmi.zip\n' "$arch"
-      fi
+      resolve_lpac_compat_asset_name "$arch" "$glibc_version"
       ;;
     ""|default)
       printf 'lpac-linux-%s.zip\n' "$arch"
@@ -439,6 +435,18 @@ resolve_lpac_asset_name() {
   esac
 }
 
+resolve_lpac_compat_asset_name() {
+  arch="$1"
+  glibc_version="$2"
+
+  if { [ "$arch" = "aarch64" ] || [ "$arch" = "x86_64" ]; } \
+    && version_le "2.31" "$glibc_version"; then
+    printf 'lpac-linux-%s-glibc2.31.zip\n' "$arch"
+  else
+    printf 'lpac-linux-%s-with-qmi.zip\n' "$arch"
+  fi
+}
+
 resolve_lpac_asset_url() {
   if [ -n "$LPAC_ASSET_URL" ]; then
     printf '%s\n' "$LPAC_ASSET_URL"
@@ -447,9 +455,13 @@ resolve_lpac_asset_url() {
 
   arch="$(detect_lpac_arch)" || return 1
   asset_name="$(resolve_lpac_asset_name "$arch")" || return 1
-  if [ "$LPAC_ASSET_FLAVOR" = "compat" ] && [ "$asset_name" = "lpac-linux-aarch64-glibc2.31.zip" ]; then
-    printf '%s/%s\n' "$LPAC_COMPAT_RELEASE_BASE_URL" "$asset_name"
-    return 0
+  if [ "$LPAC_ASSET_FLAVOR" = "compat" ]; then
+    case "$asset_name" in
+      lpac-linux-aarch64-glibc2.31.zip|lpac-linux-x86_64-glibc2.31.zip)
+        printf '%s/%s\n' "$LPAC_COMPAT_RELEASE_BASE_URL" "$asset_name"
+        return 0
+        ;;
+    esac
   fi
   printf '%s/%s\n' "$LPAC_RELEASE_BASE_URL" "$asset_name"
 }

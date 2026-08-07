@@ -23,9 +23,23 @@ assert_eq() {
 
 LPAC_ASSET_FLAVOR=compat
 assert_eq \
-  "lpac-linux-x86_64-with-qmi.zip" \
-  "$(resolve_lpac_asset_name x86_64)" \
-  "x86_64 compat asset must provide QMI"
+  "lpac-linux-x86_64-glibc2.31.zip" \
+  "$(resolve_lpac_compat_asset_name x86_64 2.39)" \
+  "x86_64 compat asset must use the bundled-libqmi build"
+
+assert_eq \
+  "lpac-linux-x86_64-glibc2.31.zip" \
+  "$(resolve_lpac_compat_asset_name x86_64 2.31)" \
+  "x86_64 compat asset must support the glibc baseline"
+
+LPAC_TARGET_ARCH=x86_64
+LPAC_ASSET_NAME=lpac-linux-x86_64-glibc2.31.zip
+assert_eq \
+  "${LPAC_COMPAT_RELEASE_BASE_URL}/lpac-linux-x86_64-glibc2.31.zip" \
+  "$(resolve_lpac_asset_url)" \
+  "x86_64 compatibility asset must be downloaded from the SimAdmin release"
+LPAC_TARGET_ARCH=
+LPAC_ASSET_NAME=
 
 LPAC_ASSET_FLAVOR=with-qmi
 assert_eq \

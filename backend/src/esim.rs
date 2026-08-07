@@ -420,8 +420,8 @@ fn find_version_token(text: &str) -> Option<String> {
 }
 
 fn recommended_lpac_asset_name(arch: &str, glibc_version: &str) -> String {
-    if arch == "aarch64" && version_le("2.31", glibc_version).unwrap_or(false) {
-        return "lpac-linux-aarch64-glibc2.31.zip".to_string();
+    if matches!(arch, "aarch64" | "x86_64") && version_le("2.31", glibc_version).unwrap_or(false) {
+        return format!("lpac-linux-{arch}-glibc2.31.zip");
     }
     format!("lpac-linux-{arch}-with-qmi.zip")
 }
@@ -1592,10 +1592,14 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn recommends_qmi_lpac_for_x86_64() {
+    fn recommends_compatible_lpac_for_supported_architectures() {
         assert_eq!(
             recommended_lpac_asset_name("x86_64", "2.39"),
-            "lpac-linux-x86_64-with-qmi.zip"
+            "lpac-linux-x86_64-glibc2.31.zip"
+        );
+        assert_eq!(
+            recommended_lpac_asset_name("aarch64", "2.39"),
+            "lpac-linux-aarch64-glibc2.31.zip"
         );
         assert_eq!(
             official_lpac_asset_names("x86_64")[0],
