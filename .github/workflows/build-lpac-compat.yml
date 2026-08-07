@@ -83,7 +83,7 @@ jobs:
           set -euo pipefail
           mkdir -p release
           docker run --rm \
-            -e LPAC_REF -e ASSET_NAME \
+            -e LPAC_REF -e ASSET_NAME -e COMPAT_REVISION \
             -v "$GITHUB_WORKSPACE/release:/output" \
             debian:11 bash -c '
               set -eux
