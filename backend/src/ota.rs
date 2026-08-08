@@ -44,13 +44,44 @@ pub fn get_current_commit() -> String {
     option_env!("GIT_COMMIT").unwrap_or("unknown").to_string()
 }
 
+/// 读取已安装的更新元数据
+fn read_installed_meta() -> Option<OtaMeta> {
+    if let Ok(content) = fs::read_to_string(OTA_META_PATH) {
+        serde_json::from_str(&content).ok()
+    } else {
+        None
+    }
+}
+
 /// 获取 OTA 更新状态
 pub fn get_ota_status() -> OtaStatusResponse {
     let pending_meta = read_pending_meta();
+    let installed_meta = read_installed_meta();
+
+    let current_version = installed_meta
+        .as_ref()
+        .map(|m| m.version.clone())
+        .unwrap_or_else(|| CURRENT_VERSION.to_string());
+    let current_commit = installed_meta
+        .as_ref()
+        .map(|m| m.commit.clone())
+        .unwrap_or_else(get_current_commit);
+    let current_build_time = installed_meta.as_ref().map(|m| m.build_time.clone());
+    let current_binary_md5 = installed_meta.as_ref().map(|m| m.binary_md5.clone());
+    let current_frontend_md5 = installed_meta.as_ref().map(|m| m.frontend_md5.clone());
+    let current_arch = installed_meta
+        .as_ref()
+        .map(|m| m.arch.clone())
+        .or_else(|| Some(format!("{}-unknown-linux-musl", std::env::consts::ARCH)));
 
     OtaStatusResponse {
-        current_version: CURRENT_VERSION.to_string(),
-        current_commit: get_current_commit(),
+        current_version,
+        current_commit,
+        current_build_time,
+        current_binary_md5,
+        current_frontend_md5,
+        current_arch,
+        installed_meta,
         pending_update: pending_meta.is_some(),
         pending_meta,
     }

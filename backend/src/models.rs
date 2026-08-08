@@ -969,6 +969,16 @@ pub struct OtaMeta {
 pub struct OtaStatusResponse {
     pub current_version: String,
     pub current_commit: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_build_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_binary_md5: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_frontend_md5: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_arch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed_meta: Option<OtaMeta>,
     pub pending_update: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_meta: Option<OtaMeta>,

@@ -908,6 +908,11 @@ export interface OtaValidation {
 export interface OtaStatusResponse {
   current_version: string
   current_commit: string
+  current_build_time?: string
+  current_binary_md5?: string
+  current_frontend_md5?: string
+  current_arch?: string
+  installed_meta?: OtaMeta
   pending_update: boolean
   pending_meta?: OtaMeta
 }

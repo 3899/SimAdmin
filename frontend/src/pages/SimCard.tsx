@@ -14,6 +14,13 @@ import {
   TextField,
   Snackbar,
   Alert,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
+  Paper,
 } from '@mui/material'
 import Grid from '@mui/material/Grid'
 import {
@@ -27,10 +34,13 @@ import {
   Language as LanguageIcon,
   Lock as LockIcon,
   Storage as StorageIcon,
+  Memory,
+  CheckCircle,
+  Tune,
 } from '@mui/icons-material'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/current'
-import type { SimInfo } from '../api/types'
+import type { SimInfo, WorkMode } from '../api/types'
 import ErrorSnackbar from '../components/ErrorSnackbar'
 import EsimManagerPage from './EsimManager'
 import { useWorkMode } from '../contexts/WorkModeContext'
@@ -153,11 +163,13 @@ function InfoField({ label, value, sensitive = false, showSensitive, extra }: {
 
 
 function SimBasicInfo() {
-  const { mode } = useWorkMode()
+  const { mode, refreshWorkMode } = useWorkMode()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showSensitive, setShowSensitive] = useState(false)
   const [simInfo, setSimInfo] = useState<SimInfo | null>(null)
+  const [pendingMode, setPendingMode] = useState<WorkMode | null>(null)
+  const [modeSwitching, setModeSwitching] = useState(false)
 
   const [editingPhone, setEditingPhone] = useState(false)
   const [editingSmsc, setEditingSmsc] = useState(false)
@@ -204,7 +216,7 @@ function SimBasicInfo() {
           setDetailsRefreshing(true)
           void api.refreshSimDetails()
             .then(scheduleDetailsRefetch)
-            .catch(() => {})
+            .catch(() => { })
             .finally(() => setDetailsRefreshing(false))
         }
       }
@@ -270,6 +282,25 @@ function SimBasicInfo() {
       showMsg(err instanceof Error ? err.message : String(err), 'error')
     } finally {
       setSavingSmsc(false)
+    }
+  }
+
+  const confirmModeSwitch = async () => {
+    if (!pendingMode) return
+    setModeSwitching(true)
+    try {
+      const res = await api.setWorkMode(pendingMode)
+      if (res.status === 'ok') {
+        await refreshWorkMode()
+        showMsg(`工作模式已切换为${pendingMode === 'esim' ? '实体 eSIM 卡模式' : '普通 SIM 卡模式'}`, 'success')
+        setPendingMode(null)
+      } else {
+        showMsg(res.message || '切换工作模式失败', 'error')
+      }
+    } catch (err) {
+      showMsg(err instanceof Error ? err.message : String(err), 'error')
+    } finally {
+      setModeSwitching(false)
     }
   }
 
@@ -552,6 +583,130 @@ function SimBasicInfo() {
           </Box>
         </Grid>
       </Grid>
+
+      {/* 工作模式卡片（底部轻量化呈现） */}
+      <Card sx={{ mt: 3 }}>
+        <CardHeader
+          avatar={<Tune color="primary" />}
+          title="工作模式设置"
+          titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+          subheader="控制是否开放 eSIM 管理功能及 lpac 接口"
+          subheaderTypographyProps={{ variant: 'caption', color: 'text.secondary' }}
+          action={
+            <Chip
+              label={mode === 'esim' ? '实体 eSIM 卡模式' : '普通 SIM 卡模式'}
+              color="primary"
+              variant="outlined"
+              size="small"
+              sx={{ fontWeight: 600, borderColor: 'primary.light', color: 'primary.main' }}
+            />
+          }
+        />
+        <CardContent sx={{ pt: 0 }}>
+          <Grid container spacing={2}>
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <Paper
+                variant="outlined"
+                onClick={() => {
+                  if (!modeSwitching && mode !== 'sim') setPendingMode('sim')
+                }}
+                sx={{
+                  p: 1.5,
+                  cursor: mode === 'sim' || modeSwitching ? 'default' : 'pointer',
+                  bgcolor: mode === 'sim' ? (theme) => (theme.palette.mode === 'light' ? 'rgba(25, 118, 210, 0.04)' : 'rgba(144, 202, 249, 0.08)') : 'background.paper',
+                  borderColor: mode === 'sim' ? 'primary.main' : 'divider',
+                  borderWidth: mode === 'sim' ? 1.5 : 1,
+                  borderRadius: 1.5,
+                  transition: 'all 0.15s ease',
+                  '&:hover': mode === 'sim' || modeSwitching ? {} : {
+                    borderColor: 'primary.light',
+                    bgcolor: 'action.hover',
+                  },
+                }}
+              >
+                <Box display="flex" alignItems="center" justifyContent="space-between" mb={0.5}>
+                  <Box display="flex" alignItems="center" gap={1}>
+                    <SimIcon color={mode === 'sim' ? 'primary' : 'action'} fontSize="small" />
+                    <Typography variant="body2" fontWeight={700}>
+                      普通 SIM 卡模式
+                    </Typography>
+                  </Box>
+                  {mode === 'sim' && <CheckCircle color="primary" fontSize="small" />}
+                </Box>
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.4 }}>
+                  适合仅使用普通物理 SIM 卡场景，隐藏 eSIM 管理模块并阻止 lpac 接口。
+                </Typography>
+              </Paper>
+            </Grid>
+
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <Paper
+                variant="outlined"
+                onClick={() => {
+                  if (!modeSwitching && mode !== 'esim') setPendingMode('esim')
+                }}
+                sx={{
+                  p: 1.5,
+                  cursor: mode === 'esim' || modeSwitching ? 'default' : 'pointer',
+                  bgcolor: mode === 'esim' ? (theme) => (theme.palette.mode === 'light' ? 'rgba(25, 118, 210, 0.04)' : 'rgba(144, 202, 249, 0.08)') : 'background.paper',
+                  borderColor: mode === 'esim' ? 'primary.main' : 'divider',
+                  borderWidth: mode === 'esim' ? 1.5 : 1,
+                  borderRadius: 1.5,
+                  transition: 'all 0.15s ease',
+                  '&:hover': mode === 'esim' || modeSwitching ? {} : {
+                    borderColor: 'primary.light',
+                    bgcolor: 'action.hover',
+                  },
+                }}
+              >
+                <Box display="flex" alignItems="center" justifyContent="space-between" mb={0.5}>
+                  <Box display="flex" alignItems="center" gap={1}>
+                    <Memory color={mode === 'esim' ? 'primary' : 'action'} fontSize="small" />
+                    <Typography variant="body2" fontWeight={700}>
+                      实体 eSIM 卡模式
+                    </Typography>
+                  </Box>
+                  {mode === 'esim' && <CheckCircle color="primary" fontSize="small" />}
+                </Box>
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.4 }}>
+                  适合插入了 eUICC 芯片的 eSIM 卡，开放 eSIM 管理模块与 Profile 调度。
+                </Typography>
+              </Paper>
+            </Grid>
+          </Grid>
+        </CardContent>
+      </Card>
+
+      <Dialog open={!!pendingMode} onClose={() => !modeSwitching && setPendingMode(null)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontSize: '1.05rem', fontWeight: 600 }}>确认切换工作模式</DialogTitle>
+        <DialogContent>
+          <DialogContentText variant="body2">
+            确定要切换为 <strong>{pendingMode === 'esim' ? '实体 eSIM 卡模式' : '普通 SIM 卡模式'}</strong> 吗？
+          </DialogContentText>
+          {pendingMode === 'sim' && (
+            <Alert severity="info" sx={{ mt: 1.5, fontSize: '0.8rem' }}>
+              切换后将隐藏 eSIM 管理 Tab 页面，并阻止 eSIM Profile 管理接口。
+            </Alert>
+          )}
+          {pendingMode === 'esim' && (
+            <Alert severity="info" sx={{ mt: 1.5, fontSize: '0.8rem' }}>
+              切换后将显示 eSIM 管理 Tab 页面，按需调用 lpac 管理配置文件。
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPendingMode(null)} disabled={modeSwitching}>取消</Button>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={() => void confirmModeSwitch()}
+            disabled={modeSwitching}
+            startIcon={modeSwitching ? <CircularProgress size={16} color="inherit" /> : undefined}
+          >
+            确认切换
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar
         open={snackbar.open}

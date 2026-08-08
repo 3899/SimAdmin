@@ -4,6 +4,7 @@ import {
   Box,
   Typography,
   Card,
+  CardHeader,
   CardContent,
   Button,
   CircularProgress,
@@ -33,6 +34,7 @@ import {
   Switch,
   TextField,
 } from '@mui/material'
+import Grid from '@mui/material/Grid'
 import {
   CloudUpload,
   CheckCircle,
@@ -125,6 +127,28 @@ function inferArch(assetName?: string) {
   if (/x86_64|amd64/i.test(assetName)) return 'x86_64-unknown-linux-gnu'
   if (/armv7|armhf/i.test(assetName)) return 'armv7-unknown-linux-musleabihf'
   return '未知'
+}
+
+function InfoField({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <Box>
+      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500 }}>
+        {label}
+      </Typography>
+      <Box display="flex" alignItems="center" gap={0.5} mt={0.25} minHeight="20px">
+        <Typography
+          variant="body2"
+          component="div"
+          sx={{
+            fontSize: '0.825rem',
+            wordBreak: 'break-all',
+          }}
+        >
+          {value}
+        </Typography>
+      </Box>
+    </Box>
+  )
 }
 
 function isMarkdownBlockStart(line: string) {
@@ -685,29 +709,57 @@ export default function OtaUpdate() {
 
       <Stack spacing={3}>
         <Card>
-          <CardContent>
-            <Box display="flex" alignItems="center" gap={1} mb={2}>
-              <Info color="primary" />
-              <Typography variant="h6">当前版本</Typography>
-            </Box>
-            <TableContainer>
-              <Table size="small">
-                <TableBody>
-                  <TableRow>
-                    <TableCell component="th" sx={{ width: 150 }}>版本号</TableCell>
-                    <TableCell>
-                      <Chip label={status?.current_version || 'N/A'} color="primary" size="small" />
-                    </TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell component="th">Commit</TableCell>
-                    <TableCell sx={{ fontFamily: 'monospace' }}>
-                      {status?.current_commit || 'N/A'}
-                    </TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </TableContainer>
+          <CardHeader
+            avatar={<Info color="primary" />}
+            title="当前版本"
+            titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+          />
+          <CardContent sx={{ pt: 0 }}>
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <InfoField
+                  label="版本号"
+                  value={
+                    <Chip
+                      label={status?.current_version || 'N/A'}
+                      color="primary"
+                      size="small"
+                      sx={{ height: 20, fontSize: '0.75rem' }}
+                    />
+                  }
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <InfoField
+                  label="Commit"
+                  value={status?.current_commit || status?.installed_meta?.commit || 'N/A'}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <InfoField
+                  label="构建时间"
+                  value={formatDateTime(status?.current_build_time || status?.installed_meta?.build_time)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <InfoField
+                  label="二进制 MD5"
+                  value={status?.current_binary_md5 || status?.installed_meta?.binary_md5 || 'N/A'}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <InfoField
+                  label="前端 MD5"
+                  value={status?.current_frontend_md5 || status?.installed_meta?.frontend_md5 || 'N/A'}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <InfoField
+                  label="运行架构"
+                  value={status?.current_arch || status?.installed_meta?.arch || 'aarch64-unknown-linux-musl'}
+                />
+              </Grid>
+            </Grid>
           </CardContent>
         </Card>
 
@@ -881,7 +933,7 @@ export default function OtaUpdate() {
               <Box display="flex" justifyContent="space-between" alignItems="center" gap={2} mb={2}>
                 <Box display="flex" alignItems="center" gap={1}>
                   <Public color="primary" />
-                  <Typography variant="h6">在线更新</Typography>
+                  <Typography variant="subtitle1" fontWeight={600}>在线更新</Typography>
                 </Box>
                 <Link href={GITHUB_LATEST_RELEASE_PAGE} target="_blank" rel="noreferrer" variant="caption" underline="hover">
                   GitHub Releases
@@ -1036,7 +1088,7 @@ export default function OtaUpdate() {
             <CardContent sx={{ flex: 1 }}>
               <Box display="flex" alignItems="center" gap={1} mb={2}>
                 <CloudUpload color="primary" />
-                <Typography variant="h6">上传更新包</Typography>
+                <Typography variant="subtitle1" fontWeight={600}>上传更新包</Typography>
               </Box>
 
               <Typography variant="body2" color="text.secondary" mb={2}>

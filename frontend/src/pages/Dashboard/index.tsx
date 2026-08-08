@@ -91,7 +91,7 @@ function StatusBar({ data }: { data: DashboardData }) {
               }}
             />
           </Box>
-          <Typography variant="subtitle2" fontWeight={800}>
+          <Typography fontSize="16px" fontWeight={800}>
             {data.deviceInfo?.online ? '系统在线' : '系统离线'}
           </Typography>
         </Box>

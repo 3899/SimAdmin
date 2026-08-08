@@ -16,6 +16,7 @@ import {
   FormControl,
   FormControlLabel,
   IconButton,
+  InputAdornment,
   InputLabel,
   List,
   ListItem,
@@ -45,6 +46,8 @@ import {
   Settings,
   SettingsEthernet,
   Terminal,
+  Visibility,
+  VisibilityOff,
   Wifi,
   WifiOff,
 } from '@mui/icons-material'
@@ -413,6 +416,7 @@ export default function DeviceNetworkPage() {
   const [forgettingNetwork, setForgettingNetwork] = useState<string | null>(null)
   const [selectedNetwork, setSelectedNetwork] = useState<WlanNetwork | null>(null)
   const [wifiPassword, setWifiPassword] = useState('')
+  const [showWifiPassword, setShowWifiPassword] = useState(false)
   const [connectOpen, setConnectOpen] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false)
@@ -700,6 +704,7 @@ export default function DeviceNetworkPage() {
     if (network.connected) return
     setSelectedNetwork(network)
     setWifiPassword('')
+    setShowWifiPassword(false)
     if (network.secure) {
       setConnectOpen(true)
     } else {
@@ -1543,10 +1548,26 @@ export default function DeviceNetworkPage() {
           <TextField
             autoFocus
             fullWidth
-            type="password"
+            type={showWifiPassword ? 'text' : 'password'}
             label="密码"
             value={wifiPassword}
             onChange={(event) => setWifiPassword(event.target.value)}
+            slotProps={{
+              input: {
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowWifiPassword((prev) => !prev)}
+                      edge="end"
+                      aria-label={showWifiPassword ? '隐藏密码' : '显示密码'}
+                    >
+                      {showWifiPassword ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
+                    </IconButton>
+                  </InputAdornment>
+                ),
+              },
+            }}
           />
         </DialogContent>
         <DialogActions>

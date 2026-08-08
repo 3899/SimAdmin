@@ -18,7 +18,7 @@ export function DeviceInfoCard({ deviceInfo, systemStats }: DeviceInfoCardProps)
         <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
           <Box display="flex" alignItems="center" gap={1}>
             <Router fontSize="small" color="primary" />
-            <Typography variant="subtitle2" fontWeight="medium">设备信息</Typography>
+            <Typography fontSize="16px" fontWeight={600}>设备信息</Typography>
           </Box>
           <Tooltip title={showInfo ? '隐藏 IMEI' : '显示 IMEI'}>
             <IconButton size="small" onClick={() => setShowInfo(!showInfo)}>
