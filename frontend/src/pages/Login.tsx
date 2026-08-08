@@ -30,7 +30,8 @@ import {
   enabledPasswordTypesText,
   normalizePasswordInput,
 } from '../lib/passwordPolicy'
-import communityQrUrl from '../../../static/Community/Community_QQ_Light.png'
+import qqQrUrl from '../../../static/Community/QQGroup_Light.png'
+import tgQrUrl from '../../../static/Community/TG_Chat.png'
 
 type AuthMode = 'login' | 'setup'
 
@@ -107,21 +108,43 @@ function CommunityTooltip() {
         },
       }}
       title={(
-        <Stack spacing={1} alignItems="center" sx={{ p: 1.25 }}>
-          <Box
-            component="img"
-            src={communityQrUrl}
-            alt="SimAdmin 社区"
-            sx={{
-              height: 132,
-              width: 'auto',
-              maxWidth: 240,
-              objectFit: 'contain',
-              borderRadius: 1,
-              bgcolor: '#fff',
-            }}
-          />
-          <Typography variant="caption" sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>扫码加入 QQ 群</Typography>
+        <Stack direction="row" spacing={2} alignItems="center" sx={{ p: 1.5 }}>
+          <Stack spacing={0.75} alignItems="center">
+            <Box
+              component="img"
+              src={qqQrUrl}
+              alt="SimAdmin QQ 交流群"
+              sx={{
+                height: 132,
+                width: 'auto',
+                maxWidth: 240,
+                objectFit: 'contain',
+                borderRadius: 1,
+                bgcolor: '#fff',
+              }}
+            />
+            <Typography variant="caption" sx={{ color: 'text.secondary', whiteSpace: 'nowrap', fontWeight: 600 }}>
+              QQ 交流群
+            </Typography>
+          </Stack>
+          <Stack spacing={0.75} alignItems="center">
+            <Box
+              component="img"
+              src={tgQrUrl}
+              alt="SimAdmin TG 交流群"
+              sx={{
+                height: 132,
+                width: 'auto',
+                maxWidth: 240,
+                objectFit: 'contain',
+                borderRadius: 1,
+                bgcolor: '#fff',
+              }}
+            />
+            <Typography variant="caption" sx={{ color: 'text.secondary', whiteSpace: 'nowrap', fontWeight: 600 }}>
+              Telegram 群
+            </Typography>
+          </Stack>
         </Stack>
       )}
     >

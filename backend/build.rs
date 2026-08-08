@@ -21,10 +21,16 @@ fn main() {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|_| "unknown".to_string());
 
+    // Cargo exposes the selected compilation target to build scripts. Forward it
+    // to the application so OTA packages can be checked against the architecture
+    // of the running binary instead of a hard-coded target.
+    let target = std::env::var("TARGET").unwrap_or_else(|_| "unknown".to_string());
+
     // Set compile-time environment variables
     println!("cargo:rustc-env=APP_VERSION={}", version);
     println!("cargo:rustc-env=GIT_BRANCH={}", branch);
     println!("cargo:rustc-env=GIT_COMMIT={}", commit);
+    println!("cargo:rustc-env=APP_TARGET_TRIPLE={}", target);
 
     // Rebuild if VERSION file changes
     println!("cargo:rerun-if-changed=../VERSION");
