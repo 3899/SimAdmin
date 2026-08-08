@@ -23,3 +23,5 @@ release/
 # 临时目录
 temp/
 .tmp
+test/
+tests/

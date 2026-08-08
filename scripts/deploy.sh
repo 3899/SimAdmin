@@ -12,6 +12,7 @@ TARGET_PATH="/opt/simadmin"
 DEPLOY_BACKEND=true
 DEPLOY_FRONTEND=true
 RESTART_SERVICE=true
+BUILD_TARGET="${TARGET:-aarch64-unknown-linux-musl}"
 
 # 解析命令行参数
 for arg in "$@"; do
@@ -28,6 +29,9 @@ for arg in "$@"; do
         --target=*)
             TARGET_PATH="${arg#*=}"
             ;;
+        --build-target=*)
+            BUILD_TARGET="${arg#*=}"
+            ;;
         --help|-h)
             echo "用法: ./scripts/deploy.sh [选项]"
             echo ""
@@ -36,6 +40,7 @@ for arg in "$@"; do
             echo "  --frontend-only  只部署前端"
             echo "  --no-restart     不重启服务（默认会停止现有服务）"
             echo "  --target=PATH    指定目标路径 (默认: /opt/simadmin)"
+            echo "  --build-target=TARGET  后端构建目标: aarch64 或 x86_64"
             echo "  --help, -h       显示帮助信息"
             echo ""
             echo "示例:"
@@ -55,7 +60,17 @@ for arg in "$@"; do
     esac
 done
 
-BACKEND_BIN="backend/target/aarch64-unknown-linux-musl/release/simadmin"
+case "$BUILD_TARGET" in
+    aarch64|arm64) BUILD_TARGET="aarch64-unknown-linux-musl" ;;
+    x86_64|amd64) BUILD_TARGET="x86_64-unknown-linux-musl" ;;
+    aarch64-unknown-linux-musl|x86_64-unknown-linux-musl) ;;
+    *)
+        echo "❌ 错误: 不支持的后端构建目标: $BUILD_TARGET" >&2
+        exit 1
+        ;;
+esac
+
+BACKEND_BIN="backend/target/$BUILD_TARGET/release/simadmin"
 FRONTEND_DIR="frontend/dist"
 
 echo "🚀 通过 ADB 部署到 ${TARGET_PATH}"

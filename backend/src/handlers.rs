@@ -4074,8 +4074,24 @@ pub async fn get_latest_ota_release_handler(
         let proxy_prefix = crate::ota::normalize_proxy_prefix(req.proxy_prefix);
         let client = crate::ota::build_ota_http_client()?;
 
-        crate::ota::fetch_latest_github_release(&client, &proxy_prefix, include_builtin_proxies)
-            .await
+        let mut release = crate::ota::fetch_latest_github_release(
+            &client,
+            &proxy_prefix,
+            include_builtin_proxies,
+        )
+        .await?;
+
+        let installed_status = crate::ota::get_ota_status();
+        let target_edition = installed_status.current_edition.as_deref();
+
+        // The UI historically displays the first archive. Return only the asset
+        // that matches this running binary so multi-architecture releases cannot
+        // offer an arm64 package to x86_64 devices (or vice versa).
+        release.assets = crate::ota::supported_release_asset(&release, target_edition)
+            .cloned()
+            .into_iter()
+            .collect();
+        Ok(release)
     }
     .await;
 
