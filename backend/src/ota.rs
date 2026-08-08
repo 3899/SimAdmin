@@ -247,17 +247,6 @@ fn ota_asset_score(name: &str, target: &str, target_edition: Option<&str>) -> Op
         return Some(3);
     }
 
-    // `simadmin.tar.gz` was the historical aarch64-only release name. Keep it
-    // as an arm64 fallback, but never install it on x86_64.
-    if target_is_arm
-        && matches!(
-            lower.as_str(),
-            "simadmin.tar.gz" | "simadmin.tgz" | "simadmin.zip"
-        )
-    {
-        return Some(1);
-    }
-
     None
 }
 
@@ -574,8 +563,8 @@ fn validate_ota_package(meta: &OtaMeta) -> Result<OtaValidation, String> {
     // OTA 二进制必须与当前运行实例的目标架构一致。
     let expected_triple = resolve_current_target_triple();
     let arch_match = meta.arch == expected_triple
-        || (expected_triple.contains("aarch64") && meta.arch.contains("arm64"))
-        || (expected_triple.contains("x86_64") && meta.arch.contains("amd64"));
+        || (expected_triple.contains("aarch64") && (meta.arch.contains("arm64") || meta.arch.contains("aarch64")))
+        || (expected_triple.contains("x86_64") && (meta.arch.contains("amd64") || meta.arch.contains("x86_64")));
 
     // 比较版本
     let is_newer = compare_versions(&meta.version, CURRENT_VERSION);

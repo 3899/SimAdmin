@@ -163,18 +163,16 @@ jobs:
           ./scripts/pack-ota.sh --target="$TARGET"
           case "$TARGET" in
             aarch64-unknown-linux-musl)
-              ARCH_SUFFIX="arm64"
+              ARCH_SUFFIX="aarch64"
               ;;
             x86_64-unknown-linux-musl)
-              ARCH_SUFFIX="amd64"
+              ARCH_SUFFIX="x86_64"
               ;;
           esac
           SOURCE="release/simadmin_${VERSION}_${TARGET}.tar.gz"
           DEST="release/simadmin-${ARCH_SUFFIX}.tar.gz"
           mv "$SOURCE" "$DEST"
-          if [ "$TARGET" = "aarch64-unknown-linux-musl" ]; then
-            cp "$DEST" release/simadmin.tar.gz
-          fi
+
           sha256sum release/*.tar.gz
 
       - name: Upload OTA artifact
@@ -268,8 +266,8 @@ jobs:
               f'- **构建时间**: {build_time}\n'
               f'- **发布类型**: {release_type}\n'
               f'- **资产包**: \n'
-              f'\t- **arm64 / aarch64**: `simadmin.tar.gz` `simadmin-arm64.tar.gz`\n'
-              f'\t- **amd64 / x86_64**: `simadmin-amd64.tar.gz`\n\n'
+              f'\t- **aarch64 (ARM64)**: `simadmin-aarch64.tar.gz`\n'
+              f'\t- **x86_64 (AMD64)**: `simadmin-x86_64.tar.gz`\n\n'
               f'### 更新说明\n\n'
               f'{changelog_text}\n\n\n'
               f'{full_changelog_line}\n'
@@ -284,7 +282,9 @@ jobs:
         with:
           tag_name: v${{ needs.prepare.outputs.version }}
           name: SimAdmin_v${{ needs.prepare.outputs.version }}
-          files: release/*.tar.gz
+          files: |
+            release/simadmin-aarch64.tar.gz
+            release/simadmin-x86_64.tar.gz
           body_path: release/RELEASE_BODY.md
           overwrite_files: true
           generate_release_notes: false
@@ -324,9 +324,8 @@ jobs:
                           h, fn = parts[0], os.path.basename(parts[1])
                           sums[fn] = h
 
-          arm64_hash = sums.get('simadmin-arm64.tar.gz', 'N/A')
-          amd64_hash = sums.get('simadmin-amd64.tar.gz', 'N/A')
-          alias_hash = sums.get('simadmin.tar.gz', 'N/A')
+          aarch64_hash = sums.get('simadmin-aarch64.tar.gz', 'N/A')
+          x86_64_hash = sums.get('simadmin-x86_64.tar.gz', 'N/A')
 
           release_url = f'https://github.com/{repository}/releases/tag/v{version}'
 
@@ -340,9 +339,8 @@ jobs:
               f'### 📦 资产包与 SHA-256 校验和\n\n'
               f'| 架构 / 平台 | 文件名 | SHA-256 校验和 |\n'
               f'| :--- | :--- | :--- |\n'
-              f'| **arm64 / aarch64** | `simadmin-arm64.tar.gz` | `{arm64_hash}` |\n'
-              f'| **amd64 / x86_64** | `simadmin-amd64.tar.gz` | `{amd64_hash}` |\n'
-              f'| **arm64 (兼容别名)** | `simadmin.tar.gz` | `{alias_hash}` |\n\n'
+              f'| **aarch64 / arm64** | `simadmin-aarch64.tar.gz` | `{aarch64_hash}` |\n'
+              f'| **x86_64 / amd64** | `simadmin-x86_64.tar.gz` | `{x86_64_hash}` |\n\n'
               f'---\n'
               f'🎉 Release 发布完成: [{repository}_v{version}]({release_url})\n'
           )

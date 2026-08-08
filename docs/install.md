@@ -17,7 +17,7 @@ curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/
 
 ### 指定版本与产物包
 
-默认下载并安装标准包 `simadmin-arm64.tar.gz` / `simadmin-amd64.tar.gz`，支持的 WFC 产物包 `simadmin-wfc-arm64.tar.gz` / `simadmin-wfc-amd64.tar.gz`：
+默认下载并安装标准包 `simadmin-aarch64.tar.gz` / `simadmin-x86_64.tar.gz`，支持的 WFC 产物包 `simadmin-wfc-aarch64.tar.gz` / `simadmin-wfc-x86_64.tar.gz`：
 
 ```bash
 # 安装最新版本的 WFC 产物包

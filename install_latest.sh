@@ -33,6 +33,13 @@ LPAC_ASSET_FLAVOR="${LPAC_ASSET_FLAVOR:-compat}"
 LPAC_ASSET_NAME="${LPAC_ASSET_NAME:-}"
 LPAC_ASSET_URL="${LPAC_ASSET_URL:-}"
 
+truthy() {
+  case "$1" in
+    1|true|TRUE|yes|YES|y|Y|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 normalize_asset_name() {
   case "$1" in
     wfc|simadmin-wfc|simadmin-wfc.tar.gz)
@@ -183,13 +190,6 @@ require_cmd() {
   fi
 }
 
-truthy() {
-  case "$1" in
-    1|true|TRUE|yes|YES|y|Y|on|ON) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 install_system_dependencies() {
   if ! truthy "$SIMADMIN_INSTALL_SYSTEM_DEPS"; then
     echo "==> skipping system dependency installation (SIMADMIN_INSTALL_SYSTEM_DEPS=${SIMADMIN_INSTALL_SYSTEM_DEPS})"
@@ -324,10 +324,10 @@ asset_url_from_tag() {
 normalize_simadmin_arch() {
   case "$1" in
     aarch64|arm64)
-      printf '%s\n' "arm64"
+      printf '%s\n' "aarch64"
       ;;
     x86_64|amd64)
-      printf '%s\n' "amd64"
+      printf '%s\n' "x86_64"
       ;;
     *)
       return 1
@@ -395,31 +395,10 @@ fallback_asset_url() {
   return 1
 }
 
-legacy_arm64_asset_url() {
-  if [ -n "$ASSET_URL" ] || [ -n "$ASSET_NAME" ]; then
-    return 1
-  fi
-  if [ "$(detect_simadmin_arch)" != "arm64" ]; then
-    return 1
-  fi
-
-  target_name="simadmin.tar.gz"
-  if truthy "$WFC" || [ "$VARIANT" = "wfc" ]; then
-    target_name="simadmin-wfc-arm64.tar.gz"
-  fi
-
-  if [ "$VERSION" = "latest" ]; then
-    printf 'https://github.com/%s/releases/latest/download/%s\n' "$REPO" "$target_name"
-  else
-    printf 'https://github.com/%s/releases/download/%s/%s\n' "$REPO" "$(version_to_tag "$VERSION")" "$target_name"
-  fi
-}
-
 download_release_asset() {
   archive_path="$1"
   primary_url="$2"
   fallback_url=""
-  legacy_url=""
 
   echo "==> downloading release asset"
   if download_with_proxies "$primary_url" "$archive_path"; then
@@ -433,22 +412,10 @@ download_release_asset() {
     fi
   fi
 
-  if legacy_url="$(legacy_arm64_asset_url)" \
-    && [ "$legacy_url" != "$primary_url" ] \
-    && [ "$legacy_url" != "$fallback_url" ]; then
-    echo "==> architecture-specific asset unavailable, trying legacy arm64 asset"
-    if download_with_proxies "$legacy_url" "$archive_path"; then
-      return 0
-    fi
-  fi
-
   echo "error: failed to download OTA asset" >&2
   echo "       tried: $primary_url" >&2
   if [ -n "$fallback_url" ]; then
     echo "       tried: $fallback_url" >&2
-  fi
-  if [ -n "$legacy_url" ]; then
-    echo "       tried: $legacy_url" >&2
   fi
   exit 1
 }
@@ -1168,8 +1135,8 @@ main() {
   fi
 
   case "$(detect_simadmin_arch)" in
-    arm64) expected_arch="aarch64-unknown-linux-musl" ;;
-    amd64) expected_arch="x86_64-unknown-linux-musl" ;;
+    aarch64|arm64) expected_arch="aarch64-unknown-linux-musl" ;;
+    amd64|x86_64) expected_arch="x86_64-unknown-linux-musl" ;;
     *) expected_arch="$(detect_simadmin_arch)" ;;
   esac
   if [ -f "${tmp_dir}/pkg/meta.json" ]; then
