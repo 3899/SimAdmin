@@ -13,19 +13,138 @@ SERVICE_URL="${SERVICE_URL:-${RAW_BASE}/main/scripts/simadmin.service}"
 MODEM_RECOVERY_SCRIPT_URL="${MODEM_RECOVERY_SCRIPT_URL:-${RAW_BASE}/main/scripts/simadmin-modem-recovery.sh}"
 MODEM_RECOVERY_SERVICE_URL="${MODEM_RECOVERY_SERVICE_URL:-${RAW_BASE}/main/scripts/simadmin-modem-recovery.service}"
 ASSET_URL="${ASSET_URL:-}"
-ASSET_NAME="${ASSET_NAME:-simadmin.tar.gz}"
-SIMADMIN_INSTALL_LPAC="${SIMADMIN_INSTALL_LPAC:-1}"
-LPAC_REPO="${LPAC_REPO:-estkme-group/lpac}"
-LPAC_RELEASE_BASE_URL="${LPAC_RELEASE_BASE_URL:-https://github.com/${LPAC_REPO}/releases/latest/download}"
-LPAC_LATEST_RELEASE_URL="${LPAC_LATEST_RELEASE_URL:-https://github.com/${LPAC_REPO}/releases/latest}"
-LPAC_COMPAT_RELEASE_BASE_URL="${LPAC_COMPAT_RELEASE_BASE_URL:-https://github.com/3899/SimAdmin/releases/download/lpac}"
-LPAC_COMPAT_MANIFEST_NAME="${LPAC_COMPAT_MANIFEST_NAME:-lpac.json}"
-LPAC_TARGET_ARCH="${LPAC_TARGET_ARCH:-}"
-LPAC_TARGET_VERSION="${LPAC_TARGET_VERSION:-}"
-LPAC_LATEST_RELEASE_API_URL="${LPAC_LATEST_RELEASE_API_URL:-https://api.github.com/repos/${LPAC_REPO}/releases/latest}"
-LPAC_ASSET_FLAVOR="${LPAC_ASSET_FLAVOR:-compat}"
-LPAC_ASSET_NAME="${LPAC_ASSET_NAME:-}"
-LPAC_ASSET_URL="${LPAC_ASSET_URL:-}"
+WFC="${WFC:-0}"
+VARIANT="${VARIANT:-}"
+
+normalize_asset_name() {
+  case "$1" in
+    wfc|simadmin-wfc|simadmin-wfc.tar.gz)
+      printf '%s\n' "simadmin-wfc.tar.gz"
+      ;;
+    ""|default|standard|simadmin|simadmin.tar.gz)
+      printf '%s\n' "simadmin.tar.gz"
+      ;;
+    *.tar.gz)
+      printf '%s\n' "$1"
+      ;;
+    *)
+      printf '%s.tar.gz\n' "$1"
+      ;;
+  esac
+}
+
+if truthy "$WFC" || [ "$VARIANT" = "wfc" ]; then
+  ASSET_NAME="simadmin-wfc.tar.gz"
+fi
+ASSET_NAME="$(normalize_asset_name "${ASSET_NAME:-simadmin.tar.gz}")"
+
+usage() {
+  printf '%s\n' \
+    'SimAdmin install / upgrade script' \
+    '' \
+    'Usage:' \
+    '  sh install_latest.sh [options] [version]' \
+    '' \
+    'Examples:' \
+    '  sh install_latest.sh                        # Install latest standard release (simadmin.tar.gz)' \
+    '  sh install_latest.sh --wfc                  # Install latest Wi-Fi Calling release (simadmin-wfc.tar.gz)' \
+    '  sh install_latest.sh -v1.1.8 --wfc          # Install v1.1.8 Wi-Fi Calling release' \
+    '  curl -fsSL .../install_latest.sh | WFC=1 sh # Install latest WFC release via env' \
+    '' \
+    'Options:' \
+    '  -v, --version VERSION  Target version to install (default: latest)' \
+    '  --wfc                  Install Wi-Fi Calling release asset (simadmin-wfc.tar.gz)' \
+    '  -a, --asset NAME       Specify release asset (e.g. simadmin-wfc.tar.gz or wfc)' \
+    '  --install-dir PATH     Installation directory (default: /opt/simadmin)' \
+    '  --service-name NAME    Main systemd service name (default: simadmin)' \
+    '  --no-lpac              Skip lpac installation' \
+    '  -h, --help             Show this help' \
+    '' \
+    'Environment Variables:' \
+    '  VERSION=latest         Specify version' \
+    '  WFC=1 / VARIANT=wfc    Install Wi-Fi Calling release (simadmin-wfc.tar.gz)' \
+    '  ASSET_NAME=...         Specify release asset filename (default: simadmin.tar.gz)' \
+    '  INSTALL_DIR=/opt/simadmin' \
+    '  SERVICE_NAME=simadmin' \
+    '  SIMADMIN_INSTALL_LPAC=1 (set to 0 to skip lpac)' \
+    '  GH_PROXY=https://gh-proxy.com/'
+}
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -v|--version)
+        shift
+        if [ "$#" -eq 0 ]; then
+          echo "error: --version requires a value" >&2
+          exit 1
+        fi
+        VERSION="$1"
+        ;;
+      -v=*|--version=*)
+        VERSION="${1#*=}"
+        ;;
+      -v*)
+        VERSION="${1#-v}"
+        ;;
+      --wfc)
+        ASSET_NAME="simadmin-wfc.tar.gz"
+        ;;
+      -a|--asset|--variant)
+        shift
+        if [ "$#" -eq 0 ]; then
+          echo "error: $1 requires a value" >&2
+          exit 1
+        fi
+        ASSET_NAME="$(normalize_asset_name "$1")"
+        ;;
+      -a=*|--asset=*|--variant=*)
+        ASSET_NAME="$(normalize_asset_name "${1#*=}")"
+        ;;
+      -a*)
+        ASSET_NAME="$(normalize_asset_name "${1#-a}")"
+        ;;
+      --install-dir)
+        shift
+        if [ "$#" -eq 0 ]; then
+          echo "error: --install-dir requires a value" >&2
+          exit 1
+        fi
+        INSTALL_DIR="$1"
+        ;;
+      --install-dir=*)
+        INSTALL_DIR="${1#*=}"
+        ;;
+      --service-name)
+        shift
+        if [ "$#" -eq 0 ]; then
+          echo "error: --service-name requires a value" >&2
+          exit 1
+        fi
+        SERVICE_NAME="$1"
+        ;;
+      --service-name=*)
+        SERVICE_NAME="${1#*=}"
+        ;;
+      --no-lpac|--skip-lpac)
+        SIMADMIN_INSTALL_LPAC=0
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      -*)
+        echo "error: unknown option: $1" >&2
+        usage >&2
+        exit 1
+        ;;
+      *)
+        VERSION="$1"
+        ;;
+    esac
+    shift
+  done
+}
 
 require_root() {
   if [ "$(id -u)" -ne 0 ]; then
@@ -106,7 +225,7 @@ version_to_tag() {
 
 asset_url_from_tag() {
   tag="$1"
-  printf 'https://github.com/%s/releases/download/%s/simadmin.tar.gz\n' "$REPO" "$tag"
+  printf 'https://github.com/%s/releases/download/%s/%s\n' "$REPO" "$tag" "$ASSET_NAME"
 }
 
 repo_version() {
@@ -740,10 +859,17 @@ install_lpac() {
 
 
 main() {
+  parse_args "$@"
   require_root
   require_cmd curl
   require_cmd systemctl
   require_cmd mktemp
+
+  echo "==> installing SimAdmin"
+  echo "    version: ${VERSION}"
+  echo "    asset: ${ASSET_NAME}"
+  echo "    install dir: ${INSTALL_DIR}"
+  echo "    service name: ${SERVICE_NAME}"
 
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "$tmp_dir"' EXIT INT TERM
@@ -787,8 +913,24 @@ main() {
   cp -R "${tmp_dir}/pkg/www" "${INSTALL_DIR}/www"
   chmod -R a+rX "${INSTALL_DIR}/www"
 
+  target_edition="standard"
+  case "$ASSET_NAME" in
+    *wfc*) target_edition="wfc" ;;
+  esac
+
   if [ -f "${tmp_dir}/pkg/meta.json" ]; then
     install -m 0644 "${tmp_dir}/pkg/meta.json" "${INSTALL_DIR}/meta.json"
+    if ! grep -q '"edition"' "${INSTALL_DIR}/meta.json"; then
+      sed -i "s/}/, \"edition\": \"${target_edition}\"}/" "${INSTALL_DIR}/meta.json" || true
+    fi
+  else
+    cat > "${INSTALL_DIR}/meta.json" << EOF
+{
+  "version": "${VERSION}",
+  "edition": "${target_edition}"
+}
+EOF
+    chmod 0644 "${INSTALL_DIR}/meta.json"
   fi
 
   install_lpac

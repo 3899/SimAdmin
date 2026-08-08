@@ -963,6 +963,8 @@ pub struct OtaMeta {
     pub arch: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edition: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -977,6 +979,8 @@ pub struct OtaStatusResponse {
     pub current_frontend_md5: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_arch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_edition: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub installed_meta: Option<OtaMeta>,
     pub pending_update: bool,

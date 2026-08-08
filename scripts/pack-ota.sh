@@ -89,9 +89,16 @@ else
     FRONTEND_MD5=$(find "$OTA_TMP/www" -type f -exec md5sum {} \; | cut -d' ' -f1 | sort | md5sum | cut -d' ' -f1)
 fi
 echo "   MD5: $FRONTEND_MD5"
+EDITION="${EDITION:-${VARIANT:-standard}}"
+for arg in "$@"; do
+    case "$arg" in
+        --wfc|wfc) EDITION="wfc" ;;
+        --edition=*|--variant=*) EDITION="${arg#*=}" ;;
+    esac
+done
 
 # 生成 meta.json
-echo "📋 生成 meta.json..."
+echo "📋 生成 meta.json ( edition: $EDITION)..."
 cat > "$OTA_TMP/meta.json" << EOF
 {
     "version": "$VERSION",
@@ -99,7 +106,8 @@ cat > "$OTA_TMP/meta.json" << EOF
     "build_time": "$BUILD_TIME",
     "binary_md5": "$BINARY_MD5",
     "frontend_md5": "$FRONTEND_MD5",
-    "arch": "$ARCH"
+    "arch": "$ARCH",
+    "edition": "$EDITION"
 }
 EOF
 

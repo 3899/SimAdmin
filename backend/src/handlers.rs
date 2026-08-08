@@ -4114,7 +4114,10 @@ pub async fn prepare_online_ota_handler(
         )
         .await?;
 
-        let asset = crate::ota::supported_release_asset(&release)
+        let installed_status = crate::ota::get_ota_status();
+        let target_edition = installed_status.current_edition.as_deref();
+
+        let asset = crate::ota::supported_release_asset(&release, target_edition)
             .ok_or_else(|| "No supported OTA asset found in latest release".to_string())?;
 
         if asset.size > crate::ota::MAX_OTA_BYTES {

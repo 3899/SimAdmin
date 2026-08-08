@@ -720,12 +720,25 @@ export default function OtaUpdate() {
                 <InfoField
                   label="版本号"
                   value={
-                    <Chip
-                      label={status?.current_version || 'N/A'}
-                      color="primary"
-                      size="small"
-                      sx={{ height: 20, fontSize: '0.75rem' }}
-                    />
+                    <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
+                      <Chip
+                        label={status?.current_version || 'N/A'}
+                        color="primary"
+                        size="small"
+                        sx={{ height: 20, fontSize: '0.75rem' }}
+                      />
+                      {(status?.current_edition || status?.installed_meta?.edition || '')
+                        .toLowerCase()
+                        .includes('wfc') && (
+                        <Chip
+                          label="Wi-Fi Calling"
+                          color="secondary"
+                          size="small"
+                          variant="filled"
+                          sx={{ height: 20, fontSize: '0.75rem' }}
+                        />
+                      )}
+                    </Box>
                   }
                 />
               </Grid>

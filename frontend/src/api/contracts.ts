@@ -894,6 +894,7 @@ export interface OtaMeta {
   frontend_md5: string
   arch: string
   min_version?: string
+  edition?: string
 }
 
 export interface OtaValidation {
@@ -912,6 +913,7 @@ export interface OtaStatusResponse {
   current_binary_md5?: string
   current_frontend_md5?: string
   current_arch?: string
+  current_edition?: string
   installed_meta?: OtaMeta
   pending_update: boolean
   pending_meta?: OtaMeta

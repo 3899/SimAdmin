@@ -15,16 +15,43 @@ curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.s
 curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh
 ```
 
+### 指定版本与产物包
+
+默认下载并安装标准包 `simadmin.tar.gz`，支持的特定产物包 `simadmin-wfc.tar.gz`：
+
+```bash
+# 安装最新版本的 WFC 产物包
+curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- --wfc
+
+# 同时指定版本与 WFC 产物包
+curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- -v1.1.8 --wfc
+
+# 通过环境变量指定版本与 WFC 产物包
+curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | VERSION=v1.1.8 WFC=1 sh
+```
+
+### 安装脚本参数说明
+
+| 参数 | 说明 |
+|------|------|
+| `-v, --version VERSION` | 指定安装目标版本（例如 `v1.1.8` 或 `1.1.8`），默认 `latest` |
+| `--wfc` | 指定下载安装 WFC 产物包 |
+| `-a, --asset NAME` | 自定义 Release 产物文件名 |
+| `--install-dir PATH` | 指定安装目录，默认 `/opt/simadmin` |
+| `--service-name NAME` | 指定 systemd 主服务名，默认 `simadmin` |
+| `--no-lpac` | 跳过 lpac (eSIM CLI) 的自动下载与安装 |
+| `-h, --help` | 显示帮助信息 |
+
 ### 可选环境变量
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh \
-  | REPO=3899/SimAdmin INSTALL_DIR=/opt/simadmin SERVICE_NAME=simadmin sh
+  | REPO=3899/SimAdmin INSTALL_DIR=/opt/simadmin SERVICE_NAME=simadmin VERSION=latest WFC=1 sh
 ```
 
 ### 安装脚本动作说明
 
-- 从 GitHub Release 下载 `simadmin.tar.gz`。
+- 从 GitHub Release 下载对应版本的 `simadmin.tar.gz`（默认为最新版本）。
 - 安装后端二进制到 `/opt/simadmin/simadmin`。
 - 安装前端到 `/opt/simadmin/www`。
 - 安装并启用 `simadmin.service`。

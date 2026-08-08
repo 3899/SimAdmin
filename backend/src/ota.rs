@@ -73,6 +73,10 @@ pub fn get_ota_status() -> OtaStatusResponse {
         .as_ref()
         .map(|m| m.arch.clone())
         .or_else(|| Some(format!("{}-unknown-linux-musl", std::env::consts::ARCH)));
+    let current_edition = installed_meta
+        .as_ref()
+        .and_then(|m| m.edition.clone())
+        .or_else(|| Some("standard".to_string()));
 
     OtaStatusResponse {
         current_version,
@@ -81,6 +85,7 @@ pub fn get_ota_status() -> OtaStatusResponse {
         current_binary_md5,
         current_frontend_md5,
         current_arch,
+        current_edition,
         installed_meta,
         pending_update: pending_meta.is_some(),
         pending_meta,
@@ -177,7 +182,30 @@ pub fn is_supported_ota_asset(name: &str) -> bool {
     lower.ends_with(".tar.gz") || lower.ends_with(".tgz") || lower.ends_with(".zip")
 }
 
-pub fn supported_release_asset(release: &OtaLatestReleaseResponse) -> Option<&OtaReleaseAsset> {
+pub fn supported_release_asset<'a>(
+    release: &'a OtaLatestReleaseResponse,
+    target_edition: Option<&str>,
+) -> Option<&'a OtaReleaseAsset> {
+    let target_edition = target_edition.unwrap_or("standard");
+    let is_wfc = target_edition.eq_ignore_ascii_case("wfc")
+        || target_edition.to_ascii_lowercase().contains("wfc");
+
+    if is_wfc {
+        if let Some(asset) = release.assets.iter().find(|asset| {
+            let lower = asset.name.to_ascii_lowercase();
+            is_supported_ota_asset(&asset.name) && lower.contains("wfc")
+        }) {
+            return Some(asset);
+        }
+    } else {
+        if let Some(asset) = release.assets.iter().find(|asset| {
+            let lower = asset.name.to_ascii_lowercase();
+            is_supported_ota_asset(&asset.name) && !lower.contains("wfc")
+        }) {
+            return Some(asset);
+        }
+    }
+
     release
         .assets
         .iter()
@@ -253,7 +281,10 @@ pub async fn check_and_notify_version_update(
         return Ok(());
     }
 
-    let asset = supported_release_asset(&release)
+    let installed_meta = read_installed_meta();
+    let edition = installed_meta.as_ref().and_then(|m| m.edition.as_deref());
+
+    let asset = supported_release_asset(&release, edition)
         .ok_or_else(|| "No supported OTA asset found in latest release".to_string())?;
     let own_number = notification_sender.get_own_number().await;
     let current_time = chrono::Utc::now().to_rfc3339();
