@@ -292,7 +292,7 @@ function SimBasicInfo() {
       const res = await api.setWorkMode(pendingMode)
       if (res.status === 'ok') {
         await refreshWorkMode()
-        showMsg(`工作模式已切换为${pendingMode === 'esim' ? '实体 eSIM 卡模式' : '普通 SIM 卡模式'}`, 'success')
+        showMsg(`工作模式已切换为${pendingMode === 'esim' ? '实体 eSIM 卡' : '国内实体 SIM 卡'}`, 'success')
         setPendingMode(null)
       } else {
         showMsg(res.message || '切换工作模式失败', 'error')
@@ -594,7 +594,7 @@ function SimBasicInfo() {
           subheaderTypographyProps={{ variant: 'caption', color: 'text.secondary' }}
           action={
             <Chip
-              label={mode === 'esim' ? '实体 eSIM 卡模式' : '普通 SIM 卡模式'}
+              label={mode === 'esim' ? '实体 eSIM 卡' : '国内实体 SIM 卡'}
               color="primary"
               variant="outlined"
               size="small"
@@ -628,13 +628,13 @@ function SimBasicInfo() {
                   <Box display="flex" alignItems="center" gap={1}>
                     <SimIcon color={mode === 'sim' ? 'primary' : 'action'} fontSize="small" />
                     <Typography variant="body2" fontWeight={700}>
-                      普通 SIM 卡模式
+                      国内实体 SIM 卡
                     </Typography>
                   </Box>
                   {mode === 'sim' && <CheckCircle color="primary" fontSize="small" />}
                 </Box>
                 <Typography variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.4 }}>
-                  适合仅使用普通物理 SIM 卡场景，隐藏 eSIM 管理模块并阻止 lpac 接口。
+                  适合使用国内运营商物理 SIM 卡，隐藏 eSIM 管理模块并阻止 lpac 接口。
                 </Typography>
               </Paper>
             </Grid>
@@ -663,7 +663,7 @@ function SimBasicInfo() {
                   <Box display="flex" alignItems="center" gap={1}>
                     <Memory color={mode === 'esim' ? 'primary' : 'action'} fontSize="small" />
                     <Typography variant="body2" fontWeight={700}>
-                      实体 eSIM 卡模式
+                      实体 eSIM 卡
                     </Typography>
                   </Box>
                   {mode === 'esim' && <CheckCircle color="primary" fontSize="small" />}
@@ -681,7 +681,7 @@ function SimBasicInfo() {
         <DialogTitle sx={{ fontSize: '1.05rem', fontWeight: 600 }}>确认切换工作模式</DialogTitle>
         <DialogContent>
           <DialogContentText variant="body2">
-            确定要切换为 <strong>{pendingMode === 'esim' ? '实体 eSIM 卡模式' : '普通 SIM 卡模式'}</strong> 吗？
+            确定要切换为 <strong>{pendingMode === 'esim' ? '实体 eSIM 卡' : '国内实体 SIM 卡'}</strong> 吗？
           </DialogContentText>
           {pendingMode === 'sim' && (
             <Alert severity="info" sx={{ mt: 1.5, fontSize: '0.8rem' }}>

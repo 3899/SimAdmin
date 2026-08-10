@@ -207,6 +207,16 @@ pub struct BackupExportRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct BackupDataClearRequest {
+    pub components: Vec<BackupComponent>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct BackupDataClearResponse {
+    pub cleared_components: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct BackupConfigRequest {
     pub config: BackupConfig,
 }
@@ -439,6 +449,104 @@ pub async fn export_backup_local_handler(
             ))),
         ),
     }
+}
+
+pub async fn clear_backup_data_handler(
+    State(app): State<AppState>,
+    Json(payload): Json<BackupDataClearRequest>,
+) -> (StatusCode, Json<ApiResponse<BackupDataClearResponse>>) {
+    match clear_components_data(&app, &payload.components) {
+        Ok(cleared) => (
+            StatusCode::OK,
+            Json(ApiResponse::success_with_message(
+                "Component data cleared",
+                BackupDataClearResponse {
+                    cleared_components: cleared.iter().map(|c| c.as_str().to_string()).collect(),
+                },
+            )),
+        ),
+        Err(err) => (
+            StatusCode::OK,
+            Json(ApiResponse::<BackupDataClearResponse>::error(format!(
+                "Failed: {err}"
+            ))),
+        ),
+    }
+}
+
+fn clear_components_data(
+    app: &AppState,
+    components: &[BackupComponent],
+) -> Result<Vec<BackupComponent>, String> {
+    let selected = selected_components(components)?;
+
+    app.database
+        .with_transaction(|tx| {
+            for component in &selected {
+                match component {
+                    BackupComponent::Sms => {
+                        tx.execute("DELETE FROM sms_messages", [])?;
+                    }
+                    BackupComponent::NotificationLogs => {
+                        tx.execute("DELETE FROM notification_logs", [])?;
+                    }
+                    BackupComponent::NotificationQueue => {
+                        tx.execute("DELETE FROM notification_queue", [])?;
+                    }
+                    BackupComponent::AutomationLogs => {
+                        tx.execute("DELETE FROM automation_logs", [])?;
+                    }
+                    BackupComponent::SimCache => {
+                        tx.execute("DELETE FROM smsc_cache", [])?;
+                        tx.execute("DELETE FROM own_number_cache", [])?;
+                        tx.execute("DELETE FROM sms_storage_cache", [])?;
+                    }
+                    BackupComponent::EsimCache => {
+                        tx.execute("DELETE FROM esim_profile_cache", [])?;
+                        tx.execute("DELETE FROM esim_euicc_cache", [])?;
+                    }
+                    BackupComponent::Auth => {
+                        tx.execute("DELETE FROM auth_sessions", [])?;
+                    }
+                    _ => {}
+                }
+            }
+            Ok(())
+        })
+        .map_err(|err| format!("Failed to clear database components: {err}"))?;
+
+    let mut config = app.config_manager.get_config();
+    let mut config_changed = false;
+
+    for component in &selected {
+        match component {
+            BackupComponent::Config => {
+                config.roaming_allowed = false;
+                config.data_enabled = true;
+                config.apn = Default::default();
+                config.work_mode = Default::default();
+                config_changed = true;
+            }
+            BackupComponent::NotificationConfig => {
+                config.notifications = Default::default();
+                config.webhook = Default::default();
+                config_changed = true;
+            }
+            BackupComponent::AutomationConfig => {
+                config.automation = Default::default();
+                config_changed = true;
+            }
+            _ => {}
+        }
+    }
+
+    if config_changed {
+        app.config_manager
+            .replace_config(config)
+            .map_err(|err| format!("Failed to save cleared config: {err}"))?;
+    }
+
+    Ok(selected)
 }
 
 pub async fn preview_backup_import_handler(

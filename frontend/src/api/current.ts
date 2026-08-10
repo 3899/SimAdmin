@@ -993,6 +993,14 @@ class SimAdminCurrentAPI {
     })
   }
 
+  async clearBackupData(components: BackupComponentKey[]) {
+    return request<ApiResponse<{ cleared_components: BackupComponentKey[] }>>('/backup/data/clear', {
+      method: 'POST',
+      body: JSON.stringify({ components }),
+      timeoutMs: 120000,
+    })
+  }
+
   async previewBackupImport(file: Blob) {
     return binaryJsonRequest<ApiResponse<BackupImportPreview>>('/backup/import/preview', file, 120000)
   }

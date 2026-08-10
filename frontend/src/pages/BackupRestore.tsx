@@ -106,6 +106,8 @@ const ALL_COMPONENTS: BackupComponentKey[] = [
   'auth',
 ]
 
+const CONFIRM_CLEAR_DATA_TEXT = '确认清空已选数据'
+
 
 
 const BACKUP_PRESETS: Array<{
@@ -475,6 +477,12 @@ export default function BackupRestorePage() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
+  // Clear data confirmation dialog state
+  const [clearDataDialogOpen, setClearDataDialogOpen] = useState(false)
+  const [clearConfirmText, setClearConfirmText] = useState('')
+  const [targetClearComponents, setTargetClearComponents] = useState<BackupComponentKey[]>([])
+  const [clearDataLoading, setClearDataLoading] = useState(false)
+
   // Modifiable Filename State
   const [customFilename, setCustomFilename] = useState('')
   const [isFilenameEdited, setIsFilenameEdited] = useState(false)
@@ -628,6 +636,36 @@ export default function BackupRestorePage() {
 
   const clearAllInList = (list: BackupComponentKey[]) => {
     setComponents(config.components.filter((item) => !list.includes(item)))
+  }
+
+  const handleOpenClearDataDialog = (cardComponentKeys: BackupComponentKey[]) => {
+    const selectedInCard = cardComponentKeys.filter((key) => selectedComponents.includes(key))
+    if (selectedInCard.length === 0) {
+      setError('请先在对应卡片中勾选需要清空数据的组件')
+      return
+    }
+    setTargetClearComponents(selectedInCard)
+    setClearConfirmText('')
+    setClearDataDialogOpen(true)
+  }
+
+  const handleConfirmClearData = async () => {
+    if (clearConfirmText !== CONFIRM_CLEAR_DATA_TEXT || targetClearComponents.length === 0) return
+    setClearDataLoading(true)
+    setError(null)
+    setSuccess(null)
+    try {
+      const response = await api.clearBackupData(targetClearComponents)
+      setClearDataDialogOpen(false)
+      setClearConfirmText('')
+      const count = response.data?.cleared_components.length ?? targetClearComponents.length
+      setSuccess(`已成功清空 ${count} 个选中组件的用户数据`)
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setClearDataLoading(false)
+    }
   }
 
 
@@ -1221,8 +1259,18 @@ export default function BackupRestorePage() {
                   <Button size="small" variant="text" sx={{ fontWeight: 500 }} onClick={() => selectAllInList(configAndDataComponents.map(o => o.key))}>
                     全选
                   </Button>
-                  <Button size="small" variant="text" color="error" sx={{ fontWeight: 500 }} onClick={() => clearAllInList(configAndDataComponents.map(o => o.key))}>
-                    清空
+                  <Button size="small" variant="text" sx={{ fontWeight: 500 }} onClick={() => clearAllInList(configAndDataComponents.map(o => o.key))}>
+                    取消全选
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="text"
+                    color="error"
+                    sx={{ fontWeight: 500 }}
+                    onClick={() => handleOpenClearDataDialog(configAndDataComponents.map(o => o.key))}
+                    disabled={configAndDataComponents.filter(o => selectedComponents.includes(o.key)).length === 0}
+                  >
+                    清空数据
                   </Button>
                 </Stack>
               }
@@ -1250,8 +1298,18 @@ export default function BackupRestorePage() {
                   <Button size="small" variant="text" sx={{ fontWeight: 500 }} onClick={() => selectAllInList(logComponents.map(o => o.key))}>
                     全选
                   </Button>
-                  <Button size="small" variant="text" color="error" sx={{ fontWeight: 500 }} onClick={() => clearAllInList(logComponents.map(o => o.key))}>
-                    清空
+                  <Button size="small" variant="text" sx={{ fontWeight: 500 }} onClick={() => clearAllInList(logComponents.map(o => o.key))}>
+                    取消全选
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="text"
+                    color="error"
+                    sx={{ fontWeight: 500 }}
+                    onClick={() => handleOpenClearDataDialog(logComponents.map(o => o.key))}
+                    disabled={logComponents.filter(o => selectedComponents.includes(o.key)).length === 0}
+                  >
+                    清空数据
                   </Button>
                 </Stack>
               }
@@ -2180,6 +2238,54 @@ export default function BackupRestorePage() {
       </Dialog>
 
       <ErrorSnackbar error={error} onClose={() => setError(null)} />
+      <Dialog
+        open={clearDataDialogOpen}
+        onClose={() => {
+          if (!clearDataLoading) {
+            setClearDataDialogOpen(false)
+            setClearConfirmText('')
+          }
+        }}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle display="flex" alignItems="center" gap={1}>
+          <WarningAmber color="error" />
+          清空已选组件数据
+        </DialogTitle>
+        <DialogContent>
+          <Alert severity="error" sx={{ mb: 2 }}>
+            此操作将清除所有选中组件的数据，操作不可逆，清除后数据无法恢复。
+            <br />
+            请输入「确认清空已选数据」继续操作。
+          </Alert>
+          <TextField
+            fullWidth
+            label={`请输入「${CONFIRM_CLEAR_DATA_TEXT}」完成操作`}
+            value={clearConfirmText}
+            onChange={(event) => setClearConfirmText(event.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              setClearDataDialogOpen(false)
+              setClearConfirmText('')
+            }}
+            disabled={clearDataLoading}
+          >
+            取消
+          </Button>
+          <Button
+            color="error"
+            variant="contained"
+            disabled={clearConfirmText !== CONFIRM_CLEAR_DATA_TEXT || clearDataLoading}
+            onClick={() => void handleConfirmClearData()}
+          >
+            {clearDataLoading ? <CircularProgress size={20} color="inherit" /> : '确认清空'}
+          </Button>
+        </DialogActions>
+      </Dialog>
       <Snackbar
         open={Boolean(success)}
         autoHideDuration={4000}

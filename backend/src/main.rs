@@ -899,6 +899,10 @@ async fn main() -> Result<()> {
             post(backup::export_backup_local_handler).options(options_handler),
         )
         .route(
+            "/api/backup/data/clear",
+            post(backup::clear_backup_data_handler).options(options_handler),
+        )
+        .route(
             "/api/backup/import/preview",
             post(backup::preview_backup_import_handler)
                 .options(options_handler)
