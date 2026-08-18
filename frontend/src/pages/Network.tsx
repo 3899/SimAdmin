@@ -59,7 +59,8 @@ import {
   SignalCellularAlt,
 } from '@mui/icons-material'
 import Grid from '@mui/material/Grid'
-import { api, type RadioMode, type BandLockStatus, type BandLockRequest } from '../api'
+import { type RadioMode, type BandLockStatus, type BandLockRequest } from '../api'
+import { useSimAdminApi } from '../contexts/ApiContext'
 import { useRefreshInterval } from '../contexts/RefreshContext'
 import ErrorSnackbar from '../components/ErrorSnackbar'
 import { isTransientModemError, createThrottledWarner } from '../utils/modemErrors'
@@ -195,6 +196,7 @@ function TabPanel(props: TabPanelProps) {
 const throttledWarn = createThrottledWarner(10_000)
 
 export default function NetworkPage() {
+  const api = useSimAdminApi()
   const { refreshInterval, refreshKey } = useRefreshInterval()
   const [initialLoading, setInitialLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)

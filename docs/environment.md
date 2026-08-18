@@ -30,6 +30,7 @@
 | `/opt/simadmin/data.db` | SQLite 数据库文件（保存短信记录、登录认证密码散列值、会话 Token、自动化日志等） |
 | `/opt/simadmin/meta.json` | 记录当前安装包的 OTA 元数据（版本、构建时间、二进制 MD5 等） |
 | `/data/config.json` | 优先加载的系统运行持久化配置文件 |
+| `/data/hub-agent.db` | 集中管理模式的 Agent 安装身份、Hub 元数据、可靠消息 outbox 与命令账本；旧路径会在升级时迁移 |
 | `/opt/simadmin/config.json` | `/data` 目录不存在时，回退加载的系统配置文件 |
 | `/tmp/ota_staging` | 上传 OTA 包后的临时校验与备份解压目录 |
 | `/etc/systemd/system/simadmin.service` | SimAdmin 后端主服务守护单元 |

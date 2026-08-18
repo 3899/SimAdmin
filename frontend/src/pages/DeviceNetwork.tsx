@@ -51,7 +51,8 @@ import {
   Wifi,
   WifiOff,
 } from '@mui/icons-material'
-import { api, type DdnsConfig, type DdnsLogEntry, type DdnsStatusResponse, type NetworkInterfaceInfo, type WlanNetwork, type WlanSavedNetwork, type WlanStatusResponse } from '../api/current'
+import { type DdnsConfig, type DdnsLogEntry, type DdnsStatusResponse, type NetworkInterfaceInfo, type WlanNetwork, type WlanSavedNetwork, type WlanStatusResponse } from '../api/current'
+import { useSimAdminApi } from '../contexts/ApiContext'
 import ErrorSnackbar from '../components/ErrorSnackbar'
 import { useRefreshInterval } from '../contexts/RefreshContext'
 import { publicIpv6AddressEntries } from '@/utils/ip'
@@ -389,6 +390,7 @@ function isPublicIpv6Address(address: string) {
 }
 
 export default function DeviceNetworkPage() {
+  const api = useSimAdminApi()
   const { refreshInterval, refreshKey } = useRefreshInterval()
   const [tabValue, setTabValue] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -511,7 +513,7 @@ export default function DeviceNetworkPage() {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [refreshInterval, refreshKey, tabValue])
+  }, [api, refreshInterval, refreshKey, tabValue])
 
   const applyWlanStatus = (status: WlanStatusResponse) => {
     setWlanStatus(status)
@@ -533,7 +535,7 @@ export default function DeviceNetworkPage() {
     } catch {
       setSavedNetworks([])
     }
-  }, [])
+  }, [api])
 
   const handleTabChange = (_event: SyntheticEvent, value: number) => setTabValue(value)
 
@@ -649,7 +651,7 @@ export default function DeviceNetworkPage() {
       wlanScanInFlightRef.current = false
       setWlanScanning(false)
     }
-  }, [refreshWlanProfiles])
+  }, [api, refreshWlanProfiles])
 
   useEffect(() => {
     if (tabValue !== 0 || !wlanStatus?.enabled) return

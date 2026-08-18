@@ -23,6 +23,17 @@ pub struct SmsMessage {
     pub pdu: Option<String>,  // 原始 PDU（如果有）
 }
 
+#[derive(Debug, Clone)]
+pub struct HubEventRecord {
+    pub item_id: String,
+    pub event_type: String,
+    pub event_code: String,
+    pub occurred_at: String,
+    pub summary: String,
+    pub details: serde_json::Value,
+    pub local_fallback_applied: bool,
+}
+
 /// 通话记录
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallRecord {
@@ -178,8 +189,6 @@ pub struct OwnNumberCacheEntry {
     pub source: String,
     pub updated_at: String,
 }
-
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EsimProfileCacheEntry {
@@ -397,6 +406,12 @@ impl Database {
                 [],
             )?;
         }
+        if !table_has_column(&conn, "sms_messages", "hub_sync_status")? {
+            conn.execute(
+                "ALTER TABLE sms_messages ADD COLUMN hub_sync_status TEXT NOT NULL DEFAULT 'pending'",
+                [],
+            )?;
+        }
 
         // 创建短信索引
         conn.execute(
@@ -412,6 +427,25 @@ impl Database {
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_sms_notification_status ON sms_messages(notification_status)",
             [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sms_hub_sync ON sms_messages(hub_sync_status,id)",
+            [],
+        )?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS hub_notification_events (
+                item_id TEXT PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                event_code TEXT NOT NULL,
+                occurred_at TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                details_json TEXT NOT NULL,
+                sync_status TEXT NOT NULL DEFAULT 'pending',
+                local_fallback_applied INTEGER NOT NULL DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_hub_notification_sync
+                ON hub_notification_events(sync_status,created_at);",
         )?;
         normalize_existing_sms_timestamps(&conn)?;
 
@@ -908,6 +942,123 @@ impl Database {
                 Ok(result)
             }
         }
+    }
+
+    pub fn get_unsynced_sms_messages(&self, limit: i64) -> Result<Vec<SmsMessage>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id,direction,phone_number,content,timestamp,status,pdu
+             FROM sms_messages WHERE hub_sync_status!='synced' ORDER BY id LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit], sms_message_from_row)?;
+        rows.collect()
+    }
+
+    pub fn mark_sms_hub_synced(&self, id: i64) -> Result<usize> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE sms_messages SET hub_sync_status='synced' WHERE id=?1",
+            [id],
+        )
+    }
+
+    pub fn reset_sms_hub_sync(&self) -> Result<usize> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE sms_messages SET hub_sync_status='pending' WHERE hub_sync_status!='pending'",
+            [],
+        )
+    }
+
+    pub fn enqueue_hub_event(&self, event: &HubEventRecord) -> Result<bool> {
+        Ok(self.conn.lock().unwrap().execute(
+            "INSERT OR IGNORE INTO hub_notification_events
+             (item_id,event_type,event_code,occurred_at,summary,details_json,local_fallback_applied)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![
+                event.item_id,
+                event.event_type,
+                event.event_code,
+                event.occurred_at,
+                event.summary,
+                serde_json::to_string(&event.details).unwrap_or_else(|_| "{}".into()),
+                event.local_fallback_applied,
+            ],
+        )? > 0)
+    }
+
+    pub fn unsynced_hub_events(&self, limit: i64) -> Result<Vec<HubEventRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT item_id,event_type,event_code,occurred_at,summary,details_json,local_fallback_applied
+             FROM hub_notification_events WHERE sync_status!='synced' ORDER BY created_at LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit], |row| {
+            let details: String = row.get(5)?;
+            Ok(HubEventRecord {
+                item_id: row.get(0)?,
+                event_type: row.get(1)?,
+                event_code: row.get(2)?,
+                occurred_at: row.get(3)?,
+                summary: row.get(4)?,
+                details: serde_json::from_str(&details).unwrap_or_default(),
+                local_fallback_applied: row.get(6)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn mark_hub_event_synced(&self, item_id: &str) -> Result<usize> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE hub_notification_events SET sync_status='synced' WHERE item_id=?1",
+            [item_id],
+        )
+    }
+
+    pub fn mark_hub_event_local_fallback(&self, item_id: &str) -> Result<usize> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE hub_notification_events SET local_fallback_applied=1 WHERE item_id=?1
+             AND local_fallback_applied=0",
+            [item_id],
+        )
+    }
+
+    pub fn hub_event(&self, item_id: &str) -> Result<Option<HubEventRecord>> {
+        self.conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT item_id,event_type,event_code,occurred_at,summary,details_json,local_fallback_applied
+                 FROM hub_notification_events WHERE item_id=?1",
+                [item_id],
+                |row| {
+                    let details: String = row.get(5)?;
+                    Ok(HubEventRecord {
+                        item_id: row.get(0)?,
+                        event_type: row.get(1)?,
+                        event_code: row.get(2)?,
+                        occurred_at: row.get(3)?,
+                        summary: row.get(4)?,
+                        details: serde_json::from_str(&details).unwrap_or_default(),
+                        local_fallback_applied: row.get(6)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    pub fn hub_events_due_for_local_fallback(
+        &self,
+        timeout_seconds: u64,
+        limit: i64,
+    ) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT item_id FROM hub_notification_events
+             WHERE sync_status!='synced' AND local_fallback_applied=0
+               AND created_at <= datetime('now', printf('-%d seconds', ?1))
+             ORDER BY created_at LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![timeout_seconds, limit], |row| row.get(0))?;
+        rows.collect()
     }
 
     /// 获取与特定号码的对话历史
@@ -1664,8 +1815,6 @@ impl Database {
         Ok(None)
     }
 
-
-
     // ==================== eSIM Profile cache ====================
 
     pub fn upsert_esim_profile_cache(&self, entry: &EsimProfileCacheEntry) -> Result<()> {
@@ -2266,7 +2415,25 @@ mod tests {
         assert!(!entry.updated_at.is_empty());
     }
 
+    #[test]
+    fn reconnecting_to_a_new_hub_resets_all_sms_for_full_sync() {
+        let db = test_db();
+        let id = db
+            .insert_sms_at(
+                "incoming",
+                "10010",
+                "history",
+                "2026-08-15 12:00:00",
+                "received",
+                None,
+            )
+            .unwrap();
+        db.mark_sms_hub_synced(id).unwrap();
+        assert!(db.get_unsynced_sms_messages(10).unwrap().is_empty());
 
+        assert_eq!(db.reset_sms_hub_sync().unwrap(), 1);
+        assert_eq!(db.get_unsynced_sms_messages(10).unwrap()[0].id, id);
+    }
 
     #[test]
     fn esim_profile_cache_persists_state_permissions_and_updated_at() {

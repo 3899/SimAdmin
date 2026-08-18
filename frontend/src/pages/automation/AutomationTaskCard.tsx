@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import {
   Box,
   Card,
@@ -30,6 +31,11 @@ type AutomationTaskCardProps = {
   onEdit: (task: AutomationTask) => void
   onDelete: (task: AutomationTask) => void
   onToggle: (taskId: string, checked: boolean) => void
+  headerExtension?: ReactNode
+  detailsExtension?: ReactNode
+  nextRunDisplay?: string
+  runDisabled?: boolean
+  runDisabledReason?: string
 }
 
 export default function AutomationTaskCard({
@@ -40,6 +46,11 @@ export default function AutomationTaskCard({
   onEdit,
   onDelete,
   onToggle,
+  headerExtension,
+  detailsExtension,
+  nextRunDisplay,
+  runDisabled = false,
+  runDisabledReason,
 }: AutomationTaskCardProps) {
 
   // Next run display helper calculation
@@ -122,10 +133,10 @@ export default function AutomationTaskCard({
     }
   }
 
-  const nextRun = getNextRunDisplay()
+  const nextRun = nextRunDisplay ?? getNextRunDisplay()
 
   return (
-    <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <Card data-automation-task sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <CardContent sx={{ p: 2.5, flexGrow: 1, display: 'flex', flexDirection: 'column', '&:last-child': { pb: 2.5 } }}>
         {/* 卡片头部 */}
         <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={2}>
@@ -174,6 +185,7 @@ export default function AutomationTaskCard({
                   sx={{ height: 20, fontSize: '0.72rem', '& .MuiChip-label': { px: 0.75 }, '& .MuiChip-icon': { fontSize: '0.85rem' } }}
                 />
               )}
+              {headerExtension}
             </Box>
           </Box>
           <Switch
@@ -255,6 +267,8 @@ export default function AutomationTaskCard({
             </>
           )}
 
+          {detailsExtension}
+
           <Box display="flex" justifyContent="space-between" mt={0.75}>
             <Typography variant="body2" color="text.secondary" display="flex" alignItems="center" gap={0.5}>
               <Timer fontSize="inherit" />
@@ -298,8 +312,8 @@ export default function AutomationTaskCard({
             <IconButton
               size="small"
               color="primary"
-              title="立即执行"
-              disabled={testingTaskId === task.id}
+              title={runDisabled ? runDisabledReason : '立即执行'}
+              disabled={testingTaskId === task.id || runDisabled}
               onClick={() => onTest(task.id)}
             >
               {testingTaskId === task.id ? <CircularProgress size={18} /> : <PlayArrow />}
@@ -323,5 +337,20 @@ export default function AutomationTaskCard({
         </Box>
       </CardContent>
     </Card>
+  )
+}
+
+export function AutomationTaskDetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <Box display="flex" justifyContent="space-between" mb={0.75} gap={1}>
+      <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0 }}>{label}:</Typography>
+      <Typography
+        variant="body2"
+        title={value}
+        sx={{ minWidth: 0, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+      >
+        {value}
+      </Typography>
+    </Box>
   )
 }

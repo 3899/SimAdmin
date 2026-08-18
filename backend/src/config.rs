@@ -12,6 +12,33 @@ use tracing::{info, warn};
 
 use crate::models::WorkMode;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HubConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default = "default_hub_local_fallback_timeout")]
+    pub local_fallback_timeout_seconds: u64,
+    #[serde(default = "default_true")]
+    pub local_fallback_enabled: bool,
+}
+
+fn default_hub_local_fallback_timeout() -> u64 {
+    120
+}
+
+impl Default for HubConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            url: String::new(),
+            local_fallback_timeout_seconds: default_hub_local_fallback_timeout(),
+            local_fallback_enabled: true,
+        }
+    }
+}
+
 /// Webhook 配置
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WebhookConfig {
@@ -1860,6 +1887,8 @@ impl Default for EsimConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
+    pub hub: HubConfig,
+    #[serde(default)]
     pub webhook: WebhookConfig,
     #[serde(default)]
     pub notifications: NotificationConfig,
@@ -1889,6 +1918,7 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
+            hub: HubConfig::default(),
             webhook: WebhookConfig::default(),
             notifications: NotificationConfig::default(),
             device_network: DeviceNetworkConfig::default(),
@@ -2089,6 +2119,30 @@ impl ConfigManager {
 
     pub fn get_config(&self) -> AppConfig {
         self.config.read().unwrap().clone()
+    }
+
+    pub fn get_hub_config(&self) -> HubConfig {
+        self.config.read().unwrap().hub.clone()
+    }
+
+    pub fn set_hub_config(&self, hub: HubConfig) -> Result<(), String> {
+        if hub.enabled && !hub.url.trim().is_empty() {
+            let url = hub.url.trim();
+            let parsed =
+                reqwest::Url::parse(url).map_err(|error| format!("Hub URL 无效: {error}"))?;
+            if !matches!(parsed.scheme(), "http" | "https")
+                || parsed.host().is_none()
+                || !parsed.username().is_empty()
+                || parsed.password().is_some()
+                || parsed.query().is_some()
+                || parsed.fragment().is_some()
+                || !matches!(parsed.path(), "" | "/")
+            {
+                return Err("Hub 地址只能包含 http(s)、主机名和可选端口".into());
+            }
+        }
+        self.config.write().unwrap().hub = hub;
+        self.save()
     }
 
     pub fn replace_config(&self, config: AppConfig) -> Result<(), String> {

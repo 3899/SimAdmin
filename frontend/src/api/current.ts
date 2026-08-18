@@ -46,6 +46,8 @@ import type {
   EsimLpacStatusResponse,
   EsimProfilesResponse,
   LoginRequest,
+  HubConfig,
+  HubSettingsResponse,
   ManualRegisterRequest,
   NetworkInfo,
   NetworkInterfacesResponse,
@@ -95,6 +97,25 @@ type RequestOptions = RequestInit & {
   skipAuthRedirect?: boolean
 }
 
+export interface SimAdminRequest {
+  method: string
+  path: string
+  body: unknown
+  timeoutMs?: number
+}
+
+export type SimAdminRequestTransport = <T>(request: SimAdminRequest) => Promise<T>
+
+export interface SimAdminBinaryRequest {
+  method: string
+  path: string
+  body: Blob
+  filename?: string
+  timeoutMs?: number
+}
+
+export type SimAdminBinaryTransport = <T>(request: SimAdminBinaryRequest) => Promise<T>
+
 function redirectToLogin() {
   const currentPath = `${window.location.pathname}${window.location.search}`
   if (window.location.pathname === '/login') return
@@ -125,8 +146,26 @@ function throwIfApiEnvelopeError(payload: unknown): void {
 async function request<T>(
   url: string,
   options: RequestOptions = {},
+  transport: SimAdminRequestTransport | null = null,
 ): Promise<T> {
   const { returnText, timeoutMs, skipAuthRedirect, ...fetchOptions } = options
+  if (transport) {
+    if (returnText) throw new Error('远程设备面板不支持文本响应')
+    let body: unknown = null
+    if (typeof fetchOptions.body === 'string' && fetchOptions.body.length > 0) {
+      body = JSON.parse(fetchOptions.body)
+    } else if (fetchOptions.body !== null && fetchOptions.body !== undefined) {
+      throw new Error('远程设备面板仅支持 JSON 请求')
+    }
+    const response = await transport<T>({
+      method: fetchOptions.method ?? 'GET',
+      path: url,
+      body,
+      timeoutMs,
+    })
+    throwIfApiEnvelopeError(response)
+    return response
+  }
   const controller = timeoutMs ? new AbortController() : undefined
   const timeoutId = controller
     ? window.setTimeout(() => controller.abort(), timeoutMs)
@@ -290,16 +329,39 @@ async function blobDownloadRequest(
   }
 }
 
-class SimAdminCurrentAPI {
+export class SimAdminCurrentAPI {
+  private readonly transport: SimAdminRequestTransport | null
+  private readonly binaryTransport: SimAdminBinaryTransport | null
+
+  constructor(
+    transport: SimAdminRequestTransport | null = null,
+    binaryTransport: SimAdminBinaryTransport | null = null,
+  ) {
+    this.transport = transport
+    this.binaryTransport = binaryTransport
+  }
+
+  get supportsBinaryTransfer() {
+    return this.transport === null
+  }
+
+  get supportsOtaUpload() {
+    return this.transport === null || this.binaryTransport !== null
+  }
+
+  private request<T>(url: string, options: RequestOptions = {}) {
+    return request<T>(url, options, this.transport)
+  }
+
   async getAuthStatus() {
-    return request<ApiResponse<AuthStatusResponse>>('/auth/status', {
+    return this.request<ApiResponse<AuthStatusResponse>>('/auth/status', {
       skipAuthRedirect: true,
     })
   }
 
   async setupAdminPassword(password: string) {
     const body: LoginRequest = { password }
-    return request<ApiResponse<null>>('/auth/setup', {
+    return this.request<ApiResponse<null>>('/auth/setup', {
       method: 'POST',
       body: JSON.stringify(body),
       skipAuthRedirect: true,
@@ -308,7 +370,7 @@ class SimAdminCurrentAPI {
 
   async login(password: string) {
     const body: LoginRequest = { password }
-    return request<ApiResponse<null>>('/auth/login', {
+    return this.request<ApiResponse<null>>('/auth/login', {
       method: 'POST',
       body: JSON.stringify(body),
       skipAuthRedirect: true,
@@ -319,25 +381,25 @@ class SimAdminCurrentAPI {
     const body: ChangePasswordRequest = {
       new_password: newPassword,
     }
-    return request<ApiResponse<null>>('/auth/password', {
+    return this.request<ApiResponse<null>>('/auth/password', {
       method: 'POST',
       body: JSON.stringify(body),
     })
   }
 
   async getAuthSettings() {
-    return request<ApiResponse<AuthSettingsResponse>>('/auth/settings')
+    return this.request<ApiResponse<AuthSettingsResponse>>('/auth/settings')
   }
 
   async setAuthSettings(settings: SecurityConfig) {
-    return request<ApiResponse<SecurityConfig>>('/auth/settings', {
+    return this.request<ApiResponse<SecurityConfig>>('/auth/settings', {
       method: 'POST',
       body: JSON.stringify(settings),
     })
   }
 
   async logout() {
-    return request<ApiResponse<null>>('/auth/logout', {
+    return this.request<ApiResponse<null>>('/auth/logout', {
       method: 'POST',
       body: JSON.stringify({}),
       skipAuthRedirect: true,
@@ -345,16 +407,31 @@ class SimAdminCurrentAPI {
   }
 
   async health() {
-    return request<{ status: string; message: string; version: string }>('/health')
+    return this.request<{ status: string; message: string; version: string }>('/health')
+  }
+
+  async getHubSettings() {
+    return this.request<ApiResponse<HubSettingsResponse>>('/hub')
+  }
+
+  async setHubSettings(config: HubConfig) {
+    return this.request<ApiResponse<HubSettingsResponse>>('/hub', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    })
+  }
+
+  async unbindHub() {
+    return this.request<ApiResponse<HubSettingsResponse>>('/hub/unbind', { method: 'POST' })
   }
 
   async getWorkMode() {
-    return request<ApiResponse<WorkModeResponse>>('/work-mode')
+    return this.request<ApiResponse<WorkModeResponse>>('/work-mode')
   }
 
   async setWorkMode(mode: WorkMode) {
     const body: WorkModeRequest = { mode, confirm: true }
-    return request<ApiResponse<WorkModeResponse>>('/work-mode', {
+    return this.request<ApiResponse<WorkModeResponse>>('/work-mode', {
       method: 'POST',
       body: JSON.stringify(body),
       timeoutMs: 10000,
@@ -362,42 +439,42 @@ class SimAdminCurrentAPI {
   }
 
   async getEsimConfig() {
-    return request<ApiResponse<EsimConfig>>('/esim/config')
+    return this.request<ApiResponse<EsimConfig>>('/esim/config')
   }
 
   async setEsimConfig(config: EsimConfig) {
-    return request<ApiResponse<void>>('/esim/config', {
+    return this.request<ApiResponse<void>>('/esim/config', {
       method: 'POST',
       body: JSON.stringify(config),
     })
   }
 
   async getEsimEuicc(live = false) {
-    return request<ApiResponse<EsimEuiccInfo>>(live ? '/esim/euicc?live=1' : '/esim/euicc', {
+    return this.request<ApiResponse<EsimEuiccInfo>>(live ? '/esim/euicc?live=1' : '/esim/euicc', {
       timeoutMs: 30000,
     })
   }
 
   async getEsimProfiles() {
-    return request<ApiResponse<EsimProfilesResponse>>('/esim/profiles', {
+    return this.request<ApiResponse<EsimProfilesResponse>>('/esim/profiles', {
       timeoutMs: 30000,
     })
   }
 
   async getCachedEsimProfiles() {
-    return request<ApiResponse<EsimProfilesResponse>>('/esim/profiles?cached=1', {
+    return this.request<ApiResponse<EsimProfilesResponse>>('/esim/profiles?cached=1', {
       timeoutMs: 5000,
     })
   }
 
   async getEsimLpacStatus() {
-    return request<ApiResponse<EsimLpacStatusResponse>>('/esim/lpac/status', {
+    return this.request<ApiResponse<EsimLpacStatusResponse>>('/esim/lpac/status', {
       timeoutMs: 15000,
     })
   }
 
   async repairEsimLpac(config: EsimLpacRepairRequest) {
-    return request<ApiResponse<EsimLpacRepairResponse>>('/esim/lpac/repair', {
+    return this.request<ApiResponse<EsimLpacRepairResponse>>('/esim/lpac/repair', {
       method: 'POST',
       body: JSON.stringify(config),
       timeoutMs: 120000,
@@ -405,7 +482,7 @@ class SimAdminCurrentAPI {
   }
 
   async enableEsimProfile(iccid: string) {
-    return request<ApiResponse<EsimCommandResponse>>(`/esim/profiles/${encodeURIComponent(iccid)}/enable`, {
+    return this.request<ApiResponse<EsimCommandResponse>>(`/esim/profiles/${encodeURIComponent(iccid)}/enable`, {
       method: 'POST',
       body: JSON.stringify({}),
       timeoutMs: 10000,
@@ -413,7 +490,7 @@ class SimAdminCurrentAPI {
   }
 
   async renameEsimProfile(iccid: string, name: string) {
-    return request<ApiResponse<EsimCommandResponse>>(`/esim/profiles/${encodeURIComponent(iccid)}/rename`, {
+    return this.request<ApiResponse<EsimCommandResponse>>(`/esim/profiles/${encodeURIComponent(iccid)}/rename`, {
       method: 'POST',
       body: JSON.stringify({ name }),
       timeoutMs: 60000,
@@ -421,14 +498,14 @@ class SimAdminCurrentAPI {
   }
 
   async deleteEsimProfile(iccid: string) {
-    return request<ApiResponse<EsimCommandResponse>>(`/esim/profiles/${encodeURIComponent(iccid)}`, {
+    return this.request<ApiResponse<EsimCommandResponse>>(`/esim/profiles/${encodeURIComponent(iccid)}`, {
       method: 'DELETE',
       timeoutMs: 60000,
     })
   }
 
   async downloadEsimProfile(requestData: EsimDownloadRequest) {
-    return request<ApiResponse<EsimCommandResponse>>('/esim/profiles', {
+    return this.request<ApiResponse<EsimCommandResponse>>('/esim/profiles', {
       method: 'POST',
       body: JSON.stringify(requestData),
       timeoutMs: 180000, // 3 minutes timeout
@@ -436,17 +513,17 @@ class SimAdminCurrentAPI {
   }
 
   async getDeviceInfo() {
-    return request<ApiResponse<DeviceInfo>>('/device')
+    return this.request<ApiResponse<DeviceInfo>>('/device')
   }
 
   async getSimInfo() {
-    return request<ApiResponse<SimInfo>>('/sim', {
+    return this.request<ApiResponse<SimInfo>>('/sim', {
       timeoutMs: 2500,
     })
   }
 
   async refreshSimDetails() {
-    return request<ApiResponse<Record<string, never>>>('/sim/details/refresh', {
+    return this.request<ApiResponse<Record<string, never>>>('/sim/details/refresh', {
       method: 'POST',
       body: JSON.stringify({}),
       timeoutMs: 2500,
@@ -454,280 +531,280 @@ class SimAdminCurrentAPI {
   }
 
   async updateSimCache(data: UpdateSimCacheRequest) {
-    return request<ApiResponse<void>>('/sim/cache', {
+    return this.request<ApiResponse<void>>('/sim/cache', {
       method: 'POST',
       body: JSON.stringify(data),
     })
   }
 
   async getNetworkInfo() {
-    return request<ApiResponse<NetworkInfo>>('/network')
+    return this.request<ApiResponse<NetworkInfo>>('/network')
   }
 
   async getCellsInfo() {
-    return request<ApiResponse<CellsResponse>>('/cells')
+    return this.request<ApiResponse<CellsResponse>>('/cells')
   }
 
   async startCellMonitor() {
-    return request<ApiResponse<Record<string, never>>>('/cell-monitor/start', {
+    return this.request<ApiResponse<Record<string, never>>>('/cell-monitor/start', {
       method: 'POST',
       body: JSON.stringify({}),
     })
   }
 
   async stopCellMonitor() {
-    return request<ApiResponse<Record<string, never>>>('/cell-monitor/stop', {
+    return this.request<ApiResponse<Record<string, never>>>('/cell-monitor/stop', {
       method: 'POST',
       body: JSON.stringify({}),
     })
   }
 
   async getDataStatus() {
-    return request<ApiResponse<DataConnectionStatus>>('/data')
+    return this.request<ApiResponse<DataConnectionStatus>>('/data')
   }
 
   async setDataStatus(active: boolean) {
     const body: DataConnectionRequest = { active }
-    return request<ApiResponse<DataConnectionStatus>>('/data', {
+    return this.request<ApiResponse<DataConnectionStatus>>('/data', {
       method: 'POST',
       body: JSON.stringify(body),
     })
   }
 
   async restartBaseband() {
-    return request<ApiResponse<BasebandRestartResponse>>('/baseband/restart', {
+    return this.request<ApiResponse<BasebandRestartResponse>>('/baseband/restart', {
       method: 'POST',
       body: JSON.stringify({}),
     })
   }
 
   async getBasebandRestartStatus() {
-    return request<ApiResponse<BasebandRestartResponse>>('/baseband/restart/status')
+    return this.request<ApiResponse<BasebandRestartResponse>>('/baseband/restart/status')
   }
 
   async restartService() {
-    return request<ApiResponse<Record<string, never>>>('/service/restart', {
+    return this.request<ApiResponse<Record<string, never>>>('/service/restart', {
       method: 'POST',
       body: JSON.stringify({}),
     })
   }
 
   async rebootSystem(delaySeconds = 1) {
-    return request<ApiResponse<{ delay_seconds: number }>>('/system/reboot', {
+    return this.request<ApiResponse<{ delay_seconds: number }>>('/system/reboot', {
       method: 'POST',
       body: JSON.stringify({ delay_seconds: delaySeconds }),
     })
   }
 
   async getRoamingStatus() {
-    return request<ApiResponse<RoamingResponse>>('/roaming')
+    return this.request<ApiResponse<RoamingResponse>>('/roaming')
   }
 
   async setRoamingAllowed(allowed: boolean) {
     const body: RoamingRequest = { allowed }
-    return request<ApiResponse<RoamingResponse>>('/roaming', {
+    return this.request<ApiResponse<RoamingResponse>>('/roaming', {
       method: 'POST',
       body: JSON.stringify(body),
     })
   }
 
   async getAirplaneMode() {
-    return request<ApiResponse<AirplaneModeResponse>>('/airplane-mode')
+    return this.request<ApiResponse<AirplaneModeResponse>>('/airplane-mode')
   }
 
   async setAirplaneMode(enabled: boolean) {
     const body: AirplaneModeRequest = { enabled }
-    return request<ApiResponse<AirplaneModeResponse>>('/airplane-mode', {
+    return this.request<ApiResponse<AirplaneModeResponse>>('/airplane-mode', {
       method: 'POST',
       body: JSON.stringify(body),
     })
   }
 
   async getSystemStats() {
-    return request<ApiResponse<SystemStatsResponse>>('/stats', {
+    return this.request<ApiResponse<SystemStatsResponse>>('/stats', {
       timeoutMs: 2500,
     })
   }
 
   async getNetworkInterfaces() {
-    return request<ApiResponse<NetworkInterfacesResponse>>('/network/interfaces')
+    return this.request<ApiResponse<NetworkInterfacesResponse>>('/network/interfaces')
   }
 
   async getNetworkConnectionAddresses() {
-    return request<ApiResponse<ConnectionAddressesResponse>>('/network/connection-addresses')
+    return this.request<ApiResponse<ConnectionAddressesResponse>>('/network/connection-addresses')
   }
 
   async getSignalStrength() {
-    return request<ApiResponse<SignalStrengthResponse>>('/network/signal-strength')
+    return this.request<ApiResponse<SignalStrengthResponse>>('/network/signal-strength')
   }
 
   async getCellLocationInfo() {
-    return request<ApiResponse<CellLocationResponse>>('/location/cell-info')
+    return this.request<ApiResponse<CellLocationResponse>>('/location/cell-info')
   }
 
   async getOperators() {
-    return request<ApiResponse<OperatorListResponse>>('/network/operators')
+    return this.request<ApiResponse<OperatorListResponse>>('/network/operators')
   }
 
   async scanOperators() {
-    return request<ApiResponse<OperatorListResponse>>('/network/operators/scan')
+    return this.request<ApiResponse<OperatorListResponse>>('/network/operators/scan')
   }
 
   async registerOperatorManual(mccmnc: string) {
     const body: ManualRegisterRequest = { mccmnc }
-    return request<ApiResponse<Record<string, never>>>('/network/register-manual', {
+    return this.request<ApiResponse<Record<string, never>>>('/network/register-manual', {
       method: 'POST',
       body: JSON.stringify(body),
     })
   }
 
   async registerOperatorAuto() {
-    return request<ApiResponse<Record<string, never>>>('/network/register-auto', {
+    return this.request<ApiResponse<Record<string, never>>>('/network/register-auto', {
       method: 'POST',
       body: JSON.stringify({}),
     })
   }
 
   async getApnList() {
-    return request<ApiResponse<ApnListResponse>>('/apn')
+    return this.request<ApiResponse<ApnListResponse>>('/apn')
   }
 
   async setApn(config: SetApnRequest) {
-    return request<ApiResponse<Record<string, unknown>>>('/apn', {
+    return this.request<ApiResponse<Record<string, unknown>>>('/apn', {
       method: 'POST',
       body: JSON.stringify(config),
     })
   }
 
   async getRadioMode() {
-    return request<ApiResponse<RadioModeResponse>>('/radio-mode')
+    return this.request<ApiResponse<RadioModeResponse>>('/radio-mode')
   }
 
   async setRadioMode(mode: RadioMode) {
-    return request<ApiResponse<Record<string, never>>>('/radio-mode', {
+    return this.request<ApiResponse<Record<string, never>>>('/radio-mode', {
       method: 'POST',
       body: JSON.stringify({ mode }),
     })
   }
 
   async getBandLockStatus() {
-    return request<ApiResponse<BandLockStatus>>('/band-lock')
+    return this.request<ApiResponse<BandLockStatus>>('/band-lock')
   }
 
   async setBandLock(config: BandLockRequest) {
-    return request<ApiResponse<Record<string, never>>>('/band-lock', {
+    return this.request<ApiResponse<Record<string, never>>>('/band-lock', {
       method: 'POST',
       body: JSON.stringify(config),
     })
   }
 
   async getCellLockStatus() {
-    return request<ApiResponse<CellLockStatusResponse>>('/cell-lock')
+    return this.request<ApiResponse<CellLockStatusResponse>>('/cell-lock')
   }
 
   async setCellLock(config: CellLockRequest) {
-    return request<ApiResponse<CellLockResult>>('/cell-lock', {
+    return this.request<ApiResponse<CellLockResult>>('/cell-lock', {
       method: 'POST',
       body: JSON.stringify(config),
     })
   }
 
   async unlockAllCells() {
-    return request<ApiResponse<CellLockResult>>('/cell-lock/unlock-all', {
+    return this.request<ApiResponse<CellLockResult>>('/cell-lock/unlock-all', {
       method: 'POST',
       body: JSON.stringify({}),
     })
   }
 
   async getConnectivity() {
-    return request<ApiResponse<ConnectivityCheckResponse>>('/connectivity')
+    return this.request<ApiResponse<ConnectivityCheckResponse>>('/connectivity')
   }
 
   async getDdnsConfig() {
-    return request<ApiResponse<DdnsConfig>>('/device-network/ddns/config')
+    return this.request<ApiResponse<DdnsConfig>>('/device-network/ddns/config')
   }
 
   async setDdnsConfig(config: DdnsConfig) {
-    return request<ApiResponse<DdnsConfig>>('/device-network/ddns/config', {
+    return this.request<ApiResponse<DdnsConfig>>('/device-network/ddns/config', {
       method: 'POST',
       body: JSON.stringify(config),
     })
   }
 
   async getDdnsStatus() {
-    return request<ApiResponse<DdnsStatusResponse>>('/device-network/ddns/status')
+    return this.request<ApiResponse<DdnsStatusResponse>>('/device-network/ddns/status')
   }
 
   async syncDdnsNow() {
-    return request<ApiResponse<DdnsSyncResponse>>('/device-network/ddns/sync', {
+    return this.request<ApiResponse<DdnsSyncResponse>>('/device-network/ddns/sync', {
       method: 'POST',
       body: JSON.stringify({}),
     })
   }
 
   async getDdnsLogs() {
-    return request<ApiResponse<DdnsLogsResponse>>('/device-network/ddns/logs')
+    return this.request<ApiResponse<DdnsLogsResponse>>('/device-network/ddns/logs')
   }
 
   async clearDdnsLogs() {
-    return request<ApiResponse<Record<string, never>>>('/device-network/ddns/logs/clear', {
+    return this.request<ApiResponse<Record<string, never>>>('/device-network/ddns/logs/clear', {
       method: 'POST',
       body: JSON.stringify({}),
     })
   }
 
   async getWlanStatus() {
-    return request<ApiResponse<WlanStatusResponse>>('/device-network/wlan/status')
+    return this.request<ApiResponse<WlanStatusResponse>>('/device-network/wlan/status')
   }
 
   async setWlanEnabled(enabled: boolean) {
-    return request<ApiResponse<WlanStatusResponse>>('/device-network/wlan/enabled', {
+    return this.request<ApiResponse<WlanStatusResponse>>('/device-network/wlan/enabled', {
       method: 'POST',
       body: JSON.stringify({ enabled }),
     })
   }
 
   async scanWlan() {
-    return request<ApiResponse<WlanScanResponse>>('/device-network/wlan/scan', {
+    return this.request<ApiResponse<WlanScanResponse>>('/device-network/wlan/scan', {
       method: 'POST',
       body: JSON.stringify({}),
     })
   }
 
   async getWlanProfiles() {
-    return request<ApiResponse<WlanProfilesResponse>>('/device-network/wlan/profiles')
+    return this.request<ApiResponse<WlanProfilesResponse>>('/device-network/wlan/profiles')
   }
 
   async forgetWlan(config: WlanForgetRequest) {
-    return request<ApiResponse<WlanProfilesResponse>>('/device-network/wlan/forget', {
+    return this.request<ApiResponse<WlanProfilesResponse>>('/device-network/wlan/forget', {
       method: 'POST',
       body: JSON.stringify(config),
     })
   }
 
   async connectWlan(config: WlanConnectRequest) {
-    return request<ApiResponse<WlanStatusResponse>>('/device-network/wlan/connect', {
+    return this.request<ApiResponse<WlanStatusResponse>>('/device-network/wlan/connect', {
       method: 'POST',
       body: JSON.stringify(config),
     })
   }
 
   async disconnectWlan() {
-    return request<ApiResponse<WlanStatusResponse>>('/device-network/wlan/disconnect', {
+    return this.request<ApiResponse<WlanStatusResponse>>('/device-network/wlan/disconnect', {
       method: 'POST',
       body: JSON.stringify({}),
     })
   }
 
   async saveWlanProfile(config: WlanProfileRequest) {
-    return request<ApiResponse<WlanStatusResponse>>('/device-network/wlan/profile', {
+    return this.request<ApiResponse<WlanStatusResponse>>('/device-network/wlan/profile', {
       method: 'POST',
       body: JSON.stringify(config),
     })
   }
 
   async sendSms(phoneNumber: string, content: string) {
-    return request<ApiResponse<{ path: string }>>('/sms/send', {
+    return this.request<ApiResponse<{ path: string }>>('/sms/send', {
       method: 'POST',
       body: JSON.stringify({ phone_number: phoneNumber, content }),
     })
@@ -739,34 +816,34 @@ class SimAdminCurrentAPI {
     if (params?.offset) query.append('offset', params.offset.toString())
     if (params?.direction) query.append('direction', params.direction)
     const queryStr = query.toString() ? `?${query.toString()}` : ''
-    return request<ApiResponse<SmsListResponse>>(`/sms/list${queryStr}`)
+    return this.request<ApiResponse<SmsListResponse>>(`/sms/list${queryStr}`)
   }
 
   async getSmsConversation(params: SmsConversationRequest) {
     const query = new URLSearchParams()
     query.append('phone_number', params.phone_number)
     if (params.limit) query.append('limit', params.limit.toString())
-    return request<ApiResponse<SmsListResponse>>(`/sms/conversation?${query.toString()}`)
+    return this.request<ApiResponse<SmsListResponse>>(`/sms/conversation?${query.toString()}`)
   }
 
   async getSmsStats() {
-    return request<ApiResponse<SmsStats>>('/sms/stats')
+    return this.request<ApiResponse<SmsStats>>('/sms/stats')
   }
 
   async clearAllSms() {
-    return request<ApiResponse<Record<string, never>>>('/sms/clear', {
+    return this.request<ApiResponse<Record<string, never>>>('/sms/clear', {
       method: 'POST',
     })
   }
 
   async deleteSmsMessage(id: number) {
-    return request<ApiResponse<{ deleted: number }>>(`/sms/message/${id}`, {
+    return this.request<ApiResponse<{ deleted: number }>>(`/sms/message/${id}`, {
       method: 'DELETE',
     })
   }
 
   async deleteSmsConversation(phoneNumber: string) {
-    return request<ApiResponse<{ deleted: number }>>(
+    return this.request<ApiResponse<{ deleted: number }>>(
       `/sms/conversation/${encodeURIComponent(phoneNumber)}`,
       {
         method: 'DELETE',
@@ -775,39 +852,39 @@ class SimAdminCurrentAPI {
   }
 
   async deleteSmsBatch(payload: { ids?: number[]; phone_numbers?: string[] }) {
-    return request<ApiResponse<{ deleted: number }>>('/sms/batch-delete', {
+    return this.request<ApiResponse<{ deleted: number }>>('/sms/batch-delete', {
       method: 'POST',
       body: JSON.stringify(payload),
     })
   }
 
   async getCalls() {
-    return request<ApiResponse<CallListResponse>>('/calls')
+    return this.request<ApiResponse<CallListResponse>>('/calls')
   }
 
   async dialCall(phoneNumber: string) {
-    return request<ApiResponse<{ path: string }>>('/call/dial', {
+    return this.request<ApiResponse<{ path: string }>>('/call/dial', {
       method: 'POST',
       body: JSON.stringify({ phone_number: phoneNumber }),
     })
   }
 
   async hangupCall(path: string) {
-    return request<ApiResponse<Record<string, never>>>('/call/hangup', {
+    return this.request<ApiResponse<Record<string, never>>>('/call/hangup', {
       method: 'POST',
       body: JSON.stringify({ path }),
     })
   }
 
   async hangupAllCalls() {
-    return request<ApiResponse<Record<string, never>>>('/call/hangup-all', {
+    return this.request<ApiResponse<Record<string, never>>>('/call/hangup-all', {
       method: 'POST',
       body: JSON.stringify({}),
     })
   }
 
   async answerCall(path: string) {
-    return request<ApiResponse<Record<string, never>>>('/call/answer', {
+    return this.request<ApiResponse<Record<string, never>>>('/call/answer', {
       method: 'POST',
       body: JSON.stringify({ path }),
     })
@@ -818,45 +895,45 @@ class SimAdminCurrentAPI {
     if (params?.limit) query.append('limit', params.limit.toString())
     if (params?.offset) query.append('offset', params.offset.toString())
     const queryStr = query.toString() ? `?${query.toString()}` : ''
-    return request<ApiResponse<CallHistoryResponse>>(`/call/history${queryStr}`)
+    return this.request<ApiResponse<CallHistoryResponse>>(`/call/history${queryStr}`)
   }
 
   async deleteCallRecord(id: number) {
-    return request<ApiResponse<Record<string, never>>>(`/call/history/${id}`, {
+    return this.request<ApiResponse<Record<string, never>>>(`/call/history/${id}`, {
       method: 'DELETE',
     })
   }
 
   async clearCallHistory() {
-    return request<ApiResponse<Record<string, never>>>('/call/history/clear', {
+    return this.request<ApiResponse<Record<string, never>>>('/call/history/clear', {
       method: 'POST',
     })
   }
 
   async getCallSettings() {
-    return request<ApiResponse<CallSettingsResponse>>('/call/settings')
+    return this.request<ApiResponse<CallSettingsResponse>>('/call/settings')
   }
 
   async setCallWaiting(enabled: boolean) {
-    return request<ApiResponse<Record<string, never>>>('/call/settings', {
+    return this.request<ApiResponse<Record<string, never>>>('/call/settings', {
       method: 'POST',
       body: JSON.stringify({ property: 'VoiceCallWaiting', value: enabled ? 'enabled' : 'disabled' }),
     })
   }
 
   async getNotificationConfig() {
-    return request<ApiResponse<NotificationConfig>>('/notifications/config')
+    return this.request<ApiResponse<NotificationConfig>>('/notifications/config')
   }
 
   async setNotificationConfig(config: NotificationConfig) {
-    return request<ApiResponse<Record<string, unknown>>>('/notifications/config', {
+    return this.request<ApiResponse<Record<string, unknown>>>('/notifications/config', {
       method: 'POST',
       body: JSON.stringify(config),
     })
   }
 
   async testNotificationChannel(channel: string) {
-    return request<ApiResponse<WebhookTestResponse>>(`/notifications/test/${channel}`, {
+    return this.request<ApiResponse<WebhookTestResponse>>(`/notifications/test/${channel}`, {
       method: 'POST',
     })
   }
@@ -871,11 +948,11 @@ class SimAdminCurrentAPI {
     if (params?.limit) query.append('limit', params.limit.toString())
     if (params?.offset) query.append('offset', params.offset.toString())
     const queryStr = query.toString() ? `?${query.toString()}` : ''
-    return request<ApiResponse<NotificationLogsResponse>>(`/notifications/logs${queryStr}`)
+    return this.request<ApiResponse<NotificationLogsResponse>>(`/notifications/logs${queryStr}`)
   }
 
   async clearNotificationLogs(filters?: { type?: string; status?: string; start_date?: string; end_date?: string }) {
-    return request<ApiResponse<{ deleted: number }>>('/notifications/logs/clear', {
+    return this.request<ApiResponse<{ deleted: number }>>('/notifications/logs/clear', {
       method: 'POST',
       body: JSON.stringify(filters ?? {}),
     })
@@ -885,38 +962,49 @@ class SimAdminCurrentAPI {
     const query = new URLSearchParams()
     if (params?.limit) query.append('limit', params.limit.toString())
     const queryStr = query.toString() ? `?${query.toString()}` : ''
-    return request<ApiResponse<NotificationQueueResponse>>(`/notifications/queue${queryStr}`)
+    return this.request<ApiResponse<NotificationQueueResponse>>(`/notifications/queue${queryStr}`)
   }
 
   async retryNotificationQueueItem(id: number | string) {
-    return request<ApiResponse<{ updated: number }>>(`/notifications/queue/${id}/retry`, {
+    return this.request<ApiResponse<{ updated: number }>>(`/notifications/queue/${id}/retry`, {
       method: 'POST',
     })
   }
 
   async deleteNotificationQueueItem(id: number | string) {
-    return request<ApiResponse<{ updated: number }>>(`/notifications/queue/${id}`, {
+    return this.request<ApiResponse<{ updated: number }>>(`/notifications/queue/${id}`, {
       method: 'DELETE',
     })
   }
 
   async retryAllNotificationQueue() {
-    return request<ApiResponse<{ updated: number }>>('/notifications/queue/retry-all', {
+    return this.request<ApiResponse<{ updated: number }>>('/notifications/queue/retry-all', {
       method: 'POST',
     })
   }
 
   async clearNotificationQueue() {
-    return request<ApiResponse<{ updated: number }>>('/notifications/queue/clear', {
+    return this.request<ApiResponse<{ updated: number }>>('/notifications/queue/clear', {
       method: 'POST',
     })
   }
 
   async getOtaStatus() {
-    return request<ApiResponse<OtaStatusResponse>>('/ota/status')
+    return this.request<ApiResponse<OtaStatusResponse>>('/ota/status')
   }
 
   async uploadOta(file: File) {
+    if (this.binaryTransport) {
+      const response = await this.binaryTransport<ApiResponse<OtaUploadResponse>>({
+        method: 'POST',
+        path: '/ota/upload',
+        body: file,
+        filename: file.name,
+        timeoutMs: 5 * 60 * 1000,
+      })
+      throwIfApiEnvelopeError(response)
+      return response
+    }
     const response = await fetch(`${API_BASE}/ota/upload`, {
       method: 'POST',
       body: file,
@@ -937,42 +1025,42 @@ class SimAdminCurrentAPI {
   }
 
   async prepareOnlineOta(config: OtaOnlinePrepareRequest) {
-    return request<ApiResponse<OtaUploadResponse>>('/ota/online-prepare', {
+    return this.request<ApiResponse<OtaUploadResponse>>('/ota/online-prepare', {
       method: 'POST',
       body: JSON.stringify(config),
     })
   }
 
   async getLatestOtaRelease(config: OtaOnlinePrepareRequest) {
-    return request<ApiResponse<OtaLatestReleaseResponse>>('/ota/latest-release', {
+    return this.request<ApiResponse<OtaLatestReleaseResponse>>('/ota/latest-release', {
       method: 'POST',
       body: JSON.stringify(config),
     })
   }
 
   async applyOta(restartNow = false) {
-    return request<ApiResponse<{ applied: boolean }>>('/ota/apply', {
+    return this.request<ApiResponse<{ applied: boolean }>>('/ota/apply', {
       method: 'POST',
       body: JSON.stringify({ restart_now: restartNow }),
     })
   }
 
   async cancelOta() {
-    return request<ApiResponse<Record<string, unknown>>>('/ota/cancel', {
+    return this.request<ApiResponse<Record<string, unknown>>>('/ota/cancel', {
       method: 'POST',
     })
   }
 
   async getBackupOptions() {
-    return request<ApiResponse<BackupOptionsResponse>>('/backup/options')
+    return this.request<ApiResponse<BackupOptionsResponse>>('/backup/options')
   }
 
   async getBackupConfig() {
-    return request<ApiResponse<BackupConfig>>('/backup/config')
+    return this.request<ApiResponse<BackupConfig>>('/backup/config')
   }
 
   async setBackupConfig(config: BackupConfig) {
-    return request<ApiResponse<BackupConfig>>('/backup/config', {
+    return this.request<ApiResponse<BackupConfig>>('/backup/config', {
       method: 'POST',
       body: JSON.stringify({ config }),
     })
@@ -986,7 +1074,7 @@ class SimAdminCurrentAPI {
   }
 
   async exportBackupLocal(components: BackupComponentKey[]) {
-    return request<ApiResponse<BackupExportLocalResponse>>('/backup/export-local', {
+    return this.request<ApiResponse<BackupExportLocalResponse>>('/backup/export-local', {
       method: 'POST',
       body: JSON.stringify({ components }),
       timeoutMs: 120000,
@@ -994,7 +1082,7 @@ class SimAdminCurrentAPI {
   }
 
   async clearBackupData(components: BackupComponentKey[]) {
-    return request<ApiResponse<{ cleared_components: BackupComponentKey[] }>>('/backup/data/clear', {
+    return this.request<ApiResponse<{ cleared_components: BackupComponentKey[] }>>('/backup/data/clear', {
       method: 'POST',
       body: JSON.stringify({ components }),
       timeoutMs: 120000,
@@ -1017,7 +1105,7 @@ class SimAdminCurrentAPI {
   }
 
   async previewBackupLocalFile(filename: string) {
-    return request<ApiResponse<BackupImportPreview>>(
+    return this.request<ApiResponse<BackupImportPreview>>(
       `/backup/files/${encodeURIComponent(filename)}/preview`
     )
   }
@@ -1026,7 +1114,7 @@ class SimAdminCurrentAPI {
     const query = new URLSearchParams()
     query.append('mode', mode)
     query.append('components', components.join(','))
-    return request<ApiResponse<BackupImportApplyResponse>>(
+    return this.request<ApiResponse<BackupImportApplyResponse>>(
       `/backup/files/${encodeURIComponent(filename)}/apply?${query.toString()}`,
       {
         method: 'POST',
@@ -1036,7 +1124,7 @@ class SimAdminCurrentAPI {
   }
 
   async getBackupFiles() {
-    return request<ApiResponse<BackupLocalFilesResponse>>('/backup/files')
+    return this.request<ApiResponse<BackupLocalFilesResponse>>('/backup/files')
   }
 
   async downloadBackupFile(filename: string) {
@@ -1049,24 +1137,24 @@ class SimAdminCurrentAPI {
   }
 
   async deleteBackupFile(filename: string) {
-    return request<ApiResponse<{ deleted: boolean }>>(`/backup/files/${encodeURIComponent(filename)}`, {
+    return this.request<ApiResponse<{ deleted: boolean }>>(`/backup/files/${encodeURIComponent(filename)}`, {
       method: 'DELETE',
     })
   }
 
   async getAutomationConfig() {
-    return request<ApiResponse<AutomationConfig>>('/automation/config')
+    return this.request<ApiResponse<AutomationConfig>>('/automation/config')
   }
 
   async setAutomationConfig(config: AutomationConfig) {
-    return request<ApiResponse<Record<string, unknown>>>('/automation/config', {
+    return this.request<ApiResponse<Record<string, unknown>>>('/automation/config', {
       method: 'POST',
       body: JSON.stringify(config),
     })
   }
 
   async testAutomationTask(taskId: string) {
-    return request<ApiResponse<Record<string, unknown>>>(`/automation/test/${encodeURIComponent(taskId)}`, {
+    return this.request<ApiResponse<Record<string, unknown>>>(`/automation/test/${encodeURIComponent(taskId)}`, {
       method: 'POST',
     })
   }
@@ -1081,11 +1169,11 @@ class SimAdminCurrentAPI {
     if (params?.limit) query.append('limit', params.limit.toString())
     if (params?.offset) query.append('offset', params.offset.toString())
     const queryStr = query.toString() ? `?${query.toString()}` : ''
-    return request<ApiResponse<AutomationLogsResponse>>(`/automation/logs${queryStr}`)
+    return this.request<ApiResponse<AutomationLogsResponse>>(`/automation/logs${queryStr}`)
   }
 
   async clearAutomationLogs(filters?: { type?: string; status?: string; start_date?: string; end_date?: string }) {
-    return request<ApiResponse<{ deleted: number }>>('/automation/logs/clear', {
+    return this.request<ApiResponse<{ deleted: number }>>('/automation/logs/clear', {
       method: 'POST',
       body: JSON.stringify(filters ?? {}),
     })

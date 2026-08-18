@@ -13,86 +13,23 @@ use crate::models::{DdnsEvent, VersionUpdateEvent};
 use crate::modem_manager::get_sim_info_data_with_cache;
 use crate::system_event::SystemEvent;
 use crate::verification_code::extract_verification_code;
-use base64::{engine::general_purpose, Engine as _};
 use chrono::{
     DateTime, Datelike, Duration as ChronoDuration, FixedOffset, NaiveDateTime, Timelike, Utc,
 };
-use lettre::message::{Mailbox, SinglePart};
-use lettre::transport::smtp::authentication::Credentials;
-use lettre::transport::smtp::client::{Tls, TlsParameters};
-use lettre::{Address, AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
-use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS, NON_ALPHANUMERIC};
-use reqwest::{Client, StatusCode};
-use ring::hmac;
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+use serde_json::{json, Value};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::warn;
 use zbus::Connection;
 
 const BEIJING_UTC_OFFSET_SECONDS: i32 = 8 * 60 * 60;
 const NOTIFICATION_TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
-const QUERY_VALUE_ENCODE_SET: &AsciiSet = &CONTROLS
-    .add(b' ')
-    .add(b'!')
-    .add(b'"')
-    .add(b'#')
-    .add(b'$')
-    .add(b'%')
-    .add(b'&')
-    .add(b'\'')
-    .add(b'(')
-    .add(b')')
-    .add(b'*')
-    .add(b'+')
-    .add(b',')
-    .add(b'/')
-    .add(b':')
-    .add(b';')
-    .add(b'<')
-    .add(b'=')
-    .add(b'>')
-    .add(b'?')
-    .add(b'@')
-    .add(b'[')
-    .add(b'\\')
-    .add(b']')
-    .add(b'^')
-    .add(b'`')
-    .add(b'{')
-    .add(b'|')
-    .add(b'}');
-const SERVERCHAN3_SEND_KEY_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
-    .remove(b'-')
-    .remove(b'.')
-    .remove(b'_')
-    .remove(b'~');
-
 /// Notification sender for all configured notification channels.
 pub struct NotificationSender {
-    client: Client,
+    shared_sender: simadmin_notify::Sender,
     config_manager: Arc<ConfigManager>,
     dbus_conn: Arc<Connection>,
     database: Arc<Database>,
-    wecom_token_cache: tokio::sync::Mutex<HashMap<(String, String, String), WecomTokenCacheEntry>>,
-}
-
-struct WecomTokenCacheEntry {
-    token: String,
-    refresh_at: Instant,
-}
-
-struct WecomTokenResponse {
-    access_token: String,
-    expires_in: Option<u64>,
-}
-
-enum WecomMessageError {
-    InvalidAccessToken(String),
-    Other(String),
 }
 
 pub struct NotificationFanoutResult {
@@ -351,19 +288,45 @@ impl NotificationSender {
         database: Arc<Database>,
     ) -> Self {
         Self {
-            client: Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .build()
-                .expect("Failed to create HTTP client"),
+            shared_sender: simadmin_notify::Sender::new()
+                .expect("shared notification client configuration is valid"),
             config_manager,
             dbus_conn,
             database,
-            wecom_token_cache: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
     fn get_config(&self) -> NotificationConfig {
         self.config_manager.get_notifications()
+    }
+
+    async fn send_shared_config<T: Serialize>(
+        &self,
+        channel_type: simadmin_notify::ChannelType,
+        config: &T,
+        title: String,
+        body: String,
+        custom_body: Option<String>,
+    ) -> Result<String, String> {
+        let config = serde_json::to_value(config)
+            .map_err(|error| format!("Failed to serialize notification config: {error}"))?;
+        let receipt = self
+            .shared_sender
+            .send(
+                channel_type,
+                &config,
+                &simadmin_notify::NotificationMessage {
+                    title,
+                    body,
+                    custom_body,
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(format!(
+            "{} returned {}: {}",
+            receipt.provider, receipt.status_code, receipt.response_summary
+        ))
     }
 
     pub async fn get_own_number(&self) -> String {
@@ -391,6 +354,22 @@ impl NotificationSender {
 
     /// Forward an incoming SMS to all enabled channels.
     pub async fn forward_sms(&self, message: &SmsMessage) -> Result<(), String> {
+        if crate::hub_agent::queue_notification_event(
+            &self.config_manager,
+            &self.database,
+            "sms",
+            "sms.received",
+            compact_summary(&format!("[{}] {}", message.phone_number, message.content)),
+            serde_json::to_value(message).map_err(|error| error.to_string())?,
+        )
+        .await?
+        {
+            return Ok(());
+        }
+        self.forward_sms_local(message).await
+    }
+
+    async fn forward_sms_local(&self, message: &SmsMessage) -> Result<(), String> {
         let context = self.notification_template_context().await;
         let event = NotificationEvent::Sms {
             message,
@@ -443,6 +422,22 @@ impl NotificationSender {
 
     /// Forward a DDNS update/failure event to all enabled channels.
     pub async fn forward_ddns_event(&self, event: &DdnsEvent) -> Result<(), String> {
+        if crate::hub_agent::queue_notification_event(
+            &self.config_manager,
+            &self.database,
+            "ddns",
+            &format!("ddns.{}", event.status),
+            compact_summary(&format!("{} {}", event.domains.join(", "), event.message)),
+            serde_json::to_value(event).map_err(|error| error.to_string())?,
+        )
+        .await?
+        {
+            return Ok(());
+        }
+        self.forward_ddns_event_local(event).await
+    }
+
+    async fn forward_ddns_event_local(&self, event: &DdnsEvent) -> Result<(), String> {
         let context = self.notification_template_context().await;
         let event = NotificationEvent::Ddns(event, &context);
         let result = self.route_event(&event).await;
@@ -456,6 +451,22 @@ impl NotificationSender {
 
     /// Forward an automation task execution event to all enabled channels.
     pub async fn forward_automation_event(&self, event: &AutomationEvent) -> Result<(), String> {
+        if crate::hub_agent::queue_notification_event(
+            &self.config_manager,
+            &self.database,
+            "automation",
+            &format!("automation.{}", event.status),
+            compact_summary(&format!("[{}] {}", event.task_name, event.message)),
+            serde_json::to_value(event).map_err(|error| error.to_string())?,
+        )
+        .await?
+        {
+            return Ok(());
+        }
+        self.forward_automation_event_local(event).await
+    }
+
+    async fn forward_automation_event_local(&self, event: &AutomationEvent) -> Result<(), String> {
         let context = self.notification_template_context().await;
         let event = NotificationEvent::Automation(event, &context);
         let result = self.route_event(&event).await;
@@ -498,6 +509,28 @@ impl NotificationSender {
         &self,
         event: &VersionUpdateEvent,
     ) -> Result<NotificationFanoutResult, String> {
+        if crate::hub_agent::queue_notification_event(
+            &self.config_manager,
+            &self.database,
+            "version_update",
+            "version_update.available",
+            compact_summary(&format!("{} {}", event.version, event.asset_name)),
+            serde_json::to_value(event).map_err(|error| error.to_string())?,
+        )
+        .await?
+        {
+            return Ok(NotificationFanoutResult {
+                delivered: true,
+                errors: Vec::new(),
+            });
+        }
+        self.forward_version_update_event_local(event).await
+    }
+
+    async fn forward_version_update_event_local(
+        &self,
+        event: &VersionUpdateEvent,
+    ) -> Result<NotificationFanoutResult, String> {
         let context = self.notification_template_context().await;
         let event = NotificationEvent::VersionUpdate(event, &context);
         let result = self.route_event(&event).await;
@@ -513,6 +546,22 @@ impl NotificationSender {
     }
 
     pub async fn forward_system_event(&self, event: &SystemEvent) -> Result<(), String> {
+        if crate::hub_agent::queue_notification_event(
+            &self.config_manager,
+            &self.database,
+            "system_event",
+            &event.event_code,
+            compact_summary(&format!("{} {}", event.event_label, event.message)),
+            serde_json::to_value(event).map_err(|error| error.to_string())?,
+        )
+        .await?
+        {
+            return Ok(());
+        }
+        self.forward_system_event_local(event).await
+    }
+
+    async fn forward_system_event_local(&self, event: &SystemEvent) -> Result<(), String> {
         let context = self.notification_template_context().await;
         let event = NotificationEvent::SystemEvent(event, &context);
         let result = self.route_event(&event).await;
@@ -529,6 +578,27 @@ impl NotificationSender {
         rule_id: &str,
         report: &DeviceStatusReport,
     ) -> Result<(), String> {
+        if crate::hub_agent::queue_notification_event(
+            &self.config_manager,
+            &self.database,
+            "device_status",
+            &format!("device_status.{rule_id}"),
+            "设备状态定时报表".to_owned(),
+            json!({ "rule_id": rule_id, "report": report }),
+        )
+        .await?
+        {
+            return Ok(());
+        }
+        self.forward_device_status_report_local(rule_id, report)
+            .await
+    }
+
+    async fn forward_device_status_report_local(
+        &self,
+        rule_id: &str,
+        report: &DeviceStatusReport,
+    ) -> Result<(), String> {
         let context = self.notification_template_context().await;
         let event = NotificationEvent::DeviceStatus(report, &context);
         let result = self.route_event_for_rule(&event, Some(rule_id)).await;
@@ -537,6 +607,65 @@ impl NotificationSender {
             Ok(())
         } else {
             Err(result.errors.join("; "))
+        }
+    }
+
+    pub async fn deliver_queued_hub_event(&self, item_id: &str) -> Result<(), String> {
+        if self
+            .database
+            .mark_hub_event_local_fallback(item_id)
+            .map_err(|error| error.to_string())?
+            == 0
+        {
+            return Ok(());
+        }
+        let event = self
+            .database
+            .hub_event(item_id)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "Hub event no longer exists".to_string())?;
+        match event.event_type.as_str() {
+            "sms" => {
+                let value: SmsMessage =
+                    serde_json::from_value(event.details).map_err(|error| error.to_string())?;
+                self.forward_sms_local(&value).await
+            }
+            "ddns" => {
+                let value: DdnsEvent =
+                    serde_json::from_value(event.details).map_err(|error| error.to_string())?;
+                self.forward_ddns_event_local(&value).await
+            }
+            "version_update" => {
+                let value: VersionUpdateEvent =
+                    serde_json::from_value(event.details).map_err(|error| error.to_string())?;
+                self.forward_version_update_event_local(&value)
+                    .await
+                    .map(|_| ())
+            }
+            "system_event" => {
+                let value: SystemEvent =
+                    serde_json::from_value(event.details).map_err(|error| error.to_string())?;
+                self.forward_system_event_local(&value).await
+            }
+            "device_status" => {
+                let rule_id = event
+                    .details
+                    .get("rule_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let report: DeviceStatusReport = serde_json::from_value(
+                    event.details.get("report").cloned().unwrap_or_default(),
+                )
+                .map_err(|error| error.to_string())?;
+                self.forward_device_status_report_local(rule_id, &report)
+                    .await
+            }
+            "automation" => {
+                let value: AutomationEvent =
+                    serde_json::from_value(event.details).map_err(|error| error.to_string())?;
+                self.forward_automation_event_local(&value).await
+            }
+            value => Err(format!("unsupported queued Hub event type {value}")),
         }
     }
 
@@ -1083,57 +1212,23 @@ impl NotificationSender {
         title: &str,
         text: &str,
     ) -> Result<String, String> {
-        match channel.channel_type {
-            NotificationChannel::Webhook => {
-                let config = parse_instance_config::<WebhookConfig>(channel)?;
-                self.send_webhook_text(&config, text).await
-            }
-            NotificationChannel::Bark => {
-                let config = parse_instance_config::<BarkConfig>(channel)?;
-                self.send_bark_message(&config, title.to_string(), text.to_string())
-                    .await
-            }
-            NotificationChannel::PushPlus => {
-                let config = parse_instance_config::<PushPlusConfig>(channel)?;
-                self.send_pushplus_message(&config, title.to_string(), text.to_string())
-                    .await
-            }
-            NotificationChannel::WecomApp => {
-                let config = parse_instance_config::<WecomAppConfig>(channel)?;
-                self.send_wecom_app_text(&config, text.to_string()).await
-            }
-            NotificationChannel::WecomRobot => {
-                let config = parse_instance_config::<WecomRobotConfig>(channel)?;
-                self.send_wecom_robot_text(&config, text.to_string()).await
-            }
-            NotificationChannel::DingtalkRobot => {
-                let config = parse_instance_config::<DingtalkRobotConfig>(channel)?;
-                self.send_dingtalk_robot_text(&config, text.to_string())
-                    .await
-            }
-            NotificationChannel::DingtalkApp => {
-                let config = parse_instance_config::<DingtalkAppConfig>(channel)?;
-                self.send_dingtalk_app_text(&config, text.to_string()).await
-            }
-            NotificationChannel::FeishuRobot => {
-                let config = parse_instance_config::<FeishuRobotConfig>(channel)?;
-                self.send_feishu_robot_text(&config, text.to_string()).await
-            }
-            NotificationChannel::Telegram => {
-                let config = parse_instance_config::<TelegramConfig>(channel)?;
-                self.send_telegram_text(&config, text.to_string()).await
-            }
-            NotificationChannel::Email => {
-                let config = parse_instance_config::<EmailConfig>(channel)?;
-                self.send_email_message(&config, title.to_string(), text.to_string())
-                    .await
-            }
-            NotificationChannel::ServerChan3 => {
-                let config = parse_instance_config::<ServerChan3Config>(channel)?;
-                self.send_serverchan3_message(&config, title.to_string(), text.to_string())
-                    .await
-            }
-        }
+        let receipt = self
+            .shared_sender
+            .send(
+                shared_channel_type(channel.channel_type),
+                &channel.config,
+                &simadmin_notify::NotificationMessage {
+                    title: title.to_string(),
+                    body: text.to_string(),
+                    custom_body: None,
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(format!(
+            "{} returned {}: {}",
+            receipt.provider, receipt.status_code, receipt.response_summary
+        ))
     }
 
     /// Send a custom JSON body to a channel, reusing each channel's authentication/signing.
@@ -1143,125 +1238,25 @@ impl NotificationSender {
         channel: &NotificationChannelInstance,
         rendered_body: &str,
     ) -> Result<String, String> {
-        let payload: Value = serde_json::from_str(rendered_body)
-            .map_err(|e| format!("自定义请求体 JSON 格式错误: {}", e))?;
-
-        match channel.channel_type {
-            NotificationChannel::Webhook => {
-                let config = parse_instance_config::<WebhookConfig>(channel)?;
-                self.send_webhook_custom_body(&config, rendered_body).await
-            }
-            NotificationChannel::FeishuRobot => {
-                let config = parse_instance_config::<FeishuRobotConfig>(channel)?;
-                let url = robot_webhook_url(
-                    &config.webhook_url,
-                    &config.token,
-                    "https://open.feishu.cn/open-apis/bot/v2/hook/",
-                )?;
-                // Inject feishu signature into the payload if secret is configured
-                let final_payload = if !config.secret.trim().is_empty() {
-                    let mut obj = payload
-                        .as_object()
-                        .cloned()
-                        .unwrap_or_default();
-                    let timestamp = current_timestamp_secs().to_string();
-                    let sign_key = format!("{}\n{}", timestamp, config.secret.trim());
-                    let sign = hmac_sha256_base64(sign_key.as_bytes(), b"");
-                    obj.insert("timestamp".to_string(), json!(timestamp));
-                    obj.insert("sign".to_string(), json!(sign));
-                    Value::Object(obj)
-                } else {
-                    payload
-                };
-                self.post_json("飞书机器人", &url, final_payload).await
-            }
-            NotificationChannel::DingtalkRobot => {
-                let config = parse_instance_config::<DingtalkRobotConfig>(channel)?;
-                let mut url = robot_webhook_url(
-                    &config.webhook_url,
-                    &config.access_token,
-                    "https://oapi.dingtalk.com/robot/send?access_token=",
-                )?;
-                // Inject dingtalk signature into URL query
-                if !config.secret.trim().is_empty() {
-                    let timestamp = current_timestamp_millis();
-                    let to_sign = format!("{}\n{}", timestamp, config.secret.trim());
-                    let sign = hmac_sha256_base64(
-                        config.secret.trim().as_bytes(),
-                        to_sign.as_bytes(),
-                    );
-                    let separator = if url.contains('?') { '&' } else { '?' };
-                    url.push_str(&format!(
-                        "{}timestamp={}&sign={}",
-                        separator,
-                        timestamp,
-                        encode_query_value(&sign)
-                    ));
-                }
-                self.post_json("钉钉群自定义机器人", &url, payload).await
-            }
-            NotificationChannel::WecomRobot => {
-                let config = parse_instance_config::<WecomRobotConfig>(channel)?;
-                let url = robot_webhook_url(
-                    &config.webhook_url,
-                    &config.key,
-                    "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=",
-                )?;
-                self.post_json("企业微信群机器人", &url, payload).await
-            }
-            // For channels that don't have a natural "post arbitrary JSON" interface,
-            // we still try to post the custom body directly to their endpoint.
-            NotificationChannel::Bark => {
-                let config = parse_instance_config::<BarkConfig>(channel)?;
-                let server_url = config
-                    .server_url
-                    .trim()
-                    .trim_end_matches('/')
-                    .to_string();
-                if server_url.is_empty() || config.device_key.trim().is_empty() {
-                    return Err("Bark server URL 或 device key 未配置".to_string());
-                }
-                let url = format!("{}/push", server_url);
-                self.post_json("Bark", &url, payload).await
-            }
-            NotificationChannel::Telegram => {
-                let config = parse_instance_config::<TelegramConfig>(channel)?;
-                if config.bot_token.trim().is_empty() || config.chat_id.trim().is_empty() {
-                    return Err("Telegram Bot Token 或 Chat ID 未配置".to_string());
-                }
-                let url = telegram_send_message_url(&config);
-                self.post_json("Telegram", &url, payload).await
-            }
-            NotificationChannel::DingtalkApp => {
-                let config = parse_instance_config::<DingtalkAppConfig>(channel)?;
-                // DingtalkApp uses access_token from cache, same as normal flow
-                let text = serde_json::to_string(&payload).unwrap_or_default();
-                self.send_dingtalk_app_text(&config, text).await
-            }
-            NotificationChannel::WecomApp => {
-                let config = parse_instance_config::<WecomAppConfig>(channel)?;
-                let text = serde_json::to_string(&payload).unwrap_or_default();
-                self.send_wecom_app_text(&config, text).await
-            }
-            NotificationChannel::PushPlus => {
-                let config = parse_instance_config::<PushPlusConfig>(channel)?;
-                let text = serde_json::to_string_pretty(&payload).unwrap_or_default();
-                self.send_pushplus_message(&config, "自定义通知".to_string(), text)
-                    .await
-            }
-            NotificationChannel::Email => {
-                let config = parse_instance_config::<EmailConfig>(channel)?;
-                let text = serde_json::to_string_pretty(&payload).unwrap_or_default();
-                self.send_email_message(&config, "自定义通知".to_string(), text)
-                    .await
-            }
-            NotificationChannel::ServerChan3 => {
-                let config = parse_instance_config::<ServerChan3Config>(channel)?;
-                let text = serde_json::to_string_pretty(&payload).unwrap_or_default();
-                self.send_serverchan3_message(&config, "自定义通知".to_string(), text)
-                    .await
-            }
-        }
+        serde_json::from_str::<Value>(rendered_body)
+            .map_err(|error| format!("自定义请求体 JSON 格式错误: {error}"))?;
+        let receipt = self
+            .shared_sender
+            .send(
+                shared_channel_type(channel.channel_type),
+                &channel.config,
+                &simadmin_notify::NotificationMessage {
+                    title: "自定义通知".into(),
+                    body: rendered_body.into(),
+                    custom_body: Some(rendered_body.into()),
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(format!(
+            "{} returned {}: {}",
+            receipt.provider, receipt.status_code, receipt.response_summary
+        ))
     }
 
     async fn send_call_to_channel(
@@ -1468,35 +1463,14 @@ impl NotificationSender {
         config: &WebhookConfig,
         payload: &str,
     ) -> Result<String, String> {
-        let mut request = self.client.post(config.url.trim());
-        let mut has_content_type = false;
-
-        for (key, value) in &config.headers {
-            if key.eq_ignore_ascii_case("content-type") {
-                has_content_type = true;
-            }
-            request = request.header(key, value);
-        }
-
-        if !has_content_type {
-            request = request.header("Content-Type", "application/json");
-        }
-
-        if !config.secret.trim().is_empty() {
-            let signature = compute_legacy_signature(config.secret.trim(), payload);
-            request = request.header("X-Webhook-Signature", signature);
-        }
-
-        let response = request
-            .body(payload.to_string())
-            .send()
-            .await
-            .map_err(|e| format!("Failed to send webhook: {}", e))?;
-        response_result(
-            "Webhook",
-            response.status(),
-            response.text().await.unwrap_or_default(),
+        self.send_shared_config(
+            simadmin_notify::ChannelType::Webhook,
+            config,
+            "SimAdmin 通知".into(),
+            payload.into(),
+            Some(payload.into()),
         )
+        .await
     }
 
     async fn send_webhook_text(
@@ -1504,39 +1478,14 @@ impl NotificationSender {
         config: &WebhookConfig,
         text: &str,
     ) -> Result<String, String> {
-        if config.url.trim().is_empty() {
-            return Err("Webhook URL is not configured".to_string());
-        }
-
-        let mut request = self.client.post(config.url.trim());
-        let mut has_content_type = false;
-
-        for (key, value) in &config.headers {
-            if key.eq_ignore_ascii_case("content-type") {
-                has_content_type = true;
-            }
-            request = request.header(key, value);
-        }
-
-        if !has_content_type {
-            request = request.header("Content-Type", "text/plain; charset=utf-8");
-        }
-
-        if !config.secret.trim().is_empty() {
-            let signature = compute_legacy_signature(config.secret.trim(), text);
-            request = request.header("X-Webhook-Signature", signature);
-        }
-
-        let response = request
-            .body(text.to_string())
-            .send()
-            .await
-            .map_err(|e| format!("Failed to send webhook: {}", e))?;
-        response_result(
-            "Webhook",
-            response.status(),
-            response.text().await.unwrap_or_default(),
+        self.send_shared_config(
+            simadmin_notify::ChannelType::Webhook,
+            config,
+            "SimAdmin 通知".into(),
+            text.into(),
+            None,
         )
+        .await
     }
 
     /// Send a custom body to a Webhook channel, supporting both POST and GET methods.
@@ -1545,55 +1494,14 @@ impl NotificationSender {
         config: &WebhookConfig,
         body: &str,
     ) -> Result<String, String> {
-        if config.url.trim().is_empty() {
-            return Err("Webhook URL is not configured".to_string());
-        }
-
-        let is_get = config.http_method.eq_ignore_ascii_case("GET");
-
-        let mut request = if is_get {
-            // For GET requests, we don't send a body
-            self.client.get(config.url.trim())
-        } else {
-            self.client.post(config.url.trim())
-        };
-
-        let mut has_content_type = false;
-        for (key, value) in &config.headers {
-            if key.eq_ignore_ascii_case("content-type") {
-                has_content_type = true;
-            }
-            request = request.header(key, value);
-        }
-
-        if !is_get && !has_content_type {
-            // Auto-detect: if body looks like JSON, use application/json
-            let trimmed = body.trim();
-            if trimmed.starts_with('{') || trimmed.starts_with('[') {
-                request = request.header("Content-Type", "application/json; charset=utf-8");
-            } else {
-                request = request.header("Content-Type", "text/plain; charset=utf-8");
-            }
-        }
-
-        if !config.secret.trim().is_empty() {
-            let signature = compute_legacy_signature(config.secret.trim(), body);
-            request = request.header("X-Webhook-Signature", signature);
-        }
-
-        if !is_get {
-            request = request.body(body.to_string());
-        }
-
-        let response = request
-            .send()
-            .await
-            .map_err(|e| format!("Failed to send webhook: {}", e))?;
-        response_result(
-            "Webhook",
-            response.status(),
-            response.text().await.unwrap_or_default(),
+        self.send_shared_config(
+            simadmin_notify::ChannelType::Webhook,
+            config,
+            "SimAdmin 通知".into(),
+            body.into(),
+            Some(body.into()),
         )
+        .await
     }
 
     async fn send_bark_sms(
@@ -1687,36 +1595,14 @@ impl NotificationSender {
         title: String,
         body: String,
     ) -> Result<String, String> {
-        let url = format!(
-            "{}/{}",
-            config.server_url.trim().trim_end_matches('/'),
-            encode_path_segment(config.device_key.trim())
-        );
-        let mut payload = Map::new();
-        payload.insert("title".to_string(), json!(title));
-        payload.insert("body".to_string(), json!(body));
-        insert_non_empty(&mut payload, "group", &config.group);
-        insert_non_empty(&mut payload, "sound", &config.sound);
-        insert_non_empty(&mut payload, "level", &config.level);
-        insert_non_empty(&mut payload, "icon", &config.icon);
-        insert_non_empty(&mut payload, "url", &config.click_url);
-        if config.auto_copy {
-            payload.insert("automaticallyCopy".to_string(), json!(1));
-            payload.insert(
-                "copy".to_string(),
-                json!(if config.copy.trim().is_empty() {
-                    body.as_str()
-                } else {
-                    config.copy.trim()
-                }),
-            );
-        }
-        payload.insert(
-            "isArchive".to_string(),
-            json!(if config.save_history { 1 } else { 0 }),
-        );
-
-        self.post_json("Bark", &url, Value::Object(payload)).await
+        self.send_shared_config(
+            simadmin_notify::ChannelType::Bark,
+            config,
+            title,
+            body,
+            None,
+        )
+        .await
     }
 
     async fn send_pushplus_sms(
@@ -1794,24 +1680,12 @@ impl NotificationSender {
         title: String,
         content: String,
     ) -> Result<String, String> {
-        if config.token.trim().is_empty() {
-            return Err("PushPlus token is not configured".to_string());
-        }
-
-        let mut payload = Map::new();
-        payload.insert("token".to_string(), json!(config.token.trim()));
-        payload.insert("title".to_string(), json!(title));
-        payload.insert("content".to_string(), json!(content));
-        insert_non_empty(&mut payload, "topic", &config.topic);
-        insert_non_empty(&mut payload, "template", &config.template);
-        insert_non_empty(&mut payload, "channel", &config.channel);
-        insert_non_empty(&mut payload, "option", &config.option);
-        insert_non_empty(&mut payload, "callbackUrl", &config.callback_url);
-
-        self.post_json(
-            "PushPlus",
-            "https://www.pushplus.plus/send",
-            Value::Object(payload),
+        self.send_shared_config(
+            simadmin_notify::ChannelType::Pushplus,
+            config,
+            title,
+            content,
+            None,
         )
         .await
     }
@@ -1882,193 +1756,14 @@ impl NotificationSender {
         config: &WecomAppConfig,
         text: String,
     ) -> Result<String, String> {
-        if config.corp_id.trim().is_empty()
-            || config.secret.trim().is_empty()
-            || config.agent_id.trim().is_empty()
-        {
-            return Err("企业微信 CorpID、AgentID 或 Secret 未配置".to_string());
-        }
-
-        let agent_id = config
-            .agent_id
-            .trim()
-            .parse::<i64>()
-            .map_err(|_| "企业微信 AgentID 必须为数字".to_string())?;
-        let payload = json!({
-            "touser": if config.to_user.trim().is_empty() { "@all" } else { config.to_user.trim() },
-            "toparty": config.to_party.trim(),
-            "totag": config.to_tag.trim(),
-            "msgtype": "text",
-            "agentid": agent_id,
-            "text": { "content": text },
-            "safe": if config.safe { 1 } else { 0 },
-        });
-
-        self.post_wecom_app_message(config, payload).await
-    }
-
-    async fn post_wecom_app_message(
-        &self,
-        config: &WecomAppConfig,
-        payload: Value,
-    ) -> Result<String, String> {
-        let api_base_url = wecom_api_base_url(config);
-        let corp_id = config.corp_id.trim();
-        let secret = config.secret.trim();
-        let mut retried = false;
-
-        loop {
-            let token = self
-                .fetch_wecom_access_token(&api_base_url, corp_id, secret)
-                .await?;
-            match self
-                .post_wecom_app_payload(&api_base_url, token.as_str(), payload.clone())
-                .await
-            {
-                Ok(result) => return Ok(result),
-                Err(WecomMessageError::InvalidAccessToken(_)) if !retried => {
-                    retried = true;
-                    self.invalidate_wecom_access_token(&api_base_url, corp_id, secret)
-                        .await;
-                    continue;
-                }
-                Err(WecomMessageError::InvalidAccessToken(err)) => return Err(err),
-                Err(WecomMessageError::Other(err)) => return Err(err),
-            }
-        }
-    }
-
-    async fn post_wecom_app_payload(
-        &self,
-        api_base_url: &str,
-        access_token: &str,
-        payload: Value,
-    ) -> Result<String, WecomMessageError> {
-        let url = format!(
-            "{}/cgi-bin/message/send?access_token={}",
-            api_base_url,
-            encode_query_value(access_token)
-        );
-        let response = self
-            .client
-            .post(&url)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| {
-                WecomMessageError::Other(format!("Failed to send 企业微信应用消息 message: {}", e))
-            })?;
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-
-        if is_wecom_access_token_error(&body) {
-            return Err(WecomMessageError::InvalidAccessToken(
-                response_result("企业微信应用消息", status, body).unwrap_or_else(|err| err),
-            ));
-        }
-
-        response_result("企业微信应用消息", status, body).map_err(WecomMessageError::Other)
-    }
-
-    async fn fetch_wecom_access_token(
-        &self,
-        api_base_url: &str,
-        corp_id: &str,
-        secret: &str,
-    ) -> Result<String, String> {
-        let cache_key = (
-            api_base_url.to_string(),
-            corp_id.to_string(),
-            secret.to_string(),
-        );
-        let mut cache = self.wecom_token_cache.lock().await;
-        if let Some(entry) = cache.get(&cache_key) {
-            if Instant::now() < entry.refresh_at {
-                return Ok(entry.token.clone());
-            }
-        }
-
-        let parsed = self
-            .request_wecom_access_token(api_base_url, corp_id, secret)
-            .await?;
-        let expires_in = parsed.expires_in.unwrap_or(7200).max(1);
-        let refresh_after = if expires_in > 600 {
-            expires_in - 300
-        } else {
-            (expires_in / 2).max(1)
-        };
-        let token = parsed.access_token;
-        cache.insert(
-            cache_key,
-            WecomTokenCacheEntry {
-                token: token.clone(),
-                refresh_at: Instant::now() + Duration::from_secs(refresh_after),
-            },
-        );
-
-        Ok(token)
-    }
-
-    async fn invalidate_wecom_access_token(&self, api_base_url: &str, corp_id: &str, secret: &str) {
-        let mut cache = self.wecom_token_cache.lock().await;
-        cache.remove(&(
-            api_base_url.to_string(),
-            corp_id.to_string(),
-            secret.to_string(),
-        ));
-    }
-
-    async fn request_wecom_access_token(
-        &self,
-        api_base_url: &str,
-        corp_id: &str,
-        secret: &str,
-    ) -> Result<WecomTokenResponse, String> {
-        #[derive(Debug, Deserialize)]
-        struct RawWecomTokenResponse {
-            #[serde(default)]
-            errcode: i64,
-            #[serde(default)]
-            errmsg: String,
-            #[serde(default)]
-            access_token: String,
-            #[serde(default)]
-            expires_in: Option<u64>,
-        }
-
-        let url = format!(
-            "{}/cgi-bin/gettoken?corpid={}&corpsecret={}",
-            api_base_url,
-            encode_query_value(corp_id),
-            encode_query_value(secret)
-        );
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to get WeCom access token: {}", e))?;
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        if !status.is_success() {
-            return Err(format!("WeCom token request failed ({}): {}", status, body));
-        }
-        let parsed: RawWecomTokenResponse = serde_json::from_str(&body)
-            .map_err(|e| format!("Failed to parse WeCom token response: {}", e))?;
-        if parsed.errcode != 0 {
-            return Err(format_wecom_errcode(
-                "WeCom token",
-                parsed.errcode,
-                &parsed.errmsg,
-            ));
-        }
-        if parsed.access_token.is_empty() {
-            return Err("WeCom token response did not include access_token".to_string());
-        }
-        Ok(WecomTokenResponse {
-            access_token: parsed.access_token,
-            expires_in: parsed.expires_in,
-        })
+        self.send_shared_config(
+            simadmin_notify::ChannelType::WecomApp,
+            config,
+            "SimAdmin 通知".into(),
+            text,
+            None,
+        )
+        .await
     }
 
     async fn send_wecom_robot_sms(
@@ -2137,17 +1832,14 @@ impl NotificationSender {
         config: &WecomRobotConfig,
         text: String,
     ) -> Result<String, String> {
-        let url = robot_webhook_url(
-            &config.webhook_url,
-            &config.key,
-            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=",
-        )?;
-        let payload = json!({
-            "msgtype": "text",
-            "text": { "content": text },
-        });
-
-        self.post_json("企业微信群机器人", &url, payload).await
+        self.send_shared_config(
+            simadmin_notify::ChannelType::WecomRobot,
+            config,
+            "SimAdmin 通知".into(),
+            text,
+            None,
+        )
+        .await
     }
 
     async fn send_dingtalk_robot_sms(
@@ -2216,35 +1908,14 @@ impl NotificationSender {
         config: &DingtalkRobotConfig,
         text: String,
     ) -> Result<String, String> {
-        let mut url = robot_webhook_url(
-            &config.webhook_url,
-            &config.access_token,
-            "https://oapi.dingtalk.com/robot/send?access_token=",
-        )?;
-        if !config.secret.trim().is_empty() {
-            let timestamp = current_timestamp_millis();
-            let to_sign = format!("{}\n{}", timestamp, config.secret.trim());
-            let sign = hmac_sha256_base64(config.secret.trim().as_bytes(), to_sign.as_bytes());
-            let separator = if url.contains('?') { '&' } else { '?' };
-            url.push_str(&format!(
-                "{}timestamp={}&sign={}",
-                separator,
-                timestamp,
-                encode_query_value(&sign)
-            ));
-        }
-
-        let at_mobiles = split_csv(&config.at_mobiles);
-        let payload = json!({
-            "msgtype": "text",
-            "text": { "content": text },
-            "at": {
-                "atMobiles": at_mobiles,
-                "isAtAll": config.at_all,
-            },
-        });
-
-        self.post_json("钉钉群自定义机器人", &url, payload).await
+        self.send_shared_config(
+            simadmin_notify::ChannelType::DingtalkRobot,
+            config,
+            "SimAdmin 通知".into(),
+            text,
+            None,
+        )
+        .await
     }
 
     async fn send_dingtalk_app_sms(
@@ -2313,91 +1984,14 @@ impl NotificationSender {
         config: &DingtalkAppConfig,
         text: String,
     ) -> Result<String, String> {
-        if config.app_key.trim().is_empty()
-            || config.app_secret.trim().is_empty()
-            || config.open_conversation_id.trim().is_empty()
-        {
-            return Err("钉钉 AppKey、AppSecret 或 OpenConversationId 未配置".to_string());
-        }
-        let token = self
-            .fetch_dingtalk_access_token(config.app_key.trim(), config.app_secret.trim())
-            .await?;
-        let robot_code = if config.robot_code.trim().is_empty() {
-            config.app_key.trim()
-        } else {
-            config.robot_code.trim()
-        };
-        let msg_key = if config.msg_key.trim().is_empty() {
-            "sampleText"
-        } else {
-            config.msg_key.trim()
-        };
-        let msg_param = json!({ "content": text }).to_string();
-        let payload = json!({
-            "robotCode": robot_code,
-            "openConversationId": config.open_conversation_id.trim(),
-            "msgKey": msg_key,
-            "msgParam": msg_param,
-        });
-
-        let response = self
-            .client
-            .post("https://api.dingtalk.com/v1.0/robot/groupMessages/send")
-            .header("x-acs-dingtalk-access-token", token)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to send DingTalk app robot message: {}", e))?;
-        response_result(
-            "钉钉企业内机器人",
-            response.status(),
-            response.text().await.unwrap_or_default(),
+        self.send_shared_config(
+            simadmin_notify::ChannelType::DingtalkApp,
+            config,
+            "SimAdmin 通知".into(),
+            text,
+            None,
         )
-    }
-
-    async fn fetch_dingtalk_access_token(
-        &self,
-        app_key: &str,
-        app_secret: &str,
-    ) -> Result<String, String> {
-        #[derive(Debug, Deserialize)]
-        struct DingtalkTokenResponse {
-            #[serde(default, rename = "accessToken")]
-            access_token: String,
-            #[serde(default)]
-            code: String,
-            #[serde(default)]
-            message: String,
-        }
-
-        let payload = json!({
-            "appKey": app_key,
-            "appSecret": app_secret,
-        });
-        let response = self
-            .client
-            .post("https://api.dingtalk.com/v1.0/oauth2/accessToken")
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to get DingTalk access token: {}", e))?;
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        if !status.is_success() {
-            return Err(format!(
-                "DingTalk token request failed ({}): {}",
-                status, body
-            ));
-        }
-        let parsed: DingtalkTokenResponse = serde_json::from_str(&body)
-            .map_err(|e| format!("Failed to parse DingTalk token response: {}", e))?;
-        if !parsed.access_token.is_empty() {
-            return Ok(parsed.access_token);
-        }
-        Err(format!(
-            "DingTalk token response did not include accessToken: {} {}",
-            parsed.code, parsed.message
-        ))
+        .await
     }
 
     async fn send_feishu_robot_sms(
@@ -2466,24 +2060,14 @@ impl NotificationSender {
         config: &FeishuRobotConfig,
         text: String,
     ) -> Result<String, String> {
-        let url = robot_webhook_url(
-            &config.webhook_url,
-            &config.token,
-            "https://open.feishu.cn/open-apis/bot/v2/hook/",
-        )?;
-        let mut payload = Map::new();
-        payload.insert("msg_type".to_string(), json!("text"));
-        payload.insert("content".to_string(), json!({ "text": text }));
-        if !config.secret.trim().is_empty() {
-            let timestamp = current_timestamp_secs().to_string();
-            let sign_key = format!("{}\n{}", timestamp, config.secret.trim());
-            let sign = hmac_sha256_base64(sign_key.as_bytes(), b"");
-            payload.insert("timestamp".to_string(), json!(timestamp));
-            payload.insert("sign".to_string(), json!(sign));
-        }
-
-        self.post_json("飞书机器人", &url, Value::Object(payload))
-            .await
+        self.send_shared_config(
+            simadmin_notify::ChannelType::FeishuRobot,
+            config,
+            "SimAdmin 通知".into(),
+            text,
+            None,
+        )
+        .await
     }
 
     async fn send_telegram_sms(
@@ -2552,21 +2136,14 @@ impl NotificationSender {
         config: &TelegramConfig,
         text: String,
     ) -> Result<String, String> {
-        if config.bot_token.trim().is_empty() || config.chat_id.trim().is_empty() {
-            return Err("Telegram Bot Token 或 Chat ID 未配置".to_string());
-        }
-        let url = telegram_send_message_url(config);
-        let mut payload = Map::new();
-        payload.insert("chat_id".to_string(), json!(config.chat_id.trim()));
-        payload.insert("text".to_string(), json!(text));
-        payload.insert(
-            "disable_web_page_preview".to_string(),
-            json!(config.disable_web_page_preview),
-        );
-        insert_non_empty(&mut payload, "parse_mode", &config.parse_mode);
-
-        self.post_json("Telegram", &url, Value::Object(payload))
-            .await
+        self.send_shared_config(
+            simadmin_notify::ChannelType::Telegram,
+            config,
+            "SimAdmin 通知".into(),
+            text,
+            None,
+        )
+        .await
     }
 
     async fn send_serverchan3_message(
@@ -2575,17 +2152,14 @@ impl NotificationSender {
         title: String,
         desp: String,
     ) -> Result<String, String> {
-        let url = serverchan3_url(config)?;
-        let form = serverchan3_form_payload(config, &title, &desp);
-        let response = self
-            .client
-            .post(&url)
-            .form(&form)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to send Server酱3 message: {}", e))?;
-
-        serverchan3_response_result(response.status(), response.text().await.unwrap_or_default())
+        self.send_shared_config(
+            simadmin_notify::ChannelType::Serverchan3,
+            config,
+            title,
+            desp,
+            None,
+        )
+        .await
     }
 
     async fn send_email_message(
@@ -2594,240 +2168,31 @@ impl NotificationSender {
         subject: String,
         body: String,
     ) -> Result<String, String> {
-        if config.smtp_host.trim().is_empty() {
-            return Err("SMTP 服务器未配置".to_string());
-        }
-        if config.sender_address.trim().is_empty() {
-            return Err("发件人邮箱未配置".to_string());
-        }
-
-        let sender = mailbox_from_config(&config.sender_address, &config.sender_name, "发件人")?;
-        let receivers = email_receivers_from_config(&config.receiver_addresses)?;
-        let message = build_email_message(config, sender, receivers, &subject, &body)?;
-        let mailer = build_email_transport(config)?;
-
-        mailer
-            .send(message)
-            .await
-            .map_err(|err| format!("Email 发送失败：{err}"))?;
-
-        Ok("Email test successful".to_string())
-    }
-
-    async fn post_json(&self, label: &str, url: &str, payload: Value) -> Result<String, String> {
-        let response = self
-            .client
-            .post(url)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to send {} message: {}", label, e))?;
-        response_result(
-            label,
-            response.status(),
-            response.text().await.unwrap_or_default(),
+        self.send_shared_config(
+            simadmin_notify::ChannelType::Email,
+            config,
+            subject,
+            body,
+            None,
         )
+        .await
     }
 }
 
-fn parse_instance_config<T>(channel: &NotificationChannelInstance) -> Result<T, String>
-where
-    T: DeserializeOwned + Default,
-{
-    if channel.config.is_null() {
-        return Ok(T::default());
+fn shared_channel_type(channel: NotificationChannel) -> simadmin_notify::ChannelType {
+    match channel {
+        NotificationChannel::Webhook => simadmin_notify::ChannelType::Webhook,
+        NotificationChannel::Bark => simadmin_notify::ChannelType::Bark,
+        NotificationChannel::PushPlus => simadmin_notify::ChannelType::Pushplus,
+        NotificationChannel::WecomApp => simadmin_notify::ChannelType::WecomApp,
+        NotificationChannel::WecomRobot => simadmin_notify::ChannelType::WecomRobot,
+        NotificationChannel::DingtalkRobot => simadmin_notify::ChannelType::DingtalkRobot,
+        NotificationChannel::DingtalkApp => simadmin_notify::ChannelType::DingtalkApp,
+        NotificationChannel::FeishuRobot => simadmin_notify::ChannelType::FeishuRobot,
+        NotificationChannel::Telegram => simadmin_notify::ChannelType::Telegram,
+        NotificationChannel::Email => simadmin_notify::ChannelType::Email,
+        NotificationChannel::ServerChan3 => simadmin_notify::ChannelType::Serverchan3,
     }
-    serde_json::from_value(channel.config.clone())
-        .map_err(|err| format!("Failed to parse {} channel config: {}", channel.name, err))
-}
-
-fn serverchan3_url(config: &ServerChan3Config) -> Result<String, String> {
-    let send_key = config.send_key.trim();
-    if send_key.is_empty() {
-        return Err("Server酱3 SendKey 未配置".to_string());
-    }
-    let uid = serverchan3_uid(config)
-        .ok_or_else(|| "Server酱3 UID 未配置，且无法从 SendKey 自动解析".to_string())?;
-    if !is_valid_serverchan3_uid(&uid) {
-        return Err("Server酱3 UID 只能包含字母、数字或短横线".to_string());
-    }
-    Ok(format!(
-        "https://{}.push.ft07.com/send/{}.send",
-        uid,
-        encode_serverchan3_send_key(send_key)
-    ))
-}
-
-fn serverchan3_uid(config: &ServerChan3Config) -> Option<String> {
-    let uid = config.uid.trim();
-    if !uid.is_empty() {
-        return Some(uid.to_string());
-    }
-    serverchan3_uid_from_send_key(&config.send_key)
-}
-
-fn is_valid_serverchan3_uid(uid: &str) -> bool {
-    !uid.is_empty()
-        && uid
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
-}
-
-fn serverchan3_uid_from_send_key(send_key: &str) -> Option<String> {
-    let send_key = send_key.trim();
-    let lower = send_key.to_ascii_lowercase();
-    let rest = lower.strip_prefix("sctp")?;
-    let digits_len = rest
-        .chars()
-        .take_while(|ch| ch.is_ascii_digit())
-        .map(char::len_utf8)
-        .sum::<usize>();
-    if digits_len == 0 || rest.get(digits_len..=digits_len)? != "t" {
-        return None;
-    }
-    Some(rest[..digits_len].to_string())
-}
-
-fn serverchan3_form_payload(
-    config: &ServerChan3Config,
-    title: &str,
-    desp: &str,
-) -> Vec<(String, String)> {
-    let mut form = vec![
-        ("title".to_string(), title.to_string()),
-        ("desp".to_string(), desp.to_string()),
-    ];
-    if !config.channel.trim().is_empty() {
-        form.push(("channel".to_string(), config.channel.trim().to_string()));
-    }
-    if !config.openid.trim().is_empty() {
-        form.push(("group".to_string(), config.openid.trim().to_string()));
-    }
-    form
-}
-
-fn serverchan3_response_result(status: StatusCode, body: String) -> Result<String, String> {
-    if !status.is_success() {
-        return Err(format!("Server酱3 returned HTTP {}: {}", status, body));
-    }
-
-    let value = serde_json::from_str::<Value>(&body)
-        .map_err(|err| format!("Server酱3 返回内容不是合法 JSON：{}；{}", err, body))?;
-    let code = value
-        .get("code")
-        .and_then(Value::as_i64)
-        .ok_or_else(|| format!("Server酱3 返回缺少 code 字段：{}", body))?;
-    if code != 0 {
-        let message = value
-            .get("message")
-            .or_else(|| value.get("msg"))
-            .and_then(Value::as_str)
-            .unwrap_or(&body);
-        return Err(format!("Server酱3 returned code {}: {}", code, message));
-    }
-
-    Ok(format!("Server酱3 test successful (status: {})", status))
-}
-
-fn split_receiver_addresses(value: &str) -> Vec<String> {
-    value
-        .split(|ch| matches!(ch, ',' | ';' | '\n' | '\r' | '，' | '；'))
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .map(ToString::to_string)
-        .collect()
-}
-
-fn mailbox_from_config(address: &str, name: &str, label: &str) -> Result<Mailbox, String> {
-    let address = address.trim();
-    if address.is_empty() {
-        return Err(format!("{label}邮箱未配置"));
-    }
-    let address = address
-        .parse::<Address>()
-        .map_err(|err| format!("{label}邮箱格式无效：{err}"))?;
-    let name = name.trim();
-    Ok(Mailbox::new(
-        if name.is_empty() {
-            None
-        } else {
-            Some(name.to_string())
-        },
-        address,
-    ))
-}
-
-fn email_receivers_from_config(value: &str) -> Result<Vec<Mailbox>, String> {
-    let addresses = split_receiver_addresses(value);
-    if addresses.is_empty() {
-        return Err("收件人邮箱未配置".to_string());
-    }
-    addresses
-        .iter()
-        .map(|address| mailbox_from_config(address, "", "收件人"))
-        .collect()
-}
-
-fn build_email_message(
-    config: &EmailConfig,
-    sender: Mailbox,
-    receivers: Vec<Mailbox>,
-    subject: &str,
-    body: &str,
-) -> Result<Message, String> {
-    let mut builder = Message::builder().from(sender).subject(subject);
-    for receiver in receivers {
-        builder = builder.to(receiver);
-    }
-
-    let part = match config.message_format.trim().to_ascii_lowercase().as_str() {
-        "" | "plain" | "text" => Ok(SinglePart::plain(body.to_string())),
-        "html" => Ok(SinglePart::html(body.to_string())),
-        other => Err(format!("不支持的 Email 消息格式：{other}")),
-    }?;
-
-    builder
-        .singlepart(part)
-        .map_err(|err| format!("构建 Email 消息失败：{err}"))
-}
-
-fn build_email_transport(
-    config: &EmailConfig,
-) -> Result<AsyncSmtpTransport<Tokio1Executor>, String> {
-    let host = config.smtp_host.trim();
-    let port = config.smtp_port.max(1);
-    let tls = match config.smtp_security.trim().to_ascii_lowercase().as_str() {
-        "" | "implicit_tls" | "tls" => {
-            let tls_parameters = email_tls_parameters(host, config.allow_insecure_tls)?;
-            Tls::Wrapper(tls_parameters)
-        }
-        "starttls" => {
-            let tls_parameters = email_tls_parameters(host, config.allow_insecure_tls)?;
-            Tls::Required(tls_parameters)
-        }
-        "none" => Tls::None,
-        other => return Err(format!("不支持的 SMTP 安全模式：{other}")),
-    };
-    let mut builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host)
-        .port(port)
-        .tls(tls);
-
-    if !config.username.trim().is_empty() || !config.password.is_empty() {
-        builder = builder.credentials(Credentials::new(
-            config.username.trim().to_string(),
-            config.password.clone(),
-        ));
-    }
-
-    Ok(builder.build())
-}
-
-fn email_tls_parameters(host: &str, allow_insecure: bool) -> Result<TlsParameters, String> {
-    TlsParameters::builder(host.to_string())
-        .dangerous_accept_invalid_certs(allow_insecure)
-        .dangerous_accept_invalid_hostnames(allow_insecure)
-        .build()
-        .map_err(|err| format!("构建 SMTP TLS 参数失败：{err}"))
 }
 
 fn rule_matches(rule: &NotificationRule, event: &NotificationEvent<'_>) -> bool {
@@ -3444,175 +2809,6 @@ fn render_device_status_template(
     replace_common_variables(rendered, context, escape_json)
 }
 
-fn robot_webhook_url(webhook_url: &str, key: &str, prefix: &str) -> Result<String, String> {
-    let webhook_url = webhook_url.trim();
-    if !webhook_url.is_empty() {
-        return Ok(webhook_url.to_string());
-    }
-    let key = key.trim();
-    if key.is_empty() {
-        return Err("Webhook URL 或 Key/Token 未配置".to_string());
-    }
-    Ok(format!("{}{}", prefix, encode_path_segment(key)))
-}
-
-fn split_csv(input: &str) -> Vec<String> {
-    input
-        .split(',')
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .map(ToString::to_string)
-        .collect()
-}
-
-fn insert_non_empty(payload: &mut Map<String, Value>, key: &str, value: &str) {
-    let value = value.trim();
-    if !value.is_empty() {
-        payload.insert(key.to_string(), json!(value));
-    }
-}
-
-fn encode_query_value(value: &str) -> String {
-    utf8_percent_encode(value, QUERY_VALUE_ENCODE_SET).to_string()
-}
-
-fn encode_path_segment(value: &str) -> String {
-    utf8_percent_encode(value, NON_ALPHANUMERIC).to_string()
-}
-
-fn encode_serverchan3_send_key(value: &str) -> String {
-    utf8_percent_encode(value, SERVERCHAN3_SEND_KEY_ENCODE_SET).to_string()
-}
-
-fn current_timestamp_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or_default()
-}
-
-fn current_timestamp_millis() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or_default()
-}
-
-fn hmac_sha256_base64(key: &[u8], data: &[u8]) -> String {
-    let key = hmac::Key::new(hmac::HMAC_SHA256, key);
-    let tag = hmac::sign(&key, data);
-    general_purpose::STANDARD.encode(tag.as_ref())
-}
-
-fn is_wecom_access_token_error(body: &str) -> bool {
-    json_errcode(body)
-        .map(|(errcode, _)| matches!(errcode, 40014 | 42001))
-        .unwrap_or(false)
-}
-
-fn wecom_api_base_url(config: &WecomAppConfig) -> String {
-    let configured = config.api_base_url.trim();
-    let base = if configured.is_empty() {
-        "https://qyapi.weixin.qq.com"
-    } else {
-        configured
-    };
-    base.trim_end_matches('/').to_string()
-}
-
-fn telegram_api_base_url(config: &TelegramConfig) -> String {
-    let configured = config.api_base_url.trim();
-    let base = if configured.is_empty() {
-        "https://api.telegram.org"
-    } else {
-        configured
-    };
-    base.trim_end_matches('/').to_string()
-}
-
-fn telegram_send_message_url(config: &TelegramConfig) -> String {
-    format!(
-        "{}/bot{}/sendMessage",
-        telegram_api_base_url(config),
-        config.bot_token.trim()
-    )
-}
-
-fn format_channel_errcode(label: &str, errcode: i64, message: &str) -> String {
-    if errcode == 60020 {
-        return format!(
-            "{} returned errcode 60020: {}. 企业微信应用请求出口 IP 未加入企业可信 IP，请在企业微信后台添加当前出口 IP，或将 API 地址设置为固定公网 IP 的企业微信中继/反代地址。",
-            label, message
-        );
-    }
-
-    format!("{} returned errcode {}: {}", label, errcode, message)
-}
-
-fn format_wecom_errcode(label: &str, errcode: i64, message: &str) -> String {
-    format_channel_errcode(label, errcode, message)
-}
-
-fn json_errcode(body: &str) -> Option<(i64, String)> {
-    let value = serde_json::from_str::<Value>(body).ok()?;
-    let errcode = value.get("errcode").and_then(Value::as_i64)?;
-    let message = value
-        .get("errmsg")
-        .or_else(|| value.get("err_msg"))
-        .and_then(Value::as_str)
-        .unwrap_or(body)
-        .to_string();
-    Some((errcode, message))
-}
-
-fn response_result(label: &str, status: StatusCode, body: String) -> Result<String, String> {
-    if !status.is_success() {
-        return Err(format!("{} returned HTTP {}: {}", label, status, body));
-    }
-
-    if let Ok(value) = serde_json::from_str::<Value>(&body) {
-        if let Some(ok) = value.get("ok").and_then(Value::as_bool) {
-            if !ok {
-                return Err(format!("{} returned error: {}", label, body));
-            }
-        }
-        if let Some(errcode) = value.get("errcode").and_then(Value::as_i64) {
-            if errcode != 0 {
-                let message = value
-                    .get("errmsg")
-                    .or_else(|| value.get("err_msg"))
-                    .and_then(Value::as_str)
-                    .unwrap_or(&body);
-                return Err(format_channel_errcode(label, errcode, message));
-            }
-        }
-        if let Some(code) = value.get("code").and_then(Value::as_i64) {
-            if code != 0 && code != 200 {
-                let message = value
-                    .get("msg")
-                    .or_else(|| value.get("message"))
-                    .and_then(Value::as_str)
-                    .unwrap_or(&body);
-                return Err(format!("{} returned code {}: {}", label, code, message));
-            }
-        }
-        if let Some(status_code) = value.get("StatusCode").and_then(Value::as_i64) {
-            if status_code != 0 {
-                let message = value
-                    .get("StatusMessage")
-                    .and_then(Value::as_str)
-                    .unwrap_or(&body);
-                return Err(format!(
-                    "{} returned StatusCode {}: {}",
-                    label, status_code, message
-                ));
-            }
-        }
-    }
-
-    Ok(format!("{} test successful (status: {})", label, status))
-}
-
 fn contains_verification_code_placeholder(s: &str) -> bool {
     s.contains("{{验证码}}") || s.contains("{{verification_code}}")
 }
@@ -3980,17 +3176,6 @@ fn escape_json_string(s: &str) -> String {
         .replace('\t', "\\t")
 }
 
-fn compute_legacy_signature(secret: &str, data: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    format!("{}{}", secret, data).hash(&mut hasher);
-    let hash = hasher.finish();
-
-    format!("{:016x}", hash)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4165,132 +3350,6 @@ mod tests {
             ),
             "+10001|+10001|+10001|+10001"
         );
-    }
-
-    #[test]
-    fn builds_serverchan3_url_from_send_key_or_uid() {
-        let from_key = ServerChan3Config {
-            send_key: "sctp12345tsecret".to_string(),
-            ..Default::default()
-        };
-        assert_eq!(
-            serverchan3_url(&from_key).unwrap(),
-            "https://12345.push.ft07.com/send/sctp12345tsecret.send"
-        );
-
-        let from_app_key = ServerChan3Config {
-            send_key: "sctp12345ta-app-key".to_string(),
-            ..Default::default()
-        };
-        assert_eq!(
-            serverchan3_url(&from_app_key).unwrap(),
-            "https://12345.push.ft07.com/send/sctp12345ta-app-key.send"
-        );
-
-        let manual_uid = ServerChan3Config {
-            uid: "user-1".to_string(),
-            send_key: "manual-secret".to_string(),
-            ..Default::default()
-        };
-        assert_eq!(
-            serverchan3_url(&manual_uid).unwrap(),
-            "https://user-1.push.ft07.com/send/manual-secret.send"
-        );
-
-        let unreserved_chars = ServerChan3Config {
-            uid: "user-1".to_string(),
-            send_key: "manual-secret._~".to_string(),
-            ..Default::default()
-        };
-        assert_eq!(
-            serverchan3_url(&unreserved_chars).unwrap(),
-            "https://user-1.push.ft07.com/send/manual-secret._~.send"
-        );
-
-        let reserved_chars = ServerChan3Config {
-            uid: "user-1".to_string(),
-            send_key: "manual/secret?x#y z".to_string(),
-            ..Default::default()
-        };
-        assert_eq!(
-            serverchan3_url(&reserved_chars).unwrap(),
-            "https://user-1.push.ft07.com/send/manual%2Fsecret%3Fx%23y%20z.send"
-        );
-    }
-
-    #[test]
-    fn serverchan3_requires_uid_when_send_key_cannot_be_parsed() {
-        let missing_uid = ServerChan3Config {
-            send_key: "manual-secret".to_string(),
-            ..Default::default()
-        };
-        assert!(serverchan3_url(&missing_uid).is_err());
-    }
-
-    #[test]
-    fn serverchan3_form_includes_optional_routing_fields() {
-        let config = ServerChan3Config {
-            channel: "9".to_string(),
-            openid: "openid-1".to_string(),
-            ..Default::default()
-        };
-        let form = serverchan3_form_payload(&config, "title", "content");
-
-        assert!(form.contains(&("title".to_string(), "title".to_string())));
-        assert!(form.contains(&("desp".to_string(), "content".to_string())));
-        assert!(form.contains(&("channel".to_string(), "9".to_string())));
-        assert!(form.contains(&("group".to_string(), "openid-1".to_string())));
-    }
-
-    #[test]
-    fn serverchan3_requires_zero_response_code() {
-        assert!(serverchan3_response_result(StatusCode::OK, r#"{"code":0}"#.to_string()).is_ok());
-        assert!(serverchan3_response_result(
-            StatusCode::OK,
-            r#"{"code":200,"message":"ok"}"#.to_string()
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn email_receiver_parser_accepts_common_separators() {
-        let receivers = email_receivers_from_config(
-            "first@example.com; second@example.com\nthird@example.com，fourth@example.com",
-        )
-        .unwrap();
-
-        assert_eq!(receivers.len(), 4);
-    }
-
-    #[test]
-    fn email_receiver_parser_rejects_invalid_address() {
-        assert!(email_receivers_from_config("not-an-email").is_err());
-    }
-
-    #[test]
-    fn email_builders_validate_format_and_security() {
-        let mut config = EmailConfig {
-            smtp_host: "smtp.example.com".to_string(),
-            sender_address: "sender@example.com".to_string(),
-            receiver_addresses: "receiver@example.com".to_string(),
-            message_format: "plain".to_string(),
-            ..Default::default()
-        };
-        let sender = mailbox_from_config(&config.sender_address, "", "发件人").unwrap();
-        let receivers = email_receivers_from_config(&config.receiver_addresses).unwrap();
-        assert!(build_email_message(&config, sender, receivers, "subject", "body").is_ok());
-
-        config.message_format = "markdown".to_string();
-        let sender = mailbox_from_config(&config.sender_address, "", "发件人").unwrap();
-        let receivers = email_receivers_from_config(&config.receiver_addresses).unwrap();
-        assert!(build_email_message(&config, sender, receivers, "subject", "body").is_err());
-
-        config.message_format = "plain".to_string();
-        config.smtp_security = "starttls".to_string();
-        assert!(build_email_transport(&config).is_ok());
-
-        config.smtp_security = "invalid".to_string();
-        assert!(build_email_transport(&config).is_err());
     }
 
     #[test]
@@ -4517,15 +3576,18 @@ mod tests {
             "1063"
         );
 
-        let multiline_template = "📱 短信通知\n号码: {{发送方号码}}\n验证码: {{验证码}}\n内容: {{短信内容}}";
-        let rendered_multiline = render_sms_template(multiline_template, &sms_without_code, &context, false);
+        let multiline_template =
+            "📱 短信通知\n号码: {{发送方号码}}\n验证码: {{验证码}}\n内容: {{短信内容}}";
+        let rendered_multiline =
+            render_sms_template(multiline_template, &sms_without_code, &context, false);
         assert_eq!(
             rendered_multiline,
             "📱 短信通知\n号码: 1063\n内容: xxx气象台2026年07月27日00时25分发布暴雨橙色预警信号"
         );
 
         let inline_template = "号码: {{发送方号码}}, 验证码: {{验证码}}, 内容: {{短信内容}}";
-        let rendered_inline = render_sms_template(inline_template, &sms_without_code, &context, false);
+        let rendered_inline =
+            render_sms_template(inline_template, &sms_without_code, &context, false);
         assert_eq!(
             rendered_inline,
             "号码: 1063, 内容: xxx气象台2026年07月27日00时25分发布暴雨橙色预警信号"
@@ -4534,68 +3596,5 @@ mod tests {
         let ddns = DdnsEvent::default();
         let ddns_event = NotificationEvent::Ddns(&ddns, &context);
         assert_eq!(ddns_event.render_title(""), "DDNS通知：18888888888");
-    }
-
-    #[test]
-    fn detects_wecom_access_token_errors() {
-        assert!(is_wecom_access_token_error(
-            r#"{"errcode":40014,"errmsg":"invalidaccess_token"}"#
-        ));
-        assert!(is_wecom_access_token_error(
-            r#"{"errcode":42001,"errmsg":"access_token expired"}"#
-        ));
-        assert!(!is_wecom_access_token_error(
-            r#"{"errcode":0,"errmsg":"ok"}"#
-        ));
-    }
-
-    #[test]
-    fn normalizes_wecom_api_base_url() {
-        let mut config = WecomAppConfig::default();
-        assert_eq!(wecom_api_base_url(&config), "https://qyapi.weixin.qq.com");
-
-        config.api_base_url = " https://relay.example.com/wecom/ ".to_string();
-        assert_eq!(
-            wecom_api_base_url(&config),
-            "https://relay.example.com/wecom"
-        );
-
-        config.api_base_url = " ".to_string();
-        assert_eq!(wecom_api_base_url(&config), "https://qyapi.weixin.qq.com");
-    }
-
-    #[test]
-    fn builds_telegram_send_message_url_from_api_base_url() {
-        let mut config = TelegramConfig::default();
-        config.bot_token = "123456:abcdef".to_string();
-        assert_eq!(
-            telegram_send_message_url(&config),
-            "https://api.telegram.org/bot123456:abcdef/sendMessage"
-        );
-
-        config.api_base_url = " https://relay.example.com/telegram/ ".to_string();
-        assert_eq!(
-            telegram_send_message_url(&config),
-            "https://relay.example.com/telegram/bot123456:abcdef/sendMessage"
-        );
-
-        config.api_base_url = " ".to_string();
-        assert_eq!(telegram_api_base_url(&config), "https://api.telegram.org");
-    }
-
-    #[test]
-    fn query_value_encoding_preserves_unreserved_token_chars() {
-        assert_eq!(encode_query_value("abc-DEF_123.~"), "abc-DEF_123.~");
-        assert_eq!(encode_query_value("a+b/c=d&x y"), "a%2Bb%2Fc%3Dd%26x%20y");
-    }
-
-    #[test]
-    fn formats_wecom_trusted_ip_error() {
-        let error =
-            format_channel_errcode("WeCom token", 60020, "not allow to access from your ip");
-
-        assert!(error.contains("60020"));
-        assert!(error.contains("企业可信 IP"));
-        assert!(error.contains("中继/反代"));
     }
 }

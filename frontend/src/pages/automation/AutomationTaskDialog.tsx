@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, type ReactNode } from 'react'
 import {
   Alert,
   Box,
@@ -15,6 +15,7 @@ import {
   MenuItem,
   TextField,
   Typography,
+  type DialogProps,
 } from '@mui/material'
 import BackupStorageSelector, { type BackupDestination } from '../../components/backup/BackupStorageSelector'
 import type {
@@ -30,7 +31,20 @@ type AutomationTaskDialogProps = {
   editingTask: AutomationTask | null
   onSave: (task: AutomationTask) => Promise<void>
   defaultBackupLocalDir?: string
+  availableActions?: AutomationAction['type'][]
+  additionalFields?: ReactNode
+  maxWidth?: DialogProps['maxWidth']
+  saveDisabled?: boolean
+  createTitle?: string
+  editTitle?: string
 }
+
+const ACTION_OPTIONS: Array<{ value: AutomationAction['type']; label: string }> = [
+  { value: 'restart_baseband', label: '重启基带' },
+  { value: 'reboot_device', label: '重启设备' },
+  { value: 'backup_data', label: '备份数据' },
+  { value: 'send_sms', label: '发送短信' },
+]
 
 const BACKUP_COMPONENT_LABELS: Record<BackupComponentKey, string> = {
   config: '系统配置',
@@ -77,6 +91,12 @@ export default function AutomationTaskDialog({
   editingTask,
   onSave,
   defaultBackupLocalDir = '/opt/simadmin/backups',
+  availableActions = ACTION_OPTIONS.map((option) => option.value),
+  additionalFields,
+  maxWidth = 'sm',
+  saveDisabled = false,
+  createTitle = '添加自动化任务',
+  editTitle = '编辑自动化任务',
 }: AutomationTaskDialogProps) {
   const [formName, setFormName] = useState('')
   const [formEnabled, setFormEnabled] = useState(true)
@@ -340,7 +360,7 @@ export default function AutomationTaskDialog({
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="sm"
+      maxWidth={maxWidth}
       fullWidth
       slotProps={{
         paper: {
@@ -349,7 +369,7 @@ export default function AutomationTaskDialog({
       }}
     >
       <DialogTitle sx={{ fontWeight: 700, pb: 1 }}>
-        {editingTask ? '编辑自动化任务' : '添加自动化任务'}
+        {editingTask ? editTitle : createTitle}
       </DialogTitle>
       <DialogContent>
         <Box display="flex" flexDirection="column" gap={2.5} mt={1}>
@@ -374,12 +394,11 @@ export default function AutomationTaskDialog({
             label="执行动作"
             fullWidth
             value={formActionType}
-            onChange={(e) => setFormActionType(e.target.value as 'restart_baseband' | 'reboot_device' | 'send_sms' | 'backup_data')}
+            onChange={(e) => setFormActionType(e.target.value as AutomationAction['type'])}
           >
-            <MenuItem value="restart_baseband">重启基带</MenuItem>
-            <MenuItem value="reboot_device">重启设备</MenuItem>
-            <MenuItem value="backup_data">备份数据</MenuItem>
-            <MenuItem value="send_sms">发送短信</MenuItem>
+            {ACTION_OPTIONS.filter((option) => availableActions.includes(option.value)).map((option) => (
+              <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+            ))}
           </TextField>
 
           {/* 重启设备特有字段 */}
@@ -481,6 +500,8 @@ export default function AutomationTaskDialog({
             </Box>
           )}
 
+          {additionalFields}
+
           <TextField
             select
             label="触发机制"
@@ -563,7 +584,7 @@ export default function AutomationTaskDialog({
         <Button variant="outlined" onClick={onClose} disabled={saving}>
           取消
         </Button>
-        <Button variant="contained" onClick={() => void handleSave()} disabled={saving}>
+        <Button variant="contained" onClick={() => void handleSave()} disabled={saving || saveDisabled}>
           保存
         </Button>
       </DialogActions>

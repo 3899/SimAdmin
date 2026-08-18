@@ -756,8 +756,6 @@ fn own_number_identity_key(identity: &SimIdentity) -> Option<String> {
     }
 }
 
-
-
 pub fn cache_smsc_for_identity(
     db: &Database,
     identity: &SimIdentity,
@@ -830,8 +828,6 @@ pub fn cached_own_numbers_for_identity(db: &Database, identity: &SimIdentity) ->
         .map(|entry| normalize_phone_numbers(entry.phone_numbers))
         .unwrap_or_default()
 }
-
-
 
 pub fn sim_details_cache_missing(db: &Database, identity: &SimIdentity) -> bool {
     if identity.iccid.is_empty() {
@@ -1835,8 +1831,6 @@ async fn refresh_sim_details_background_inner(conn: &Connection, db: &Database, 
         }
         cache_smsc_for_identity(db, &identity, &sms_center, source);
     }
-
-
 }
 
 async fn modem_command_smsc_fallback(conn: &Connection, modem_path: &str) -> String {
@@ -1893,9 +1887,6 @@ async fn active_protocol_smsc_fallback(conn: &Connection, modem_path: &str) -> S
     .await
     .unwrap_or_default()
 }
-
-
-
 
 pub async fn get_sim_info_data_with_cache(
     conn: &Connection,
@@ -2051,8 +2042,6 @@ pub async fn get_sim_info_data_with_cache(
         .get("CarrierConfigurationRevision")
         .map(extract_string)
         .unwrap_or_default();
-
-
 
     Ok(SimInfoResponse {
         present: true,
@@ -2637,8 +2626,6 @@ LTE Timing Advance: 'unavailable'"#;
         assert_eq!(parse_smsc_from_at_output(output), "+10000");
     }
 
-
-
     #[test]
     fn extracts_smsc_from_protocol_output() {
         let output = "SMSC Address\n  Type: 'international'\n  Number: '+10001'";
@@ -2942,8 +2929,6 @@ LTE Timing Advance: 'unavailable'"#;
             vec!["LTE B8".to_string(), "NR n78".to_string()]
         );
     }
-
-
 
     fn apn_ctx(
         path: &str,

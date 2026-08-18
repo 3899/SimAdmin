@@ -66,7 +66,7 @@ import {
   WarningAmber,
   CheckCircle,
 } from '@mui/icons-material'
-import { api } from '../api/current'
+import { useSimAdminApi } from '../contexts/ApiContext'
 import BackupStorageSelector, { type BackupDestination } from '../components/backup/BackupStorageSelector'
 import ErrorSnackbar from '../components/ErrorSnackbar'
 import type {
@@ -457,12 +457,14 @@ const getComponentPreviewDetail = (key: BackupComponentKey, records: number) => 
 }
 
 export default function BackupRestorePage() {
+  const api = useSimAdminApi()
+  const supportsBinaryTransfer = api.supportsBinaryTransfer
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [tab, setTab] = useState(0)
   const [options, setOptions] = useState<BackupOptionsResponse | null>(null)
   const [config, setConfig] = useState<BackupConfig>(() => createDefaultBackupConfig())
   const [files, setFiles] = useState<BackupLocalFilesResponse>(EMPTY_LOCAL_FILES)
-  const [destination, setDestination] = useState<BackupDestination>('download')
+  const [destination, setDestination] = useState<BackupDestination>(() => supportsBinaryTransfer ? 'download' : 'local')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [running, setRunning] = useState(false)
@@ -578,7 +580,7 @@ export default function BackupRestorePage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
-  }, [])
+  }, [api])
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -601,7 +603,7 @@ export default function BackupRestorePage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [api])
 
   useEffect(() => {
     void loadData()
@@ -1358,6 +1360,7 @@ export default function BackupRestorePage() {
                 destination={destination}
                 localDir={config.storage.local_dir}
                 onDestinationChange={setDestination}
+                hideDownload={!supportsBinaryTransfer}
                 localDirDisabled={true}
                 localDirReadOnly={true}
                 textFieldSx={filterTextFieldSx}
@@ -1848,14 +1851,16 @@ export default function BackupRestorePage() {
               >
                 {isPreRestore ? '回滚' : '恢复'}
               </Button>
-              <IconButton
-                size="small"
-                disabled={running}
-                onClick={() => void downloadLocalFile(file)}
-                title="下载"
-              >
-                <Download fontSize="small" />
-              </IconButton>
+              {supportsBinaryTransfer && (
+                <IconButton
+                  size="small"
+                  disabled={running}
+                  onClick={() => void downloadLocalFile(file)}
+                  title="下载"
+                >
+                  <Download fontSize="small" />
+                </IconButton>
+              )}
               <IconButton
                 size="small"
                 color="error"
@@ -2010,6 +2015,7 @@ export default function BackupRestorePage() {
           }}
         >
           <Tab
+            value={0}
             icon={<Archive />}
             iconPosition="start"
             label="数据备份"
@@ -2020,18 +2026,22 @@ export default function BackupRestorePage() {
               py: 0,
             }}
           />
+          {supportsBinaryTransfer && (
+            <Tab
+              value={1}
+              icon={<UploadFile />}
+              iconPosition="start"
+              label="数据恢复"
+              sx={{
+                minHeight: 48,
+                height: 48,
+                fontSize: 14,
+                py: 0,
+              }}
+            />
+          )}
           <Tab
-            icon={<UploadFile />}
-            iconPosition="start"
-            label="数据恢复"
-            sx={{
-              minHeight: 48,
-              height: 48,
-              fontSize: 14,
-              py: 0,
-            }}
-          />
-          <Tab
+            value={2}
             icon={<Folder />}
             iconPosition="start"
             label="本地库与快照"
@@ -2046,7 +2056,7 @@ export default function BackupRestorePage() {
       </Box>
 
       {tab === 0 && renderExportTab()}
-      {tab === 1 && renderImportTab()}
+      {supportsBinaryTransfer && tab === 1 && renderImportTab()}
       {tab === 2 && renderFilesTab()}
 
       <Dialog

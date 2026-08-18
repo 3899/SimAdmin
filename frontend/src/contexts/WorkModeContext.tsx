@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { api } from '../api/current'
+import { useSimAdminApi } from './ApiContext'
 import type { WorkMode } from '../api/types'
 
 interface WorkModeContextValue {
@@ -22,6 +22,7 @@ export function useWorkMode() {
 }
 
 export function WorkModeProvider({ children }: { children: ReactNode }) {
+  const api = useSimAdminApi()
   const [mode, setMode] = useState<WorkMode>('sim')
   const [workerRunning, setWorkerRunning] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -37,7 +38,7 @@ export function WorkModeProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [api])
 
   useEffect(() => {
     void refreshWorkMode()

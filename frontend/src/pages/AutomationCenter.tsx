@@ -2,27 +2,15 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Box,
   Button,
-  Card,
-  CardContent,
   CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   Grid,
-  IconButton,
-  InputAdornment,
-  MenuItem,
   Paper,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   Tabs,
   Tab,
-  TextField,
   Typography,
   Chip,
   Alert,
@@ -31,12 +19,6 @@ import {
 import {
   Add,
   AutoMode,
-  Search,
-  Clear,
-  FirstPage,
-  LastPage,
-  KeyboardArrowLeft,
-  KeyboardArrowRight,
   DeleteSweep,
   SmartToy,
 } from '@mui/icons-material'
@@ -49,32 +31,13 @@ import type {
 } from '../api/contracts'
 import ErrorSnackbar from '../components/ErrorSnackbar'
 
-// 导入拆分后的子组件
-import DateRangePicker from '../components/DateRangePicker'
 import AutomationTaskCard from './automation/AutomationTaskCard'
 import AutomationTaskDialog from './automation/AutomationTaskDialog'
+import AutomationLogsTab from './automation/AutomationLogsTab'
 import AutoCleanDialog from './automation/AutoCleanDialog'
 import AdvancedClearDialog from './automation/AdvancedClearDialog'
 
 const LOG_PAGE_SIZE = 15
-
-const filterTextFieldSx = {
-  '& .MuiInputBase-input': {
-    fontSize: '14px',
-  },
-  '& .MuiInputBase-input::placeholder': {
-    fontSize: '14px',
-  },
-  '& .MuiInputLabel-root': {
-    fontSize: '14px',
-  },
-  '& .MuiSelect-select': {
-    fontSize: '14px',
-  },
-  '& .MuiFormControlLabel-label': {
-    fontSize: '14px',
-  },
-} as const
 
 export default function AutomationCenter() {
   const [tab, setTab] = useState(0)
@@ -118,16 +81,11 @@ export default function AutomationCenter() {
   const [logTotal, setLogTotal] = useState(0)
   const [logsLoading, setLogsLoading] = useState(false)
   const [logPage, setLogPage] = useState(0)
-  const [pageInput, setPageInput] = useState(() => String(logPage + 1))
   const [filterType, setFilterType] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const [logStartDate, setLogStartDate] = useState('')
   const [logEndDate, setLogEndDate] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
-
-  useEffect(() => {
-    setPageInput(String(logPage + 1))
-  }, [logPage])
 
   // Latest logs cache to display task status on cards
   const [latestLogs, setLatestLogs] = useState<Record<string, AutomationLogEntry>>({})
@@ -205,30 +163,6 @@ export default function AutomationCenter() {
       setLogsLoading(false)
     }
   }, [filterType, filterStatus, logStartDate, logEndDate, searchQuery, logPage])
-
-  const pageCount = Math.max(1, Math.ceil(logTotal / LOG_PAGE_SIZE))
-  const startRecord = logTotal === 0 ? 0 : logPage * LOG_PAGE_SIZE + 1
-  const endRecord = Math.min(logTotal, (logPage + 1) * LOG_PAGE_SIZE)
-  const canGoPrev = logPage > 0
-  const canGoNext = logPage < pageCount - 1
-
-  const commitPageInput = () => {
-    const parsed = Number(pageInput)
-    if (!Number.isFinite(parsed) || parsed < 1) {
-      setPageInput(String(logPage + 1))
-      return
-    }
-    const nextPage = Math.min(pageCount, Math.max(1, Math.trunc(parsed))) - 1
-    setPageInput(String(nextPage + 1))
-    if (nextPage !== logPage) setLogPage(nextPage)
-  }
-
-  const handlePageInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
-      event.currentTarget.blur()
-      commitPageInput()
-    }
-  }
 
   useEffect(() => {
     if (tab === 1) {
@@ -483,214 +417,37 @@ export default function AutomationCenter() {
 
       {/* 面板 2：运行日志 */}
       {tab === 1 && (
-        <Card sx={{ height: cardHeight, minHeight: 520, borderRadius: 1.5 }}>
-          <CardContent sx={{ height: '100%', display: 'flex', flexDirection: 'column', p: 2, pb: 0, '&:last-child': { pb: 0 } }}>
-            {/* 日志筛选与搜索工具栏 */}
-            <Box display="flex" gap={1.5} flexWrap="wrap" mb={2}>
-              <TextField
-                select
-                size="small"
-                label="任务类型"
-                value={filterType}
-                onChange={(e) => {
-                  setFilterType(e.target.value)
-                  setLogPage(0)
-                }}
-                sx={[{ minWidth: 160 }, filterTextFieldSx]}
-              >
-                <MenuItem value="">所有任务类型</MenuItem>
-                <MenuItem value="restart_baseband">基带维护</MenuItem>
-                <MenuItem value="reboot_device">系统操作</MenuItem>
-                <MenuItem value="backup_data">备份数据</MenuItem>
-                <MenuItem value="send_sms">短信发送</MenuItem>
-              </TextField>
-
-              <TextField
-                select
-                size="small"
-                label="执行状态"
-                value={filterStatus}
-                onChange={(e) => {
-                  setFilterStatus(e.target.value)
-                  setLogPage(0)
-                }}
-                sx={[{ minWidth: 140 }, filterTextFieldSx]}
-              >
-                <MenuItem value="">所有状态</MenuItem>
-                <MenuItem value="success">成功</MenuItem>
-                <MenuItem value="failed">失败</MenuItem>
-              </TextField>
-
-              <DateRangePicker
-                startDate={logStartDate}
-                endDate={logEndDate}
-                onChange={(start, end) => {
-                  setLogStartDate(start)
-                  setLogEndDate(end)
-                  setLogPage(0)
-                }}
-                minWidth={280}
-              />
-
-              <TextField
-                size="small"
-                placeholder="搜索关键字..."
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value)
-                  setLogPage(0)
-                }}
-                sx={[{ flexGrow: 1, minWidth: { xs: '100%', sm: 260 } }, filterTextFieldSx]}
-                slotProps={{
-                  input: {
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <Search fontSize="small" />
-                      </InputAdornment>
-                    ),
-                    endAdornment: searchQuery && (
-                      <InputAdornment position="end">
-                        <IconButton size="small" onClick={() => { setSearchQuery(''); setLogPage(0); }}>
-                          <Clear fontSize="small" />
-                        </IconButton>
-                      </InputAdornment>
-                    ),
-                  },
-                }}
-              />
-            </Box>
-
-            {/* 日志表格 */}
-            <TableContainer component={Paper} variant="outlined" sx={{ flex: 1, minHeight: 0 }}>
-              <Table size="small" stickyHeader>
-                <TableHead>
-                  <TableRow>
-                    <TableCell sx={{ width: 150, fontWeight: 400 }}>时间</TableCell>
-                    <TableCell sx={{ width: 150, fontWeight: 400 }}>任务名称</TableCell>
-                    <TableCell sx={{ width: 120, fontWeight: 400 }}>任务类型</TableCell>
-                    <TableCell sx={{ width: 100, fontWeight: 400 }}>执行结果</TableCell>
-                    <TableCell sx={{ fontWeight: 400 }}>执行详情</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {logsLoading ? (
-                    <TableRow>
-                      <TableCell colSpan={5} align="center" sx={{ py: 5 }}>
-                        <CircularProgress size={24} />
-                      </TableCell>
-                    </TableRow>
-                  ) : logs.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={5} align="center" sx={{ py: 5, color: 'text.secondary' }}>
-                        暂无运行日志记录
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    logs.map((log) => (
-                      <TableRow key={log.id} sx={{ height: 40, '& .MuiTableCell-root': { py: 0.5 } }}>
-                        <TableCell sx={{ width: 150, whiteSpace: 'nowrap', fontWeight: 400 }}>{log.created_at}</TableCell>
-                        <TableCell sx={{ width: 150, fontWeight: 400 }}>{log.task_name}</TableCell>
-                        <TableCell sx={{ width: 120, fontWeight: 400 }}>
-                          {log.task_type === 'restart_baseband' && '基带维护'}
-                          {log.task_type === 'reboot_device' && '系统操作'}
-                          {log.task_type === 'backup_data' && '备份数据'}
-                          {log.task_type === 'send_sms' && '短信发送'}
-                        </TableCell>
-                        <TableCell
-                          sx={{
-                            width: 100,
-                            fontWeight: 400,
-                            color: log.status === 'success' ? 'primary.main' : 'error.main',
-                          }}
-                        >
-                          {log.status === 'success' ? '成功' : '失败'}
-                        </TableCell>
-                        <TableCell sx={{ fontWeight: 400, wordBreak: 'break-all' }} title={log.detail}>
-                          {log.detail}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
-
-            {/* 日志底部统计与操作栏 */}
-            <Box sx={{ height: 56, minHeight: 56, display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0, gap: 1.5, overflow: 'hidden' }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, flex: '1 1 auto', overflow: 'hidden' }}>
-                <Typography variant="body2" color="text.secondary" noWrap sx={{ flexShrink: 0 }}>
-                  {logTotal === 0 ? '共 0 条记录' : `${startRecord}-${endRecord} / 共 ${logTotal} 条`}
-                </Typography>
-                <Box sx={{ width: '1px', height: 18, bgcolor: 'divider', flex: '0 0 1px' }} />
-
-                <Button
-                  size="small"
-                  variant="text"
-                  startIcon={<SmartToy />}
-                  onClick={openAutoDialog}
-                  sx={{ flexShrink: 0, minWidth: 110, whiteSpace: 'nowrap' }}
-                >
-                  {notificationConfig && (notificationConfig.log_cleanup.retention_days_enabled || notificationConfig.log_cleanup.max_entries_enabled)
-                    ? '自动清理:开启'
-                    : '自动清理:关闭'}
-                </Button>
-
-                <Button
-                  size="small"
-                  color="error"
-                  variant="text"
-                  startIcon={<DeleteSweep />}
-                  onClick={() => setAdvancedClearOpen(true)}
-                  sx={{ flexShrink: 0, minWidth: 88, whiteSpace: 'nowrap' }}
-                >
-                  高级清理
-                </Button>
-                {logsLoading && <CircularProgress size={16} sx={{ flexShrink: 0 }} />}
-              </Box>
-
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
-                <IconButton size="small" disabled={!canGoPrev} onClick={() => setLogPage(0)} aria-label="第一页">
-                  <FirstPage fontSize="small" />
-                </IconButton>
-                <IconButton size="small" disabled={!canGoPrev} onClick={() => setLogPage(logPage - 1)} aria-label="上一页">
-                  <KeyboardArrowLeft fontSize="small" />
-                </IconButton>
-                <TextField
-                  size="small"
-                  value={pageInput}
-                  onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
-                    const next = event.target.value
-                    if (/^\d{0,4}$/.test(next)) setPageInput(next)
-                  }}
-                  onBlur={commitPageInput}
-                  onKeyDown={handlePageInputKeyDown}
-                  slotProps={{
-                    htmlInput: {
-                      inputMode: 'numeric',
-                      'aria-label': '页码',
-                    },
-                  }}
-                  sx={{
-                    width: 48,
-                    '& .MuiInputBase-input': {
-                      py: 0.5,
-                      px: 0.75,
-                      textAlign: 'center',
-                      fontSize: '0.875rem',
-                    },
-                  }}
-                />
-                <Typography variant="body2" color="text.secondary">/ {pageCount}</Typography>
-                <IconButton size="small" disabled={!canGoNext} onClick={() => setLogPage(logPage + 1)} aria-label="下一页">
-                  <KeyboardArrowRight fontSize="small" />
-                </IconButton>
-                <IconButton size="small" disabled={!canGoNext} onClick={() => setLogPage(pageCount - 1)} aria-label="最后一页">
-                  <LastPage fontSize="small" />
-                </IconButton>
-              </Box>
-            </Box>
-          </CardContent>
-        </Card>
+        <AutomationLogsTab
+          logs={logs}
+          total={logTotal}
+          loading={logsLoading}
+          type={filterType}
+          status={filterStatus}
+          startDate={logStartDate}
+          endDate={logEndDate}
+          query={searchQuery}
+          page={logPage}
+          pageSize={LOG_PAGE_SIZE}
+          height={cardHeight}
+          onTypeChange={(value) => { setFilterType(value); setLogPage(0) }}
+          onStatusChange={(value) => { setFilterStatus(value); setLogPage(0) }}
+          onDateRangeChange={(start, end) => { setLogStartDate(start); setLogEndDate(end); setLogPage(0) }}
+          onQueryChange={(value) => { setSearchQuery(value); setLogPage(0) }}
+          onPageChange={setLogPage}
+          footerActions={(
+            <>
+              <Box sx={{ width: '1px', height: 18, bgcolor: 'divider', flex: '0 0 1px' }} />
+              <Button size="small" variant="text" startIcon={<SmartToy />} onClick={openAutoDialog} sx={{ flexShrink: 0, minWidth: 110, whiteSpace: 'nowrap' }}>
+                {notificationConfig && (notificationConfig.log_cleanup.retention_days_enabled || notificationConfig.log_cleanup.max_entries_enabled)
+                  ? '自动清理:开启'
+                  : '自动清理:关闭'}
+              </Button>
+              <Button size="small" color="error" variant="text" startIcon={<DeleteSweep />} onClick={() => setAdvancedClearOpen(true)} sx={{ flexShrink: 0, minWidth: 88, whiteSpace: 'nowrap' }}>
+                高级清理
+              </Button>
+            </>
+          )}
+        />
       )}
 
       {/* 弹窗 1：添加/修改自动化任务 */}

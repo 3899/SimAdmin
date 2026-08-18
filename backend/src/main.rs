@@ -34,6 +34,7 @@ mod device_network;
 mod device_status;
 mod esim;
 mod handlers;
+mod hub_agent;
 mod iptables;
 mod models;
 mod modem_manager;
@@ -498,11 +499,26 @@ async fn main() -> Result<()> {
         cell_monitoring_active,
     );
 
+    app_state
+        .hub_agent_manager
+        .initialize(app_state.clone(), args.port)
+        .await;
+
     // 启动自动化中心后台调度引擎
     automation::spawn_automation_scheduler(app_state.clone());
 
     // Build protected routes - 使用统一的 AppState
-    let protected_routes = Router::new()
+    let device_routes = Router::new()
+        .route(
+            "/api/hub",
+            get(hub_agent::get_hub_settings)
+                .post(hub_agent::save_hub_settings)
+                .options(options_handler),
+        )
+        .route(
+            "/api/hub/unbind",
+            post(hub_agent::unbind_hub).options(options_handler),
+        )
         // ========== 设备信息接口 ==========
         .route("/api/device", get(get_device_info).options(options_handler))
         // ========== SIM 卡接口 ==========
@@ -957,7 +973,9 @@ async fn main() -> Result<()> {
         .route(
             "/api/ota/cancel",
             post(cancel_ota_handler).options(options_handler),
-        )
+        );
+    hub_agent::configure_device_api_router(device_routes.clone().with_state(app_state.clone()));
+    let protected_routes = device_routes
         .route(
             "/api/auth/password",
             post(auth::change_password).options(options_handler),
@@ -975,6 +993,10 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/api/health", get(health_check).options(options_handler))
+        .route(
+            "/api/hub/provision",
+            post(hub_agent::provision_device).options(options_handler),
+        )
         .route(
             "/api/auth/status",
             get(auth::status).options(options_handler),

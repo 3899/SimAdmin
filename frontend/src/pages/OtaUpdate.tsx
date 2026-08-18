@@ -50,7 +50,7 @@ import {
   Download,
   NewReleases,
 } from '@mui/icons-material'
-import { api } from '../api/current'
+import { useSimAdminApi } from '../contexts/ApiContext'
 import type { OtaLatestReleaseResponse, OtaStatusResponse, OtaUploadResponse } from '../api/types'
 
 type ProxyPreset = 'https://gh-proxy.com/' | 'https://ghproxy.net/' | 'https://githubproxy.cc/' | 'custom'
@@ -457,6 +457,8 @@ function MarkdownPreview({ source }: { source?: string }) {
 }
 
 export default function OtaUpdate() {
+  const api = useSimAdminApi()
+  const supportsOtaUpload = api.supportsOtaUpload
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [applying, setApplying] = useState(false)
@@ -487,7 +489,7 @@ export default function OtaUpdate() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [api])
 
   useEffect(() => {
     void loadStatus()
@@ -683,7 +685,7 @@ export default function OtaUpdate() {
             OTA 更新
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            上传并安装系统更新包 / 在线获取最新版本
+            {supportsOtaUpload ? '上传并安装系统更新包 / 在线获取最新版本' : '在线获取最新版本'}
           </Typography>
         </Box>
         <Button
@@ -730,14 +732,14 @@ export default function OtaUpdate() {
                       {(status?.current_edition || status?.installed_meta?.edition || '')
                         .toLowerCase()
                         .includes('wfc') && (
-                        <Chip
-                          label="Wi-Fi Calling"
-                          color="secondary"
-                          size="small"
-                          variant="filled"
-                          sx={{ height: 20, fontSize: '0.75rem' }}
-                        />
-                      )}
+                          <Chip
+                            label="Wi-Fi Calling"
+                            color="secondary"
+                            size="small"
+                            variant="filled"
+                            sx={{ height: 20, fontSize: '0.75rem' }}
+                          />
+                        )}
                     </Box>
                   }
                 />
@@ -957,147 +959,147 @@ export default function OtaUpdate() {
                 连接到 GitHub 检查是否有可用的 SimAdmin 更新版本。
               </Typography>
 
-            <Stack spacing={2} sx={{ mb: 2 }}>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={proxyEnabled}
-                    onChange={event => setProxyEnabled(event.target.checked)}
-                  />
-                }
-                label="启用 GitHub 下载加速"
-              />
-              {proxyEnabled && (
-                <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }}>
-                  <FormControl fullWidth size="small">
-                    <InputLabel id="proxy-preset-label">加速节点</InputLabel>
-                    <Select
-                      labelId="proxy-preset-label"
-                      label="加速节点"
-                      value={proxyPreset}
-                      onChange={event => setProxyPreset(event.target.value as ProxyPreset)}
-                    >
-                      <MenuItem value="https://gh-proxy.com/">gh-proxy.com (默认)</MenuItem>
-                      <MenuItem value="https://ghproxy.net/">ghproxy.net</MenuItem>
-                      <MenuItem value="https://githubproxy.cc/">githubproxy.cc</MenuItem>
-                      <MenuItem value="custom">自定义</MenuItem>
-                    </Select>
-                  </FormControl>
-                  {proxyPreset === 'custom' && (
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="自定义加速节点"
-                      value={customProxy}
-                      onChange={event => setCustomProxy(event.target.value)}
-                      placeholder="https://my-proxy.example.com/"
+              <Stack spacing={2} sx={{ mb: 2 }}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={proxyEnabled}
+                      onChange={event => setProxyEnabled(event.target.checked)}
                     />
-                  )}
-                </Stack>
-              )}
-            </Stack>
-
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'center' }}>
-              <Button
-                variant="contained"
-                startIcon={onlineState === 'checking' ? <CircularProgress size={20} color="inherit" /> : <Search />}
-                onClick={() => void handleCheckOnlineUpdate()}
-                disabled={onlineState === 'checking' || onlineState === 'downloading'}
-              >
-                {onlineState === 'checking' ? '检查中...' : '检查更新'}
-              </Button>
-              {proxyEnabled && proxyPrefix && (
-                <Typography variant="caption" color="text.secondary">
-                  下载加速：{proxyPreset === 'custom' ? proxyPrefix : new URL(proxyPrefix).hostname}
-                </Typography>
-              )}
-            </Stack>
-
-            {onlineState === 'available' && latestRelease && (
-              <Alert severity="info" icon={<NewReleases />} sx={{ mt: 2 }}>
-                <AlertTitle>发现可用更新</AlertTitle>
-                <Stack spacing={2}>
-                  <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                    <Chip label={status?.current_version || 'N/A'} size="small" variant="outlined" />
-                    <Typography variant="body2">→</Typography>
-                    <Chip label={latestRelease.tag_name} size="small" color="primary" />
-                    <Typography variant="body2" color="text.secondary">
-                      发布时间：{formatDateTime(latestRelease.published_at)}
-                    </Typography>
+                  }
+                  label="启用 GitHub 下载加速"
+                />
+                {proxyEnabled && (
+                  <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel id="proxy-preset-label">加速节点</InputLabel>
+                      <Select
+                        labelId="proxy-preset-label"
+                        label="加速节点"
+                        value={proxyPreset}
+                        onChange={event => setProxyPreset(event.target.value as ProxyPreset)}
+                      >
+                        <MenuItem value="https://gh-proxy.com/">gh-proxy.com (默认)</MenuItem>
+                        <MenuItem value="https://ghproxy.net/">ghproxy.net</MenuItem>
+                        <MenuItem value="https://githubproxy.cc/">githubproxy.cc</MenuItem>
+                        <MenuItem value="custom">自定义</MenuItem>
+                      </Select>
+                    </FormControl>
+                    {proxyPreset === 'custom' && (
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="自定义加速节点"
+                        value={customProxy}
+                        onChange={event => setCustomProxy(event.target.value)}
+                        placeholder="https://my-proxy.example.com/"
+                      />
+                    )}
                   </Stack>
-                  <TableContainer component={Paper} variant="outlined">
-                    <Table size="small">
-                      <TableBody>
-                        <TableRow>
-                          <TableCell component="th" sx={{ width: 120 }}>更新包</TableCell>
-                          <TableCell>{asset?.name || '未找到 Release Asset'}</TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell component="th">架构</TableCell>
-                          <TableCell>{inferArch(asset?.name)}</TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell component="th">大小</TableCell>
-                          <TableCell>{formatBytes(asset?.size)}</TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell component="th">Commit</TableCell>
-                          <TableCell sx={{ fontFamily: 'monospace' }}>
-                            {(latestRelease.target_commitish || '').slice(0, 12) || 'N/A'}
-                          </TableCell>
-                        </TableRow>
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                  <Box>
-                    <Typography variant="subtitle2" mb={1}>更新日志 (Release Notes)</Typography>
-                    <Paper
-                      variant="outlined"
-                      sx={{ p: 2, maxHeight: 220, overflow: 'auto', bgcolor: 'background.default' }}
-                    >
-                      <MarkdownPreview source={latestRelease.body} />
-                    </Paper>
-                  </Box>
-                  {downloadUrl && (
-                    <Typography variant="caption" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
-                      下载地址：{downloadUrl}
-                    </Typography>
-                  )}
-                  <Box>
-                    <Button
-                      variant="contained"
-                      startIcon={<Download />}
-                      onClick={() => void handlePrepareOnlineUpdate()}
-                      disabled={!asset}
-                    >
-                      下载并准备更新
-                    </Button>
-                  </Box>
-                </Stack>
-              </Alert>
-            )}
+                )}
+              </Stack>
 
-            {onlineState === 'downloading' && (
-              <Box sx={{ mt: 2 }}>
-                <Box display="flex" justifyContent="space-between" mb={1}>
-                  <Typography variant="body2" color="text.secondary">
-                    {proxyPrefix ? `正在通过 ${proxyPreset === 'custom' ? proxyPrefix : new URL(proxyPrefix).hostname} 下载更新包...` : '正在直连下载更新包...'}
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'center' }}>
+                <Button
+                  variant="contained"
+                  startIcon={onlineState === 'checking' ? <CircularProgress size={20} color="inherit" /> : <Search />}
+                  onClick={() => void handleCheckOnlineUpdate()}
+                  disabled={onlineState === 'checking' || onlineState === 'downloading'}
+                >
+                  {onlineState === 'checking' ? '检查中...' : '检查更新'}
+                </Button>
+                {proxyEnabled && proxyPrefix && (
+                  <Typography variant="caption" color="text.secondary">
+                    下载加速：{proxyPreset === 'custom' ? proxyPrefix : new URL(proxyPrefix).hostname}
                   </Typography>
-                  <Typography variant="body2" color="text.secondary">{downloadProgress}%</Typography>
-                </Box>
-                <LinearProgress variant="determinate" value={downloadProgress} />
-              </Box>
-            )}
+                )}
+              </Stack>
 
-            {onlineState === 'latest' && (
-              <Alert severity="success" sx={{ mt: 2 }}>
-                当前版本 {status?.current_version || 'N/A'} 已经是最新发布的稳定版。
-              </Alert>
-            )}
+              {onlineState === 'available' && latestRelease && (
+                <Alert severity="info" icon={<NewReleases />} sx={{ mt: 2 }}>
+                  <AlertTitle>发现可用更新</AlertTitle>
+                  <Stack spacing={2}>
+                    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                      <Chip label={status?.current_version || 'N/A'} size="small" variant="outlined" />
+                      <Typography variant="body2">→</Typography>
+                      <Chip label={latestRelease.tag_name} size="small" color="primary" />
+                      <Typography variant="body2" color="text.secondary">
+                        发布时间：{formatDateTime(latestRelease.published_at)}
+                      </Typography>
+                    </Stack>
+                    <TableContainer component={Paper} variant="outlined">
+                      <Table size="small">
+                        <TableBody>
+                          <TableRow>
+                            <TableCell component="th" sx={{ width: 120 }}>更新包</TableCell>
+                            <TableCell>{asset?.name || '未找到 Release Asset'}</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell component="th">架构</TableCell>
+                            <TableCell>{inferArch(asset?.name)}</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell component="th">大小</TableCell>
+                            <TableCell>{formatBytes(asset?.size)}</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell component="th">Commit</TableCell>
+                            <TableCell sx={{ fontFamily: 'monospace' }}>
+                              {(latestRelease.target_commitish || '').slice(0, 12) || 'N/A'}
+                            </TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                    <Box>
+                      <Typography variant="subtitle2" mb={1}>更新日志 (Release Notes)</Typography>
+                      <Paper
+                        variant="outlined"
+                        sx={{ p: 2, maxHeight: 220, overflow: 'auto', bgcolor: 'background.default' }}
+                      >
+                        <MarkdownPreview source={latestRelease.body} />
+                      </Paper>
+                    </Box>
+                    {downloadUrl && (
+                      <Typography variant="caption" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
+                        下载地址：{downloadUrl}
+                      </Typography>
+                    )}
+                    <Box>
+                      <Button
+                        variant="contained"
+                        startIcon={<Download />}
+                        onClick={() => void handlePrepareOnlineUpdate()}
+                        disabled={!asset}
+                      >
+                        下载并准备更新
+                      </Button>
+                    </Box>
+                  </Stack>
+                </Alert>
+              )}
+
+              {onlineState === 'downloading' && (
+                <Box sx={{ mt: 2 }}>
+                  <Box display="flex" justifyContent="space-between" mb={1}>
+                    <Typography variant="body2" color="text.secondary">
+                      {proxyPrefix ? `正在通过 ${proxyPreset === 'custom' ? proxyPrefix : new URL(proxyPrefix).hostname} 下载更新包...` : '正在直连下载更新包...'}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">{downloadProgress}%</Typography>
+                  </Box>
+                  <LinearProgress variant="determinate" value={downloadProgress} />
+                </Box>
+              )}
+
+              {onlineState === 'latest' && (
+                <Alert severity="success" sx={{ mt: 2 }}>
+                  当前版本 {status?.current_version || 'N/A'} 已经是最新发布的稳定版。
+                </Alert>
+              )}
             </CardContent>
           </Card>
 
-          <Card sx={{ flex: 1, minWidth: 0, display: 'flex' }}>
+          {supportsOtaUpload && <Card sx={{ flex: 1, minWidth: 0, display: 'flex' }}>
             <CardContent sx={{ flex: 1 }}>
               <Box display="flex" alignItems="center" gap={1} mb={2}>
                 <CloudUpload color="primary" />
@@ -1105,38 +1107,38 @@ export default function OtaUpdate() {
               </Box>
 
               <Typography variant="body2" color="text.secondary" mb={2}>
-                前往 GitHub Releases 或 QQ 群下载安装包，手动上传即可完成升级或降级。
+                前往 GitHub Releases 下载安装包，手动上传即可完成升级或降级。
               </Typography>
 
-            <Alert severity="info" sx={{ mb: 2 }}>
-              <AlertTitle>OTA 更新包格式</AlertTitle>
-              请上传 <code>.tar.gz</code> 格式的 OTA 更新包。错误的包会导致系统无法启动。
-            </Alert>
+              <Alert severity="info" sx={{ mb: 2 }}>
+                <AlertTitle>OTA 更新包格式</AlertTitle>
+                请上传 <code>.tar.gz</code> 格式的 OTA 更新包。错误的包会导致系统无法启动。
+              </Alert>
 
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".gz,.tgz,.zip,application/gzip,application/x-gzip,application/x-tar,application/zip"
-              style={{ display: 'none' }}
-              onChange={(event) => void handleFileSelect(event)}
-            />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".gz,.tgz,.zip,application/gzip,application/x-gzip,application/x-tar,application/zip"
+                style={{ display: 'none' }}
+                onChange={(event) => void handleFileSelect(event)}
+              />
 
-            <Button
-              variant="contained"
-              startIcon={uploading ? <CircularProgress size={20} color="inherit" /> : <CloudUpload />}
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-            >
-              {uploading ? '上传中...' : '选择更新包'}
-            </Button>
+              <Button
+                variant="contained"
+                startIcon={uploading ? <CircularProgress size={20} color="inherit" /> : <CloudUpload />}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+              >
+                {uploading ? '上传中...' : '选择更新包'}
+              </Button>
 
-            {uploading && (
-              <Box sx={{ mt: 2 }}>
-                <LinearProgress />
-              </Box>
-            )}
+              {uploading && (
+                <Box sx={{ mt: 2 }}>
+                  <LinearProgress />
+                </Box>
+              )}
             </CardContent>
-          </Card>
+          </Card>}
         </Stack>
 
       </Stack>

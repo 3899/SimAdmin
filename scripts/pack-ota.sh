@@ -66,7 +66,7 @@ BUILD_TIME=$(TZ=Asia/Shanghai date +"%Y-%m-%dT%H:%M:%S+08:00")
 ARCH="$TARGET"
 
 # 检查构建产物
-BINARY_PATH="backend/target/$TARGET/release/simadmin"
+BINARY_PATH="target/$TARGET/release/simadmin"
 FRONTEND_DIR="frontend/dist"
 
 if [ ! -f "$BINARY_PATH" ]; then

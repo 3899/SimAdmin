@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+  "backend",
+  "crates/simadmin-agent",
+  "crates/simadmin-device-core",
+  "crates/simadmin-notify",
+  "crates/simadmin-protocol",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"

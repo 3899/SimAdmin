@@ -575,11 +575,11 @@ export default function NotificationChannelsTab({
             <Box sx={{ width: 288, borderRight: 1, borderColor: 'divider', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
               <Box p={2}>
                 <Box display="flex" gap={1} flexWrap="wrap">
-                  <Paper sx={{ p: 1, flex: 1, minWidth: 60, textAlign: 'center' }}>
+                  <Paper variant="outlined" sx={{ p: 1, flex: 1, minWidth: 60, textAlign: 'center' }}>
                     <Typography variant="h6" color="primary" fontWeight={600}>{enabledChannelCount}</Typography>
                     <Typography variant="caption" color="text.secondary">启用</Typography>
                   </Paper>
-                  <Paper sx={{ p: 1, flex: 1, minWidth: 60, textAlign: 'center' }}>
+                  <Paper variant="outlined" sx={{ p: 1, flex: 1, minWidth: 60, textAlign: 'center' }}>
                     <Typography variant="h6" color="text.secondary" fontWeight={600}>{disabledChannelCount}</Typography>
                     <Typography variant="caption" color="text.secondary">停用</Typography>
                   </Paper>
@@ -628,11 +628,11 @@ export default function NotificationChannelsTab({
             {isCompact && (
               <Box sx={{ p: 2, pb: 0 }}>
                 <Box display="flex" gap={1} mb={1.5}>
-                  <Paper sx={{ p: 1, flex: 1, minWidth: 60, textAlign: 'center' }}>
+                  <Paper variant="outlined" sx={{ p: 1, flex: 1, minWidth: 60, textAlign: 'center' }}>
                     <Typography variant="h6" color="primary" fontWeight={600}>{enabledChannelCount}</Typography>
                     <Typography variant="caption" color="text.secondary">启用</Typography>
                   </Paper>
-                  <Paper sx={{ p: 1, flex: 1, minWidth: 60, textAlign: 'center' }}>
+                  <Paper variant="outlined" sx={{ p: 1, flex: 1, minWidth: 60, textAlign: 'center' }}>
                     <Typography variant="h6" color="text.secondary" fontWeight={600}>{disabledChannelCount}</Typography>
                     <Typography variant="caption" color="text.secondary">停用</Typography>
                   </Paper>
@@ -682,7 +682,7 @@ export default function NotificationChannelsTab({
                   </Typography>
                   <Box sx={{ width: '1px', height: 20, bgcolor: 'divider' }} />
                   <Button variant="outlined" startIcon={testing ? <CircularProgress size={18} /> : <PlayArrow />} disabled={testing} onClick={onTest} sx={{ whiteSpace: 'nowrap' }}>
-                    发送测试
+                    {testing ? '发送中...' : '发送测试'}
                   </Button>
                   <Button variant="contained" startIcon={saving ? <CircularProgress size={18} /> : <Save />} disabled={saving} onClick={onSave} sx={{ whiteSpace: 'nowrap' }}>
                     保存配置

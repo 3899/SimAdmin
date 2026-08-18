@@ -39,7 +39,7 @@ import {
   Tune,
 } from '@mui/icons-material'
 import { useSearchParams } from 'react-router-dom'
-import { api } from '../api/current'
+import { useSimAdminApi } from '../contexts/ApiContext'
 import type { SimInfo, WorkMode } from '../api/types'
 import ErrorSnackbar from '../components/ErrorSnackbar'
 import EsimManagerPage from './EsimManager'
@@ -144,6 +144,7 @@ function InfoField({ label, value, sensitive = false, showSensitive, extra }: {
       </Typography>
       <Box display="flex" alignItems="center" gap={0.5} mt={0.25} minHeight="20px">
         <Typography
+          data-sensitive={sensitive ? 'true' : undefined}
           variant="body2"
           component="div"
           sx={{
@@ -163,6 +164,7 @@ function InfoField({ label, value, sensitive = false, showSensitive, extra }: {
 
 
 function SimBasicInfo() {
+  const api = useSimAdminApi()
   const { mode, refreshWorkMode } = useWorkMode()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -722,7 +724,11 @@ function SimBasicInfo() {
   )
 }
 
-export default function SimCardPage() {
+export interface SimCardPageProps {
+  embeddedBasicOnly?: boolean
+}
+
+export default function SimCardPage({ embeddedBasicOnly = false }: SimCardPageProps) {
   const { mode, loading } = useWorkMode()
   const [searchParams, setSearchParams] = useSearchParams()
   let activeTab = searchParams.get('tab') || 'basic'
@@ -748,6 +754,8 @@ export default function SimCardPage() {
       </Box>
     )
   }
+
+  if (embeddedBasicOnly) return <SimBasicInfo />
 
   return (
     <Box>

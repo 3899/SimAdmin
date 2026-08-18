@@ -14,6 +14,7 @@ use crate::config::ConfigManager;
 use crate::db::Database;
 use crate::device_network::DdnsManager;
 use crate::esim::EsimSupervisor;
+use crate::hub_agent::HubAgentManager;
 use crate::notification::NotificationSender;
 use crate::sms_listener::SmsResyncHandle;
 use crate::system_event::SystemEventEmitter;
@@ -51,6 +52,7 @@ pub struct AppState {
     pub airplane_mode_requested: Arc<AtomicBool>,
     /// 小区/信号轮询是否已按需唤醒。
     pub cell_monitoring_active: Arc<AtomicBool>,
+    pub hub_agent_manager: Arc<HubAgentManager>,
 }
 
 impl AppState {
@@ -83,6 +85,7 @@ impl AppState {
             data_user_disabled,
             airplane_mode_requested,
             cell_monitoring_active,
+            hub_agent_manager: Arc::new(HubAgentManager::new()),
         }
     }
 }

@@ -458,7 +458,7 @@ const fn def(
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, serde::Deserialize, Serialize)]
 pub struct SystemEvent {
     pub category: String,
     pub category_label: String,

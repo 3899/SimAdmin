@@ -543,7 +543,7 @@ pub struct DdnsSyncResponse {
     pub records: Vec<DdnsRecordSyncResult>,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct DdnsEvent {
     pub provider: String,
     pub record_type: String,
@@ -1017,7 +1017,7 @@ pub struct OtaLatestReleaseResponse {
     pub assets: Vec<OtaReleaseAsset>,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct VersionUpdateEvent {
     pub asset_name: String,
     pub version: String,

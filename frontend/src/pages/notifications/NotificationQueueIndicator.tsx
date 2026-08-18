@@ -28,6 +28,7 @@ export type NotificationQueueItem = {
   summary: string
   reason: string
   channel_name: string
+  device_name?: string
   next_attempt_at: string
   attempt_count: number
   max_attempts: number
@@ -192,7 +193,7 @@ function NotificationQueueTimelineItem({
 
           <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
             <Typography variant="caption" color="text.secondary" sx={{ minWidth: 0, wordBreak: 'break-word' }}>
-              通道：{item.channel_name || '-'}
+              {item.device_name ? `来源：${item.device_name} · ` : ''}通道：{item.channel_name || '-'}
             </Typography>
             <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
               下次：{formatQueueTime(item.next_attempt_at)}

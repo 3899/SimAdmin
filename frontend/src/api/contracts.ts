@@ -1228,3 +1228,28 @@ export interface BackupBlobResponse {
   blob: Blob
   filename: string
 }
+export interface HubConfig {
+  enabled: boolean
+  url: string
+  local_fallback_timeout_seconds: number
+  local_fallback_enabled: boolean
+}
+
+export interface HubRuntimeStatus {
+  enabled: boolean
+  online: boolean
+  connection_state: 'disabled' | 'waiting_for_hub' | 'registering' | 'awaiting_approval' | 'connecting' | 'connected' | 'offline'
+  hub_url: string | null
+  hub_instance_id: string | null
+  hub_version: string | null
+  last_connected_at: string | null
+  agent_id: string | null
+  device_ids: string[]
+  local_fallback_state: 'inactive' | 'disabled' | 'armed' | 'standby'
+  last_error: string | null
+}
+
+export interface HubSettingsResponse {
+  config: HubConfig
+  runtime: HubRuntimeStatus
+}

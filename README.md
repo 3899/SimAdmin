@@ -28,51 +28,11 @@
       />  
     </a >
   </div>
-
-  <br/>
-
-  <picture>
-    <img src="./static/Dashboard.png" width="100%" alt="Dashboard" />
-	<br/><br/>
-	<img src="./static/SIM.png" width="100%" alt="SIM" />
-	<br/><br/>
-	<img src="./static/eSIM.png" width="100%" alt="eSIM" />
-	<br/><br/>
-	<img src="./static/Cellular_Network.png" width="100%" alt="Cellular_Network" />
-	<br/><br/>
-	<img src="./static/WLAN.png" width="100%" alt="WLAN" />
-	<br/><br/>
-	<img src="./static/SMS.png" width="100%" alt="SMS" />
-	<br/><br/>
-	<img src="./static/NotificationLogs.png" width="100%" alt="NotificationLogs" />
-	<br/><br/>
-	<img src="./static/NotificationRules.png" width="100%" alt="NotificationRules" />
-	<br/><br/>
-	<img src="./static/DeviceStatusRule.png" width="100%" alt="DeviceStatusRule" />
-	<br/><br/>
-	<img src="./static/NotificationChannels.png" width="100%" alt="NotificationChannels" />
-	<br/><br/>
-	<img src="./static/Automation.png" width="100%" alt="Automation" />
-	<br/><br/>
-	<img src="./static/Basic_Configuration.png" width="100%" alt="Basic_Configuration" />
-	<br/><br/>
-	<img src="./static/Security_Settings.png" width="100%" alt="Security_Settings" />
-	<br/><br/>
-	<img src="./static/DataBackup.png" width="100%" alt="DataBackup" />
-	<br/><br/>
-	<img src="./static/DataRecovery.png" width="100%" alt="DataRecovery" />
-	<br/><br/>
-	<img src="./static/Library&Snapshot.png" width="100%" alt="Library&Snapshot" />
-	<br/><br/>
-	<img src="./static/OTA.png" width="100%" alt="OTA" />
-	<br/><br/>
-	<img src="./static/Dashboard_Dark.png" width="100%" alt="Dashboard_Dark" />
-	<br/><br/>
-  </picture>
-  
 </div>
 
 # SimAdmin - SIM/eSIM 中枢
+
+> **📢 重磅更新：[SimAdminHub](https://github.com/3899/SimAdminHub) 多设备集中管理功能现已上线** · <a href="https://github.com/3899/SimAdminHub">了解详情</a>
 
 SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的 SIM/eSIM、蜂窝网络、短信、DDNS 和系统状态管理系统。
 
@@ -85,6 +45,7 @@ SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的
 
 健康检查整体按支持 ModemManager 的 Linux 蜂窝设备组织，不同 modem 固件、内核、ModemManager 版本暴露的能力不同，具体功能以实际设备为准。
 
+
 ## 📖 文档导航
 
 *   🚀 **[安装与部署指南](./docs/install.md)**：设备一键安装/卸载、后台默认访问地址及首次管理员密码设置。
@@ -94,37 +55,6 @@ SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的
 *   🔌 **[REST API 接口文档](./bruno-api/README.md)**：详细的 REST API 路由映射表、请求/响应报文规约与 Bruno API 调试集合。
 
 ---
-
-## 免责声明
-
-本项目会直接操作蜂窝 modem、SIM 注册、数据拨号、APN、频段、飞行模式、NetworkManager、systemd 服务、系统重启和 OTA 文件替换；iptables/ip6tables 仅用于只读网络诊断，不会自动清空宿主机防火墙规则。
-
-请仅在你拥有控制权的设备上使用。错误配置可能导致断网、无法注册网络、SIM 漫游计费、设备需要手动恢复，甚至 OTA 后服务无法启动。任何使用本项目造成的后果由使用者自行承担。
-
-部分接口受硬件和 ModemManager 能力限制：
-
-- 频段锁定依赖 ModemManager 暴露的 `SupportedBands` / `CurrentBands` / `SetCurrentBands`。
-- 小区锁定当前为后端内存态展示，不会下发真实硬件锁小区命令。
-
-## 开源协议声明
-
-本项目采用 GNU General Public License v3.0 (GPLv3) 开源协议。
-
-你可以：
-
-- 自由使用、研究、修改本软件。
-- 分发本软件副本。
-- 分发修改后的版本。
-
-但你必须：
-
-1. 保留版权声明和许可证声明。
-2. 分发本软件或修改版本时，以 GPLv3 协议公开完整源代码。
-3. 基于本项目的衍生作品继续使用 GPLv3 协议。
-4. 明确标注修改内容和修改日期。
-5. 分发时附带完整 GPLv3 许可证文本。
-
-严禁将本项目或其衍生版本闭源后作为专有软件分发。
 
 ## 社区交流
 
@@ -155,6 +85,64 @@ SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的
   </tbody>
 </table>
 
+---
+
+## 界面预览
+
+#### 仪表盘
+<img src="./static/Dashboard.png" width="100%" alt="Dashboard" />
+
+#### SIM 卡
+<img src="./static/SIM.png" width="100%" alt="SIM" />
+
+#### eSIM 管理
+<img src="./static/eSIM.png" width="100%" alt="eSIM" />
+
+#### 蜂窝网络
+<img src="./static/Cellular_Network.png" width="100%" alt="Cellular_Network" />
+	
+#### WLAN
+<img src="./static/WLAN.png" width="100%" alt="WLAN" />
+
+#### 短信
+<img src="./static/SMS.png" width="100%" alt="SMS" />
+
+#### 通知中心 - 通知渠道
+<img src="./static/NotificationChannels.png" width="100%" alt="NotificationChannels" />
+
+#### 通知中心 - 通知规则
+<img src="./static/NotificationRules.png" width="100%" alt="NotificationRules" />
+
+#### 通知中心 - 设备状态规则
+<img src="./static/DeviceStatusRule.png" width="100%" alt="DeviceStatusRule" />
+
+#### 通知中心 - 通知日志
+<img src="./static/NotificationLogs.png" width="100%" alt="NotificationLogs" />
+
+#### 自动化中心
+<img src="./static/Automation.png" width="100%" alt="Automation" />
+
+#### 基本配置
+<img src="./static/Basic_Configuration.png" width="100%" alt="Basic_Configuration" />
+
+#### 安全设置
+<img src="./static/Security_Settings.png" width="100%" alt="Security_Settings" />
+
+#### 数据备份
+<img src="./static/DataBackup.png" width="100%" alt="DataBackup" />
+
+#### 数据恢复
+<img src="./static/DataRecovery.png" width="100%" alt="DataRecovery" />
+
+#### 资料库与快照
+<img src="./static/Library&Snapshot.png" width="100%" alt="Library&Snapshot" />
+
+#### OTA 更新
+<img src="./static/OTA.png" width="100%" alt="OTA" />
+
+#### 仪表盘 - 深色模式
+<img src="./static/Dashboard_Dark.png" width="100%" alt="Dashboard_Dark" />
+  
 ---
 
 ## 核心功能
@@ -201,6 +189,39 @@ SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的
 
 ---
 
+## 免责声明
+
+本项目会直接操作蜂窝 modem、SIM 注册、数据拨号、APN、频段、飞行模式、NetworkManager、systemd 服务、系统重启和 OTA 文件替换；iptables/ip6tables 仅用于只读网络诊断，不会自动清空宿主机防火墙规则。
+
+请仅在你拥有控制权的设备上使用。错误配置可能导致断网、无法注册网络、SIM 漫游计费、设备需要手动恢复，甚至 OTA 后服务无法启动。任何使用本项目造成的后果由使用者自行承担。
+
+部分接口受硬件和 ModemManager 能力限制：
+
+- 频段锁定依赖 ModemManager 暴露的 `SupportedBands` / `CurrentBands` / `SetCurrentBands`。
+- 小区锁定当前为后端内存态展示，不会下发真实硬件锁小区命令。
+
+## 开源协议声明
+
+本项目采用 GNU General Public License v3.0 (GPLv3) 开源协议。
+
+你可以：
+
+- 自由使用、研究、修改本软件。
+- 分发本软件副本。
+- 分发修改后的版本。
+
+但你必须：
+
+1. 保留版权声明和许可证声明。
+2. 分发本软件或修改版本时，以 GPLv3 协议公开完整源代码。
+3. 基于本项目的衍生作品继续使用 GPLv3 协议。
+4. 明确标注修改内容和修改日期。
+5. 分发时附带完整 GPLv3 许可证文本。
+
+严禁将本项目或其衍生版本闭源后作为专有软件分发。
+
+---
+
 ## 🎖️ 鸣谢
 
 ### 👥 贡献者
@@ -211,6 +232,9 @@ SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的
 
 <a href="https://github.com/3899/SimAdmin/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=3899/SimAdmin" alt="Contributors" />
+</a>
+<a href="https://github.com/enjin1314" title="enjin1314">
+  <img src="https://wsrv.nl/?url=https://github.com/enjin1314.png&w=64&h=64&fit=cover&mask=circle" alt="enjin1314" />
 </a>
 <a href="https://github.com/nkguo" title="nkguo">
   <img src="https://wsrv.nl/?url=https://github.com/nkguo.png&w=64&h=64&fit=cover&mask=circle" alt="nkguo" />

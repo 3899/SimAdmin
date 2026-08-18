@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { api } from '@/api/current'
+import { useSimAdminApi } from '@/contexts/ApiContext'
 import type {
   DeviceInfo,
   NetworkInfo,
@@ -72,6 +72,7 @@ export interface DashboardActions {
 const throttledWarn = createThrottledWarner(10_000)
 
 export function useDashboardData(refreshInterval: number, refreshKey: number) {
+  const api = useSimAdminApi()
   const [initialLoading, setInitialLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [deviceInfo, setDeviceInfo] = useState<DeviceInfo | null>(null)
@@ -205,7 +206,7 @@ export function useDashboardData(refreshInterval: number, refreshKey: number) {
       setError(err instanceof Error ? err.message : String(err))
       setInitialLoading(false)
     }
-  }, [updateSpeedHistory])
+  }, [api, updateSpeedHistory])
 
   const toggleData = useCallback(async () => {
     try {
@@ -215,7 +216,7 @@ export function useDashboardData(refreshInterval: number, refreshKey: number) {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
-  }, [dataStatus])
+  }, [api, dataStatus])
 
   const toggleAirplaneMode = useCallback(async () => {
     const snapshot = airplaneMode
@@ -230,7 +231,7 @@ export function useDashboardData(refreshInterval: number, refreshKey: number) {
       if (snapshot) setAirplaneMode(snapshot)
       setError(err instanceof Error ? err.message : String(err))
     }
-  }, [airplaneMode])
+  }, [api, airplaneMode])
 
   const toggleRoaming = useCallback(async () => {
     try {
@@ -240,7 +241,7 @@ export function useDashboardData(refreshInterval: number, refreshKey: number) {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
-  }, [roaming])
+  }, [api, roaming])
 
   useEffect(() => {
     // 首次加载：background = false，错误会展示给用户

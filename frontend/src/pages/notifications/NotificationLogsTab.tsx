@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent, type KeyboardEvent } from 'react'
+import { useEffect, useState, type ChangeEvent, type KeyboardEvent, type ReactNode } from 'react'
 import {
   Alert,
   Box,
@@ -37,6 +37,7 @@ import {
 } from '@mui/icons-material'
 import type { NotificationLogCleanupConfig, NotificationLogEntry } from '../../api/current'
 import { EVENT_TYPES, eventLabel, statusLabel } from './notificationModel'
+import { notificationFilterTextFieldSx } from './notificationStyles'
 import DateRangePicker from '../../components/DateRangePicker'
 
 const LOG_STATUS_OPTIONS = [
@@ -46,31 +47,6 @@ const LOG_STATUS_OPTIONS = [
   { value: 'unmatched', label: '未匹配规则' },
   { value: 'no_available_channel', label: '无可用通道' },
 ]
-
-const filterTextFieldSx = {
-  '& .MuiInputLabel-root': {
-    fontSize: 14,
-  },
-  '& .MuiInputBase-input': {
-    fontSize: 14,
-  },
-  '& .MuiMenuItem-root': {
-    fontSize: 14,
-  },
-  '& .MuiOutlinedInput-root': {
-    bgcolor: 'transparent',
-    borderRadius: 1.5,
-    '& .MuiOutlinedInput-notchedOutline': {
-      borderColor: 'divider',
-    },
-    '&:hover .MuiOutlinedInput-notchedOutline': {
-      borderColor: 'text.disabled',
-    },
-    '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-      borderColor: '#1296DB',
-    },
-  },
-}
 
 const EXPANDABLE_EVENT_TYPES = new Set(['system_event', 'device_status'])
 function logSummaryText(log: NotificationLogEntry) {
@@ -116,6 +92,8 @@ type NotificationLogsTabProps = {
   onLogPageChange: (page: number) => void
   onClearLogs: (filters: NotificationLogClearFilters) => void
   onSaveLogCleanup: (logCleanup: NotificationLogCleanupConfig) => void
+  filterExtension?: ReactNode
+  renderSource?: (log: NotificationLogEntry) => ReactNode
 }
 
 export default function NotificationLogsTab({
@@ -138,6 +116,8 @@ export default function NotificationLogsTab({
   onLogPageChange,
   onClearLogs,
   onSaveLogCleanup,
+  filterExtension,
+  renderSource,
 }: NotificationLogsTabProps) {
   const pageCount = Math.max(1, Math.ceil(logTotal / logPageSize))
   const startRecord = logTotal === 0 ? 0 : logPage * logPageSize + 1
@@ -237,13 +217,14 @@ export default function NotificationLogsTab({
     <Card sx={{ height: 'calc(100vh - 220px)', minHeight: 520 }}>
       <CardContent sx={{ height: '100%', display: 'flex', flexDirection: 'column', p: 2, pb: 0, '&:last-child': { pb: 0 } }}>
         <Box display="flex" gap={1.5} flexWrap="wrap" mb={2}>
+          {filterExtension}
           <TextField
             select
             size="small"
             label="消息类型"
             value={logType}
             onChange={(event: ChangeEvent<HTMLInputElement>) => onLogTypeChange(event.target.value)}
-            sx={[{ minWidth: 150 }, filterTextFieldSx]}
+            sx={[{ minWidth: 150 }, notificationFilterTextFieldSx]}
             SelectProps={{ MenuProps: { PaperProps: { sx: { '& .MuiMenuItem-root': { fontSize: '14px' } } } } }}
           >
             <MenuItem value="" sx={{ fontSize: '14px' }}>所有消息类型</MenuItem>
@@ -255,7 +236,7 @@ export default function NotificationLogsTab({
             label="状态"
             value={logStatus}
             onChange={(event: ChangeEvent<HTMLInputElement>) => onLogStatusChange(event.target.value)}
-            sx={[{ minWidth: 140 }, filterTextFieldSx]}
+            sx={[{ minWidth: 140 }, notificationFilterTextFieldSx]}
             SelectProps={{ MenuProps: { PaperProps: { sx: { '& .MuiMenuItem-root': { fontSize: '14px' } } } } }}
           >
             <MenuItem value="" sx={{ fontSize: '14px' }}>所有状态</MenuItem>
@@ -267,7 +248,7 @@ export default function NotificationLogsTab({
             value={logQuery}
             onChange={(event: ChangeEvent<HTMLInputElement>) => onLogQueryChange(event.target.value)}
             placeholder="搜索关键字..."
-            sx={[{ minWidth: { xs: '100%', sm: 260 } }, filterTextFieldSx]}
+            sx={[{ minWidth: { xs: '100%', sm: 260 } }, notificationFilterTextFieldSx]}
             slotProps={{
               input: {
                 startAdornment: (
@@ -287,6 +268,7 @@ export default function NotificationLogsTab({
                 <TableCell sx={{ width: 150, fontWeight: 400 }}>时间</TableCell>
                 <TableCell sx={{ width: 96, fontWeight: 400 }}>类型</TableCell>
                 <TableCell sx={{ width: 88, fontWeight: 400 }}>状态</TableCell>
+                {renderSource && <TableCell sx={{ width: 150, fontWeight: 400 }}>来源设备</TableCell>}
                 <TableCell sx={{ width: '42%', minWidth: 360, fontWeight: 400 }}>内容摘要</TableCell>
                 <TableCell sx={{ width: 160, fontWeight: 400 }}>转发规则</TableCell>
                 <TableCell sx={{ width: 160, fontWeight: 400 }}>通知通道</TableCell>
@@ -320,6 +302,7 @@ export default function NotificationLogsTab({
                   >
                     {statusLabel(log.status)}
                   </TableCell>
+                  {renderSource && <TableCell sx={{ width: 150, fontWeight: 400 }}>{renderSource(log)}</TableCell>}
                   <TableCell sx={{ fontWeight: 400, whiteSpace: 'pre-line' }} title={summaryText}>
                     {visibleSummary}
                     {canExpandSummary && (
@@ -347,7 +330,7 @@ export default function NotificationLogsTab({
               })}
               {logs.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} align="center" sx={{ py: 4, color: 'text.secondary' }}>暂无转发日志</TableCell>
+                  <TableCell colSpan={renderSource ? 7 : 6} align="center" sx={{ py: 4, color: 'text.secondary' }}>暂无转发日志</TableCell>
                 </TableRow>
               )}
             </TableBody>
@@ -420,7 +403,7 @@ export default function NotificationLogsTab({
       <Dialog open={clearDialogOpen} onClose={() => setClearDialogOpen(false)} fullWidth maxWidth="xs">
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, pr: 1 }}>
           <DeleteSweep color="primary" fontSize="small" />
-          <Typography variant="subtitle1" fontWeight={700}>高级清理日志</Typography>
+          <Typography component="span" variant="subtitle1" fontWeight={700}>高级清理日志</Typography>
           <Box flexGrow={1} />
           <IconButton size="small" onClick={() => setClearDialogOpen(false)} aria-label="关闭">
             <Close fontSize="small" />
@@ -450,7 +433,7 @@ export default function NotificationLogsTab({
               value={clearStatus}
               onChange={(event: ChangeEvent<HTMLInputElement>) => setClearStatus(event.target.value)}
               fullWidth
-              sx={filterTextFieldSx}
+              sx={notificationFilterTextFieldSx}
               SelectProps={{ MenuProps: { PaperProps: { sx: { '& .MuiMenuItem-root': { fontSize: '14px' } } } } }}
             >
               <MenuItem value="" sx={{ fontSize: '14px' }}>所有状态 (不限)</MenuItem>
@@ -481,7 +464,7 @@ export default function NotificationLogsTab({
       <Dialog open={autoDialogOpen} onClose={() => setAutoDialogOpen(false)} fullWidth maxWidth="xs">
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, pr: 1 }}>
           <SmartToy color="primary" fontSize="small" />
-          <Typography variant="subtitle1" fontWeight={700}>自动清理设置</Typography>
+          <Typography component="span" variant="subtitle1" fontWeight={700}>自动清理设置</Typography>
           <Box flexGrow={1} />
           <IconButton size="small" onClick={() => setAutoDialogOpen(false)} aria-label="关闭">
             <Close fontSize="small" />
@@ -508,7 +491,7 @@ export default function NotificationLogsTab({
                 }}
                 fullWidth
                 disabled={!autoRetentionEnabled}
-                sx={{ mt: 1, ...filterTextFieldSx }}
+                sx={{ mt: 1, ...notificationFilterTextFieldSx }}
                 slotProps={{
                   input: { endAdornment: <InputAdornment position="end">天</InputAdornment> },
                   htmlInput: { min: 1 },
@@ -535,7 +518,7 @@ export default function NotificationLogsTab({
                 }}
                 fullWidth
                 disabled={!autoMaxEntriesEnabled}
-                sx={{ mt: 1, ...filterTextFieldSx }}
+                sx={{ mt: 1, ...notificationFilterTextFieldSx }}
                 slotProps={{
                   input: { endAdornment: <InputAdornment position="end">条</InputAdornment> },
                   htmlInput: { min: 1 },

@@ -46,7 +46,7 @@ import {
 } from '@mui/icons-material'
 import jsQR from 'jsqr'
 import { alpha, type Theme } from '@mui/material/styles'
-import { api } from '../api/current'
+import { useSimAdminApi } from '../contexts/ApiContext'
 import ErrorSnackbar from '../components/ErrorSnackbar'
 import { formatCarrierName } from '../utils/carriers'
 import type { BasebandRestartStep, EsimCommandResponse, EsimEuiccInfo, EsimLpacStatusResponse, EsimProfile } from '../api/types'
@@ -527,11 +527,13 @@ function InfoCell({
   value,
   mono = false,
   emptyText = 'N/A',
+  sensitive = false,
 }: {
   label: string
   value?: string | null
   mono?: boolean
   emptyText?: string
+  sensitive?: boolean
 }) {
   return (
     <Box
@@ -549,6 +551,7 @@ function InfoCell({
         {label}
       </Typography>
       <Typography
+        data-sensitive={sensitive ? 'true' : undefined}
         variant="body2"
         fontFamily={mono ? 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : undefined}
         sx={{ wordBreak: 'break-word' }}
@@ -560,6 +563,7 @@ function InfoCell({
 }
 
 export default function EsimManagerPage() {
+  const api = useSimAdminApi()
   const initialSnapshot = esimPageSnapshot
   const [euicc, setEuicc] = useState<EsimEuiccInfo | null>(initialSnapshot?.euicc ?? null)
   const [profiles, setProfiles] = useState<EsimProfile[]>(initialSnapshot?.profiles ?? [])
@@ -1406,14 +1410,14 @@ export default function EsimManagerPage() {
                               primary={
                                 <Box display="flex" alignItems="center" gap={1} minWidth={0}>
                                   <Typography fontWeight={selected ? 700 : 600} noWrap flexGrow={1}>
-                                    {profile.name || profile.iccid}
+                                    {profile.name || <Box component="span" data-sensitive="true">{profile.iccid}</Box>}
                                   </Typography>
                                   {active && <CheckCircle color="primary" fontSize="small" />}
                                 </Box>
                               }
                               secondary={
                                 <Typography variant="caption" color="text.secondary" display="block" noWrap>
-                                  {profileProviderLabel(profile)} · {formatIccid(profile.iccid)}
+                                  {profileProviderLabel(profile)} · <Box component="span" data-sensitive="true">{formatIccid(profile.iccid)}</Box>
                                 </Typography>
                               }
                               sx={{ minWidth: 0, my: 0 }}
@@ -1700,7 +1704,7 @@ export default function EsimManagerPage() {
                         <Box display="flex" alignItems="center" gap={1} flexWrap="wrap">
                           <CountryFlag countryCode={selectedCountryCode} size={30} />
                           <Typography variant="h5" fontWeight={700} sx={{ wordBreak: 'break-word' }}>
-                            {selectedProfile.name || selectedProfile.iccid}
+                            {selectedProfile.name || <Box component="span" data-sensitive="true">{selectedProfile.iccid}</Box>}
                           </Typography>
                           <Chip
                             label={profileStateLabel(selectedProfile.state)}
@@ -1752,13 +1756,13 @@ export default function EsimManagerPage() {
                       </Box>
                       <Grid container spacing={2} mb={3}>
                         <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-                          <InfoCell label="ICCID" value={selectedProfile.iccid} mono />
+                          <InfoCell label="ICCID" value={selectedProfile.iccid} mono sensitive />
                         </Grid>
                         <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-                          <InfoCell label="本机号码 (MSISDN)" value={selectedProfile.msisdn} mono />
+                          <InfoCell label="本机号码 (MSISDN)" value={selectedProfile.msisdn} mono sensitive />
                         </Grid>
                         <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-                          <InfoCell label="短信中心号码 (SMSC)" value={selectedProfile.smsc} mono emptyText="未读取到" />
+                          <InfoCell label="短信中心号码 (SMSC)" value={selectedProfile.smsc} mono emptyText="未读取到" sensitive />
                         </Grid>
                         <Grid size={{ xs: 12, sm: 6, md: 4 }}>
                           <InfoCell label="IMSI" value={selectedProfile.imsi} mono />

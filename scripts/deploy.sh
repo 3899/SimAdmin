@@ -70,7 +70,7 @@ case "$BUILD_TARGET" in
         ;;
 esac
 
-BACKEND_BIN="backend/target/$BUILD_TARGET/release/simadmin"
+BACKEND_BIN="target/$BUILD_TARGET/release/simadmin"
 FRONTEND_DIR="frontend/dist"
 
 echo "🚀 通过 ADB 部署到 ${TARGET_PATH}"

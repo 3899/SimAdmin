@@ -762,7 +762,8 @@ pub async fn get_esim_profiles_handler(
                     entries.into_iter().map(profile_from_cache_entry).collect();
                 let needs_identity = profiles.iter().any(|profile| {
                     esim_profile_state_is_unknown(&profile.state)
-                        || esim_profile_is_active(profile) && esim_profile_sim_details_missing(profile)
+                        || esim_profile_is_active(profile)
+                            && esim_profile_sim_details_missing(profile)
                 });
                 if needs_identity {
                     match tokio::time::timeout(

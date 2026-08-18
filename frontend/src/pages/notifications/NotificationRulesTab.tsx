@@ -1,4 +1,4 @@
-import { type ChangeEvent, type MutableRefObject, useRef, useState } from 'react'
+import { type ChangeEvent, type MutableRefObject, type ReactNode, useEffect, useRef, useState } from 'react'
 import {
   Accordion,
   AccordionDetails,
@@ -51,6 +51,7 @@ import {
 import SystemEventRuleEditor from './SystemEventRuleEditor'
 import DeviceStatusRuleEditor from './DeviceStatusRuleEditor'
 import AutomationRuleEditor from './AutomationRuleEditor'
+import { notificationToggleButtonSx } from './notificationStyles'
 
 const EVENT_ICONS: Record<NotificationEventType, typeof Sms> = {
   sms: Sms,
@@ -91,6 +92,7 @@ type NotificationRulesTabProps = {
   onDeleteRule: (id: string) => void
   onPatchRule: (id: string, patch: Partial<NotificationRule>) => void
   onSave: () => void
+  renderRuleExtension?: (rule: NotificationRule) => ReactNode
 }
 
 export default function NotificationRulesTab({
@@ -102,11 +104,30 @@ export default function NotificationRulesTab({
   onDeleteRule,
   onPatchRule,
   onSave,
+  renderRuleExtension,
 }: NotificationRulesTabProps) {
   const titleInputRefs = useRef<Record<string, HTMLTextAreaElement | HTMLInputElement | null>>({})
   const bodyTextareaRefs = useRef<Record<string, HTMLTextAreaElement | HTMLInputElement | null>>({})
   const customBodyTextareaRefs = useRef<Record<string, HTMLTextAreaElement | HTMLInputElement | null>>({})
   const [showExamples, setShowExamples] = useState<Record<string, boolean>>({})
+  const knownRuleIds = useRef(new Set(config.rules.map((rule) => rule.id)))
+  const [expandedRuleIds, setExpandedRuleIds] = useState<Set<string>>(() => {
+    const counts = new Map<NotificationEventType, number>()
+    config.rules.forEach((rule) => counts.set(rule.type, (counts.get(rule.type) ?? 0) + 1))
+    return new Set(config.rules.filter((rule) => counts.get(rule.type) === 1).map((rule) => rule.id))
+  })
+
+  useEffect(() => {
+    const currentIds = new Set(config.rules.map((rule) => rule.id))
+    const addedIds = config.rules
+      .filter((rule) => !knownRuleIds.current.has(rule.id))
+      .map((rule) => rule.id)
+    knownRuleIds.current = currentIds
+    setExpandedRuleIds((current) => new Set([
+      ...[...current].filter((id) => currentIds.has(id)),
+      ...addedIds,
+    ]))
+  }, [config.rules])
 
   const isJsonValid = (text: string): boolean => {
     if (!text.trim()) return true
@@ -338,7 +359,13 @@ export default function NotificationRulesTab({
               {rulesForType.map((rule) => (
                 <Accordion
                   key={rule.id}
-                  defaultExpanded={rulesForType.length === 1}
+                  expanded={expandedRuleIds.has(rule.id)}
+                  onChange={(_event, expanded) => setExpandedRuleIds((current) => {
+                    const next = new Set(current)
+                    if (expanded) next.add(rule.id)
+                    else next.delete(rule.id)
+                    return next
+                  })}
                   sx={{
                     mb: 1.5,
                     border: 1,
@@ -464,6 +491,8 @@ export default function NotificationRulesTab({
                       />
                     )}
 
+                    {renderRuleExtension?.(rule)}
+
                     <Box mt={2}>
                       <Typography variant="subtitle2" mb={1}>发送通道</Typography>
                       <Box display="flex" gap={1} flexWrap="wrap">
@@ -541,19 +570,9 @@ export default function NotificationRulesTab({
                           }}
                           sx={{
                             '& .MuiToggleButton-root': {
+                              ...notificationToggleButtonSx,
                               px: 2,
                               minWidth: 115,
-                              fontWeight: 500,
-                              fontSize: '13px',
-                              '&.Mui-selected': {
-                                color: 'primary.main',
-                                fontWeight: 700,
-                                backgroundColor: 'transparent !important',
-                                borderColor: (theme) => `${theme.palette.primary.main} !important`,
-                                '&:hover': {
-                                  backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.04),
-                                },
-                              },
                             },
                           }}
                         >

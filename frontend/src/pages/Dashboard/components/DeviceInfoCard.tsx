@@ -39,7 +39,7 @@ export function DeviceInfoCard({ deviceInfo, systemStats }: DeviceInfoCardProps)
         >
           <Box>
             <Typography variant="caption" color="text.secondary">IMEI</Typography>
-            <Typography variant="body2" fontFamily="monospace" fontSize="0.75rem" sx={getSensitiveStyle(showInfo)}>
+            <Typography data-sensitive="true" variant="body2" fontFamily="monospace" fontSize="0.75rem" sx={getSensitiveStyle(showInfo)}>
               {deviceInfo?.imei || 'N/A'}
             </Typography>
           </Box>

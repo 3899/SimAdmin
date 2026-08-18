@@ -23,7 +23,7 @@ import {
 } from '@mui/icons-material'
 import { getSensitiveStyle } from '../utils'
 import type { SimInfo } from '@/api/types'
-import { api } from '@/api/current'
+import { useSimAdminApi } from '@/contexts/ApiContext'
 
 interface SimCardInfoProps {
   simInfo: SimInfo | null
@@ -31,6 +31,7 @@ interface SimCardInfoProps {
 }
 
 export function SimCardInfo({ simInfo, onRefresh }: SimCardInfoProps) {
+  const api = useSimAdminApi()
   const [showInfo, setShowInfo] = useState(false)
   const [editingPhone, setEditingPhone] = useState(false)
   const [editingSmsc, setEditingSmsc] = useState(false)
@@ -126,7 +127,7 @@ export function SimCardInfo({ simInfo, onRefresh }: SimCardInfoProps) {
           <Stack spacing={1.5}>
             <Box display="flex" justifyContent="space-between" alignItems="center" gap={2}>
               <Typography variant="caption" color="text.secondary">ICCID</Typography>
-              <Typography variant="body2" sx={{ ...valueTextSx, ...getSensitiveStyle(showInfo) }}>
+              <Typography data-sensitive="true" variant="body2" sx={{ ...valueTextSx, ...getSensitiveStyle(showInfo) }}>
                 {simInfo?.iccid || 'N/A'}
               </Typography>
             </Box>
@@ -153,7 +154,7 @@ export function SimCardInfo({ simInfo, onRefresh }: SimCardInfoProps) {
                 </Box>
               ) : (
                 <Box display="flex" alignItems="center" gap={0.5}>
-                  <Typography variant="body2" sx={{ ...valueTextSx, ...getSensitiveStyle(showInfo) }}>
+                  <Typography data-sensitive="true" variant="body2" sx={{ ...valueTextSx, ...getSensitiveStyle(showInfo) }}>
                     {!isPhoneEmpty ? simInfo.phone_numbers[0] : 'N/A'}
                   </Typography>
                   {showInfo && (isPhoneEmpty || simInfo?.phone_number_is_manual) && simInfo?.present && (
@@ -187,7 +188,7 @@ export function SimCardInfo({ simInfo, onRefresh }: SimCardInfoProps) {
                 </Box>
               ) : (
                 <Box display="flex" alignItems="center" gap={0.5}>
-                  <Typography variant="body2" sx={{ ...valueTextSx, ...getSensitiveStyle(showInfo) }}>
+                  <Typography data-sensitive="true" variant="body2" sx={{ ...valueTextSx, ...getSensitiveStyle(showInfo) }}>
                     {!isSmscEmpty ? simInfo.sms_center : '未读取到'}
                   </Typography>
                   {showInfo && (isSmscEmpty || simInfo?.sms_center_is_manual) && simInfo?.present && (

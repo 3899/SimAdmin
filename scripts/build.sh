@@ -225,18 +225,14 @@ if [ "$BUILD_BACKEND" = true ]; then
             ;;
     esac
     
-    cd backend
-
     # 设置交叉编译环境变量
     export SQLITE3_STATIC=1
     export LIBSQLITE3_SYS_USE_PKG_CONFIG=0
 
     # 构建
-    cargo build --release --target "$TARGET"
+    cargo build --release --target "$TARGET" -p simadmin
 
-    cd ..
-
-    BINARY_PATH="backend/target/$TARGET/release/simadmin"
+    BINARY_PATH="target/$TARGET/release/simadmin"
 
     echo ""
     echo "✅ 后端构建完成！"
@@ -281,7 +277,7 @@ if [ "$SKIP_OTA" = false ] && [ "$BUILD_BACKEND" = true ] && [ "$BUILD_FRONTEND"
     echo "=========================================="
     echo ""
     
-    BINARY_PATH="backend/target/$TARGET/release/simadmin"
+    BINARY_PATH="target/$TARGET/release/simadmin"
     FRONTEND_DIR="frontend/dist"
     
     # 检查构建产物

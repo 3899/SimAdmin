@@ -25,7 +25,7 @@ use zbus::Connection;
 const BEIJING_UTC_OFFSET_SECONDS: i32 = 8 * 60 * 60;
 const DEVICE_STATUS_TICK: Duration = Duration::from_secs(30);
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 pub struct DeviceStatusReport {
     pub lines: Vec<String>,
     pub timestamp: String,

@@ -109,11 +109,10 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            backend/target/
-          key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-cargo-${{ hashFiles('backend/Cargo.lock') }}
+            target/
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-cargo-${{ hashFiles('Cargo.lock') }}
 
       - name: Build backend
-        working-directory: backend
         env:
           TARGET: ${{ matrix.target }}
           SQLITE3_STATIC: '1'
@@ -129,14 +128,14 @@ jobs:
               export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
               ;;
           esac
-          cargo build --locked --release --target "$TARGET"
+          cargo build --locked --release --target "$TARGET" -p simadmin
           file "target/$TARGET/release/simadmin"
 
       - name: Compress backend with UPX
         if: inputs.use_upx == true
         env:
           TARGET: ${{ matrix.target }}
-        run: upx --best --lzma "backend/target/$TARGET/release/simadmin"
+        run: upx --best --lzma "target/$TARGET/release/simadmin"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

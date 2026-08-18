@@ -43,7 +43,8 @@ import {
   PhoneMissed,
   Refresh,
 } from '@mui/icons-material'
-import { api, type CallInfo, type CallRecord, type CallStats } from '../api/current'
+import { type CallInfo, type CallRecord, type CallStats } from '../api/current'
+import { useSimAdminApi } from '../contexts/ApiContext'
 
 const dialpadButtons = [
   ['1', '2', '3'],
@@ -108,6 +109,7 @@ function getCallIcon(direction: string, answered: boolean) {
 }
 
 export default function PhonePage() {
+  const api = useSimAdminApi()
   const [tabValue, setTabValue] = useState(0)
   const [calls, setCalls] = useState<CallInfo[]>([])
   const [, setCallsLoading] = useState(false)
@@ -130,7 +132,7 @@ export default function PhonePage() {
     } finally {
       setCallsLoading(false)
     }
-  }, [])
+  }, [api])
 
   const fetchCallHistory = useCallback(async () => {
     setHistoryLoading(true)
@@ -143,7 +145,7 @@ export default function PhonePage() {
     } finally {
       setHistoryLoading(false)
     }
-  }, [])
+  }, [api])
 
   useEffect(() => {
     void fetchCalls()
