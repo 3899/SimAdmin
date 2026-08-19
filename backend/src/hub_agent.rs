@@ -2,7 +2,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     time::Duration,
 };
@@ -28,7 +28,7 @@ use simadmin_protocol::{
     LayerStatus, MessageAckPayload, OtaUpdateCommandPayload, SendSmsCommandPayload,
     SessionReadyPayload, SmsDirection, SmsItem, SmsStatus,
 };
-use tokio::sync::{Mutex as AsyncMutex, RwLock};
+use tokio::sync::{Mutex as AsyncMutex, Notify, RwLock};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -273,6 +273,8 @@ impl SimAdminExecutor {
                 }),
                 device_network: serde_json::to_value(self.app.config_manager.get_device_network())
                     .unwrap_or_default(),
+                vowifi: Value::Null,
+                volte: Value::Null,
                 phone: json!({}),
                 system: json!({
                     "system_info": read_system_info().ok(),
@@ -350,6 +352,9 @@ impl SimAdminExecutor {
                     .config_manager
                     .set_data_enabled(enabled)
                     .map_err(AgentError::Execution)?;
+                self.app
+                    .data_user_disabled
+                    .store(!enabled, Ordering::SeqCst);
                 Ok(json!({"enabled": enabled}))
             }
             DeviceAction::SetRoamingEnabled => {
@@ -1116,13 +1121,15 @@ impl HubAgentManager {
         let status = self.status.clone();
         let active_generation = self.active_generation.clone();
         lifecycle.runtime_task = Some(tokio::spawn(async move {
+            let business_wakeup = hub_business_wakeup().clone();
             let executor = Arc::new(SimAdminExecutor::new(
                 app,
                 status.clone(),
                 generation,
                 active_generation.clone(),
             ));
-            let runtime = AgentRuntime::new(store, executor, config);
+            let runtime =
+                AgentRuntime::new(store, executor, config).with_business_wakeup(business_wakeup);
             if let Err(error) = runtime.run_forever().await {
                 if active_generation.load(Ordering::SeqCst) == generation {
                     status.write().await.last_error = Some(error.to_string());
@@ -1279,6 +1286,11 @@ fn router_cell() -> &'static std::sync::OnceLock<Router> {
     &ROUTER
 }
 
+fn hub_business_wakeup() -> &'static Arc<Notify> {
+    static WAKEUP: OnceLock<Arc<Notify>> = OnceLock::new();
+    WAKEUP.get_or_init(|| Arc::new(Notify::new()))
+}
+
 pub fn configure_device_api_router(router: Router) {
     let _ = router_cell().set(router);
 }
@@ -1430,6 +1442,7 @@ pub async fn queue_notification_event(
     database
         .enqueue_hub_event(&event)
         .map_err(|error| error.to_string())?;
+    hub_business_wakeup().notify_one();
     Ok(online || config.enabled)
 }
 

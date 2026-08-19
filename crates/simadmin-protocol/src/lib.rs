@@ -436,6 +436,10 @@ pub struct DeviceFeatureSnapshot {
     #[serde(default)]
     pub device_network: Value,
     #[serde(default)]
+    pub vowifi: Value,
+    #[serde(default)]
+    pub volte: Value,
+    #[serde(default)]
     pub phone: Value,
     #[serde(default)]
     pub system: Value,

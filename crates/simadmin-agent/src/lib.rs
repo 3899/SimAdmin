@@ -538,6 +538,7 @@ pub struct AgentRuntime<E: AgentExecutor> {
     pub config: AgentConfig,
     client: reqwest::Client,
     wakeup: Option<mpsc::UnboundedReceiver<()>>,
+    business_wakeup: Option<Arc<Notify>>,
     outbox_wakeup: Arc<Notify>,
 }
 impl<E: AgentExecutor> AgentRuntime<E> {
@@ -548,11 +549,16 @@ impl<E: AgentExecutor> AgentRuntime<E> {
             config,
             client: reqwest::Client::new(),
             wakeup: None,
+            business_wakeup: None,
             outbox_wakeup: Arc::new(Notify::new()),
         }
     }
     pub fn with_wakeup(mut self, wakeup: mpsc::UnboundedReceiver<()>) -> Self {
         self.wakeup = Some(wakeup);
+        self
+    }
+    pub fn with_business_wakeup(mut self, wakeup: Arc<Notify>) -> Self {
+        self.business_wakeup = Some(wakeup);
         self
     }
     pub async fn register_or_claim(&mut self) -> AgentResult<()> {
@@ -691,7 +697,7 @@ impl<E: AgentExecutor> AgentRuntime<E> {
         let mut outbox_retry = tokio::time::interval(Duration::from_secs(15));
         outbox_retry.tick().await;
         loop {
-            tokio::select! {_=heartbeat.tick()=>{let envelope=Envelope::new("heartbeat",&agent_id,None,None,HeartbeatPayload{agent_type:self.config.agent_type,agent_version:self.config.version.clone(),session_generation:session.session_generation,managed_device_count:self.executor.managed_device_count(&self.config.device_ids) as u32,local_queue_size:self.store.outbox_count()?,timestamp:Utc::now(),host_summary:None})?;sink.send(Message::Text(serde_json::to_string(&envelope)?.into())).await?;self.flush_outbox(&mut sink).await?;},_=status.tick()=>{self.enqueue_status().await?;self.enqueue_discovery().await?;self.flush_outbox(&mut sink).await?;},_=business.tick()=>{self.enqueue_business().await?;self.flush_outbox(&mut sink).await?;},_=outbox_retry.tick()=>{self.store.reset_outbox_attempts()?;self.flush_outbox(&mut sink).await?;},_=self.outbox_wakeup.notified()=>{self.flush_outbox(&mut sink).await?;},event=receive_wakeup(&mut self.wakeup)=>{if event {self.enqueue_status().await?;self.enqueue_discovery().await?;self.flush_outbox(&mut sink).await?;}},incoming=source.next()=>{let Some(message)=incoming else{return Ok(())};let message=message?;if message.is_text(){self.handle_server(&agent_id,&mut sink,serde_json::from_str(message.to_text()?)?).await?;}else if message.is_close(){return Ok(())}}}
+            tokio::select! {_=heartbeat.tick()=>{let envelope=Envelope::new("heartbeat",&agent_id,None,None,HeartbeatPayload{agent_type:self.config.agent_type,agent_version:self.config.version.clone(),session_generation:session.session_generation,managed_device_count:self.executor.managed_device_count(&self.config.device_ids) as u32,local_queue_size:self.store.outbox_count()?,timestamp:Utc::now(),host_summary:None})?;sink.send(Message::Text(serde_json::to_string(&envelope)?.into())).await?;self.flush_outbox(&mut sink).await?;},_=status.tick()=>{self.enqueue_status().await?;self.enqueue_discovery().await?;self.flush_outbox(&mut sink).await?;},_=business.tick()=>{self.enqueue_business().await?;self.flush_outbox(&mut sink).await?;},event=receive_notify(&self.business_wakeup)=>{if event {self.enqueue_business().await?;self.flush_outbox(&mut sink).await?;}},_=outbox_retry.tick()=>{self.store.reset_outbox_attempts()?;self.flush_outbox(&mut sink).await?;},_=self.outbox_wakeup.notified()=>{self.flush_outbox(&mut sink).await?;},event=receive_wakeup(&mut self.wakeup)=>{if event {self.enqueue_status().await?;self.enqueue_discovery().await?;self.flush_outbox(&mut sink).await?;}},incoming=source.next()=>{let Some(message)=incoming else{return Ok(())};let message=message?;if message.is_text(){self.handle_server(&agent_id,&mut sink,serde_json::from_str(message.to_text()?)?).await?;}else if message.is_close(){return Ok(())}}}
         }
     }
     async fn enqueue_status(&self) -> AgentResult<()> {
@@ -950,6 +956,16 @@ impl<E: AgentExecutor> AgentRuntime<E> {
 async fn receive_wakeup(receiver: &mut Option<mpsc::UnboundedReceiver<()>>) -> bool {
     match receiver {
         Some(receiver) => receiver.recv().await.is_some(),
+        None => std::future::pending().await,
+    }
+}
+
+async fn receive_notify(notify: &Option<Arc<Notify>>) -> bool {
+    match notify {
+        Some(notify) => {
+            notify.notified().await;
+            true
+        }
         None => std::future::pending().await,
     }
 }
