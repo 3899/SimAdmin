@@ -31,7 +31,13 @@ pub fn spawn_automation_scheduler(app: AppState) {
             tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
 
             let config = app.config_manager.get_automation_config();
-            if !config.enabled {
+            if !config.enabled
+                || !crate::hub_agent::local_automation_scheduling_enabled(
+                    &app.config_manager.get_hub_config(),
+                )
+                .await
+            {
+                cleanup_automation_logs(&app);
                 continue;
             }
 
@@ -114,26 +120,22 @@ pub fn spawn_automation_scheduler(app: AppState) {
                 }
             }
 
-            // 定期执行自动清理策略 (清理旧的自动化日志)
-            let config_notifications = app.config_manager.get_notifications();
-            let cleanup = config_notifications.log_cleanup;
-            let retention_days = if cleanup.retention_days_enabled {
-                Some(cleanup.retention_days)
-            } else {
-                None
-            };
-            let max_entries = if cleanup.max_entries_enabled {
-                Some(cleanup.max_entries)
-            } else {
-                None
-            };
-            if retention_days.is_some() || max_entries.is_some() {
-                let _ = app
-                    .database
-                    .cleanup_automation_logs(retention_days, max_entries);
-            }
+            cleanup_automation_logs(&app);
         }
     });
+}
+
+fn cleanup_automation_logs(app: &AppState) {
+    let cleanup = app.config_manager.get_notifications().log_cleanup;
+    let retention_days = cleanup
+        .retention_days_enabled
+        .then_some(cleanup.retention_days);
+    let max_entries = cleanup.max_entries_enabled.then_some(cleanup.max_entries);
+    if retention_days.is_some() || max_entries.is_some() {
+        let _ = app
+            .database
+            .cleanup_automation_logs(retention_days, max_entries);
+    }
 }
 
 async fn execute_task(
@@ -141,6 +143,16 @@ async fn execute_task(
     registry: &TaskRegistry,
     task: &AutomationTask,
 ) -> Result<()> {
+    if !crate::hub_agent::local_automation_scheduling_enabled(&app.config_manager.get_hub_config())
+        .await
+    {
+        info!(
+            task_id = %task.id,
+            "Skipping local automation because Hub owns scheduling"
+        );
+        return Ok(());
+    }
+
     info!("Triggering automation task: {} ({})", task.name, task.id);
 
     let task_type = match &task.action {

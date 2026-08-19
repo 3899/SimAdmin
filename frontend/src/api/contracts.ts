@@ -1245,7 +1245,7 @@ export interface HubRuntimeStatus {
   last_connected_at: string | null
   agent_id: string | null
   device_ids: string[]
-  local_fallback_state: 'inactive' | 'disabled' | 'armed' | 'standby'
+  local_fallback_state: 'inactive' | 'disabled' | 'armed' | 'active' | 'standby'
   last_error: string | null
 }
 

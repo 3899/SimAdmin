@@ -1719,7 +1719,7 @@ dependencies = [
 
 [[package]]
 name = "simadmin"
-version = "1.1.9"
+version = "1.1.10"
 dependencies = [
  "anyhow",
  "async-trait",

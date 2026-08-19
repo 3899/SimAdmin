@@ -119,7 +119,7 @@ function hubConnectionLabel(config: HubConfig, runtime: HubRuntimeStatus | null)
 }
 
 function fallbackStateLabel(state?: HubRuntimeStatus['local_fallback_state']) {
-  return ({ inactive: '未启用', disabled: '已关闭', armed: '已就绪', standby: 'Hub 在线' } as Record<string, string>)[state ?? ''] ?? '--'
+  return ({ inactive: '未启用', disabled: '已关闭', armed: '等待接管', active: '本地规则已接管', standby: 'Hub 在线' } as Record<string, string>)[state ?? ''] ?? '--'
 }
 
 function formatHubTime(value?: string | null) {

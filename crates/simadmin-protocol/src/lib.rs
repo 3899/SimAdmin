@@ -685,7 +685,7 @@ mod tests {
             None,
             HeartbeatPayload {
                 agent_type: AgentType::Simadmin,
-                agent_version: "1.1.9".into(),
+                agent_version: "1.1.10".into(),
                 session_generation: 4,
                 managed_device_count: 1,
                 local_queue_size: 0,
