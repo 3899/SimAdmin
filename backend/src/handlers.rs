@@ -374,6 +374,44 @@ enum EsimProfileEnableOutcome {
     Failed(EsimCommandResponse),
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct EsimProfileEnableAttempt {
+    identifier: String,
+    identifier_kind: &'static str,
+    refresh: bool,
+}
+
+fn esim_profile_aid(profile: &EsimProfile) -> Option<String> {
+    profile
+        .isdp_aid
+        .as_deref()
+        .map(str::trim)
+        .filter(|aid| !aid.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn fallback_enable_attempts(iccid: &str, isdp_aid: Option<&str>) -> Vec<EsimProfileEnableAttempt> {
+    let mut attempts = vec![EsimProfileEnableAttempt {
+        identifier: iccid.to_string(),
+        identifier_kind: "ICCID",
+        refresh: false,
+    }];
+
+    if let Some(aid) = isdp_aid.map(str::trim).filter(|aid| !aid.is_empty()) {
+        attempts.extend(
+            [true, false]
+                .into_iter()
+                .map(|refresh| EsimProfileEnableAttempt {
+                    identifier: aid.to_string(),
+                    identifier_kind: "AID",
+                    refresh,
+                }),
+        );
+    }
+
+    attempts
+}
+
 async fn refresh_profile_for_switch(
     app: &AppState,
     normalized_iccid: &str,
@@ -390,6 +428,7 @@ async fn retry_enable_profile_after_refresh(
     iccid: &str,
     normalized_iccid: &str,
     first_message: String,
+    initial_isdp_aid: Option<String>,
 ) -> Result<EsimProfileEnableOutcome, EsimApiError> {
     modem_manager::record_restart_step(
         "检查 eUICC 切卡状态",
@@ -398,6 +437,7 @@ async fn retry_enable_profile_after_refresh(
     );
     tokio::time::sleep(Duration::from_millis(800)).await;
 
+    let mut isdp_aid = initial_isdp_aid;
     match refresh_profile_for_switch(app, normalized_iccid).await {
         Ok(Some(profile)) if esim_profile_is_active(&profile) => {
             modem_manager::record_restart_step(
@@ -409,11 +449,14 @@ async fn retry_enable_profile_after_refresh(
                 "Profile enabled after status refresh",
             )));
         }
-        Ok(Some(_)) => modem_manager::record_restart_step(
-            "检查 eUICC 切卡状态",
-            "ok",
-            Some("目标 Profile 仍未启用，使用兼容参数重试".to_string()),
-        ),
+        Ok(Some(profile)) => {
+            isdp_aid = isdp_aid.or_else(|| esim_profile_aid(&profile));
+            modem_manager::record_restart_step(
+                "检查 eUICC 切卡状态",
+                "ok",
+                Some("目标 Profile 仍未启用，使用兼容参数重试".to_string()),
+            );
+        }
         Ok(None) => modem_manager::record_restart_step(
             "检查 eUICC 切卡状态",
             "warning",
@@ -426,43 +469,74 @@ async fn retry_enable_profile_after_refresh(
         ),
     }
 
-    modem_manager::record_restart_step(
-        "重试启用 eSIM Profile",
-        "running",
-        Some("使用 refreshFlag=0 兼容部分基带 REFRESH 处理异常".to_string()),
-    );
-    match app
-        .esim_supervisor
-        .enable_profile_with_refresh_flag(iccid.to_string(), false)
-        .await
-    {
-        Ok(data) if esim_command_succeeded(&data) => {
-            modem_manager::record_restart_step("重试启用 eSIM Profile", "ok", None);
-            Ok(EsimProfileEnableOutcome::Enabled(data))
-        }
-        Ok(mut data) => {
-            data.msg = if data.msg.is_empty() {
-                format!("{first_message}; retry failed")
-            } else {
-                format!("{first_message}; retry failed: {}", data.msg)
-            };
+    let attempts = fallback_enable_attempts(iccid, isdp_aid.as_deref());
+    let mut last_message = first_message;
+
+    for attempt in attempts {
+        let refresh_flag = if attempt.refresh { 1 } else { 0 };
+        modem_manager::record_restart_step(
+            "重试启用 eSIM Profile",
+            "running",
+            Some(format!(
+                "使用 {} + refreshFlag={} 兼容 eUICC 切换",
+                attempt.identifier_kind, refresh_flag
+            )),
+        );
+
+        let result = app
+            .esim_supervisor
+            .enable_profile_with_refresh_flag(attempt.identifier, attempt.refresh)
+            .await;
+        let retryable = match result {
+            Ok(data) if esim_command_succeeded(&data) => {
+                modem_manager::record_restart_step("重试启用 eSIM Profile", "ok", None);
+                return Ok(EsimProfileEnableOutcome::Enabled(data));
+            }
+            Ok(data) => {
+                let attempt_message = if data.msg.is_empty() {
+                    "enable command failed".to_string()
+                } else {
+                    data.msg
+                };
+                last_message = format!("{last_message}; retry failed: {attempt_message}");
+                esim_enable_failure_is_retryable(&attempt_message)
+            }
+            Err(err) => {
+                let attempt_message = err.message();
+                last_message = format!("{last_message}; retry failed: {attempt_message}");
+                esim_enable_failure_is_retryable(&attempt_message)
+            }
+        };
+
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        if matches!(
+            refresh_profile_for_switch(app, normalized_iccid).await,
+            Ok(Some(profile)) if esim_profile_is_active(&profile)
+        ) {
             modem_manager::record_restart_step(
-                "重试启用 eSIM Profile",
-                "error",
-                Some(data.msg.clone()),
+                "检查 eUICC 切卡状态",
+                "ok",
+                Some("刷新后已检测到目标 Profile 生效".to_string()),
             );
-            Ok(EsimProfileEnableOutcome::Failed(data))
+            return Ok(EsimProfileEnableOutcome::Enabled(esim_enable_success(
+                "Profile enabled after status refresh",
+            )));
         }
-        Err(err) => {
-            let message = format!("{first_message}; retry failed: {}", err.message());
-            modem_manager::record_restart_step(
-                "重试启用 eSIM Profile",
-                "error",
-                Some(message.clone()),
-            );
-            Err(EsimApiError::Command(message))
+
+        if !retryable {
+            break;
         }
     }
+
+    modem_manager::record_restart_step(
+        "重试启用 eSIM Profile",
+        "error",
+        Some(last_message.clone()),
+    );
+    Ok(EsimProfileEnableOutcome::Failed(esim_command_failure(
+        "enable",
+        last_message,
+    )))
 }
 
 async fn enable_esim_profile_for_switch(
@@ -483,6 +557,7 @@ async fn enable_esim_profile_for_switch(
     }
 
     modem_manager::record_restart_step("同步 eUICC Profile 状态", "running", None);
+    let mut isdp_aid = None;
     match refresh_profile_for_switch(app, &normalized_iccid).await {
         Ok(Some(profile)) if esim_profile_is_active(&profile) => {
             modem_manager::record_restart_step(
@@ -494,11 +569,14 @@ async fn enable_esim_profile_for_switch(
                 esim_enable_success("Profile already enabled"),
             ));
         }
-        Ok(Some(_)) => modem_manager::record_restart_step(
-            "同步 eUICC Profile 状态",
-            "ok",
-            Some("目标 Profile 已确认，开始切换".to_string()),
-        ),
+        Ok(Some(profile)) => {
+            isdp_aid = esim_profile_aid(&profile);
+            modem_manager::record_restart_step(
+                "同步 eUICC Profile 状态",
+                "ok",
+                Some("目标 Profile 已确认，开始切换".to_string()),
+            );
+        }
         Ok(None) => {
             let message = "目标 Profile 未在 eUICC 芯片中找到，请刷新列表后重试".to_string();
             modem_manager::record_restart_step(
@@ -520,12 +598,25 @@ async fn enable_esim_profile_for_switch(
     match app.esim_supervisor.enable_profile(iccid.to_string()).await {
         Ok(data) if esim_command_succeeded(&data) => Ok(EsimProfileEnableOutcome::Enabled(data)),
         Ok(data) if esim_enable_failure_is_retryable(&data.msg) => {
-            retry_enable_profile_after_refresh(app, iccid, &normalized_iccid, data.msg.clone())
-                .await
+            retry_enable_profile_after_refresh(
+                app,
+                iccid,
+                &normalized_iccid,
+                data.msg.clone(),
+                isdp_aid,
+            )
+            .await
         }
         Ok(data) => Ok(EsimProfileEnableOutcome::Failed(data)),
         Err(err) if esim_enable_failure_is_retryable(&err.message()) => {
-            retry_enable_profile_after_refresh(app, iccid, &normalized_iccid, err.message()).await
+            retry_enable_profile_after_refresh(
+                app,
+                iccid,
+                &normalized_iccid,
+                err.message(),
+                isdp_aid,
+            )
+            .await
         }
         Err(err) => Err(err),
     }
@@ -4449,6 +4540,46 @@ pub async fn test_automation_task_handler(
 mod tests {
     use super::*;
     use crate::modem_manager::SimIdentity;
+
+    #[test]
+    fn builds_profile_enable_fallbacks_in_compatibility_order() {
+        let attempts = fallback_enable_attempts("TEST_ICCID", Some(" TEST_ISDP_AID "));
+
+        assert_eq!(
+            attempts,
+            vec![
+                EsimProfileEnableAttempt {
+                    identifier: "TEST_ICCID".to_string(),
+                    identifier_kind: "ICCID",
+                    refresh: false,
+                },
+                EsimProfileEnableAttempt {
+                    identifier: "TEST_ISDP_AID".to_string(),
+                    identifier_kind: "AID",
+                    refresh: true,
+                },
+                EsimProfileEnableAttempt {
+                    identifier: "TEST_ISDP_AID".to_string(),
+                    identifier_kind: "AID",
+                    refresh: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn omits_aid_fallback_when_profile_does_not_expose_one() {
+        let attempts = fallback_enable_attempts("TEST_ICCID", Some("  "));
+
+        assert_eq!(
+            attempts,
+            vec![EsimProfileEnableAttempt {
+                identifier: "TEST_ICCID".to_string(),
+                identifier_kind: "ICCID",
+                refresh: false,
+            }]
+        );
+    }
 
     #[test]
     fn enriches_enabled_esim_profile_from_current_sim_identity() {

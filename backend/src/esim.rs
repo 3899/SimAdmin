@@ -269,13 +269,13 @@ impl EsimSupervisor {
 
     pub async fn enable_profile_with_refresh_flag(
         &self,
-        iccid: String,
+        identifier: String,
         refresh: bool,
     ) -> Result<EsimCommandResponse, EsimApiError> {
         let refresh_flag = if refresh { "1" } else { "0" };
         self.call_lpac(
             "enable",
-            &["profile", "enable", iccid.as_str(), refresh_flag],
+            &["profile", "enable", identifier.as_str(), refresh_flag],
             ESIM_LONG_TIMEOUT_SECS,
         )
         .await
