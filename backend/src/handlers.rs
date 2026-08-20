@@ -10,7 +10,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::process::{Command, Output};
 use std::sync::atomic::Ordering;
@@ -355,6 +355,162 @@ fn cached_profiles_requested(query: &std::collections::HashMap<String, String>) 
 }
 
 // ============ 工作模式 / eSIM ============
+
+#[derive(Debug)]
+enum EsimRspNotificationScope {
+    Download {
+        target_iccid: String,
+    },
+    Enable {
+        target_iccid: String,
+        previous_iccids: HashSet<String>,
+    },
+}
+
+impl EsimRspNotificationScope {
+    fn target_iccid(&self) -> &str {
+        match self {
+            Self::Download { target_iccid } | Self::Enable { target_iccid, .. } => target_iccid,
+        }
+    }
+}
+
+fn select_new_rsp_notifications(
+    before_sequences: &HashSet<u64>,
+    notifications: Vec<EsimRspNotification>,
+    scope: &EsimRspNotificationScope,
+) -> Vec<EsimRspNotification> {
+    let mut selected = notifications
+        .into_iter()
+        .filter(|notification| !before_sequences.contains(&notification.sequence_number))
+        .filter(|notification| {
+            let operation = notification.operation.trim().to_ascii_lowercase();
+            let iccid = crate::utils::normalize_iccid(&notification.iccid);
+            match scope {
+                EsimRspNotificationScope::Download { target_iccid } => {
+                    operation == "install" && iccid == *target_iccid
+                }
+                EsimRspNotificationScope::Enable {
+                    target_iccid,
+                    previous_iccids,
+                } => {
+                    (operation == "enable" && iccid == *target_iccid)
+                        || (operation == "disable" && previous_iccids.contains(&iccid))
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    selected.sort_by_key(|notification| notification.sequence_number);
+    selected
+}
+
+async fn capture_rsp_notification_sequences(app: &AppState) -> Option<HashSet<u64>> {
+    match app.esim_supervisor.get_rsp_notifications().await {
+        Ok(notifications) => Some(
+            notifications
+                .into_iter()
+                .map(|notification| notification.sequence_number)
+                .collect(),
+        ),
+        Err(err) => {
+            warn!(
+                error = %err.message(),
+                "Skipping automatic RSP notification delivery because the pre-operation snapshot failed"
+            );
+            None
+        }
+    }
+}
+
+async fn capture_enabled_profile_iccids(app: &AppState) -> HashSet<String> {
+    match app.esim_supervisor.get_profiles_for_switch().await {
+        Ok(response) => response
+            .profiles
+            .into_iter()
+            .filter(esim_profile_is_active)
+            .map(|profile| crate::utils::normalize_iccid(&profile.iccid))
+            .filter(|iccid| !iccid.is_empty())
+            .collect(),
+        Err(err) => {
+            warn!(
+                error = %err.message(),
+                "Could not capture the enabled Profile before RSP notification delivery"
+            );
+            HashSet::new()
+        }
+    }
+}
+
+async fn deliver_new_rsp_notifications(
+    app: &AppState,
+    before_sequences: HashSet<u64>,
+    scope: EsimRspNotificationScope,
+) {
+    let notifications = match app.esim_supervisor.get_rsp_notifications().await {
+        Ok(notifications) => notifications,
+        Err(err) => {
+            warn!(
+                target = %mask_identifier(scope.target_iccid()),
+                error = %err.message(),
+                "Failed to read RSP notifications after a successful Profile operation"
+            );
+            app.system_event_emitter
+                .emit_code(
+                    system_event_codes::ESIM_RSP_NOTIFICATION_DELIVERY_FAILED,
+                    system_event_severity::WARNING,
+                    system_event_status::FAILED,
+                    mask_identifier(scope.target_iccid()),
+                    "Profile 操作成功，但无法读取待提交的运营商通知",
+                )
+                .await;
+            return;
+        }
+    };
+
+    let mut delivery_failed = false;
+    for notification in select_new_rsp_notifications(&before_sequences, notifications, &scope) {
+        if let Err(err) = app
+            .esim_supervisor
+            .process_rsp_notification(notification.sequence_number)
+            .await
+        {
+            delivery_failed = true;
+            warn!(
+                sequence_number = notification.sequence_number,
+                target = %mask_identifier(scope.target_iccid()),
+                error = %err.message(),
+                "Failed to deliver a new RSP notification; keeping it on the eUICC"
+            );
+            continue;
+        }
+
+        if let Err(err) = app
+            .esim_supervisor
+            .remove_rsp_notification(notification.sequence_number)
+            .await
+        {
+            delivery_failed = true;
+            warn!(
+                sequence_number = notification.sequence_number,
+                target = %mask_identifier(scope.target_iccid()),
+                error = %err.message(),
+                "RSP notification was delivered but could not be removed from the eUICC"
+            );
+        }
+    }
+
+    if delivery_failed {
+        app.system_event_emitter
+            .emit_code(
+                system_event_codes::ESIM_RSP_NOTIFICATION_DELIVERY_FAILED,
+                system_event_severity::WARNING,
+                system_event_status::FAILED,
+                mask_identifier(scope.target_iccid()),
+                "Profile 操作成功，但部分运营商通知仍保留在 eUICC 中",
+            )
+            .await;
+    }
+}
 
 fn live_refresh_requested(query: &std::collections::HashMap<String, String>) -> bool {
     query
@@ -852,6 +1008,8 @@ pub async fn enable_esim_profile_handler(
 
     tokio::spawn(async move {
         let _guard = modem_manager::BasebandRestartRunGuard;
+        let previous_iccids = capture_enabled_profile_iccids(&bg_app).await;
+        let rsp_notification_sequences = capture_rsp_notification_sequences(&bg_app).await;
 
         match enable_esim_profile_for_switch(&bg_app, &bg_iccid).await {
             Ok(EsimProfileEnableOutcome::Enabled(data)) => {
@@ -907,6 +1065,18 @@ pub async fn enable_esim_profile_handler(
                                 );
                             }
                         }
+                    }
+
+                    if let Some(before_sequences) = rsp_notification_sequences {
+                        deliver_new_rsp_notifications(
+                            &bg_app,
+                            before_sequences,
+                            EsimRspNotificationScope::Enable {
+                                target_iccid: crate::utils::normalize_iccid(&bg_iccid),
+                                previous_iccids,
+                            },
+                        )
+                        .await;
                     }
                 } else {
                     modem_manager::record_restart_step(
@@ -1096,10 +1266,12 @@ pub async fn download_esim_profile_handler(
                 .map(|p| crate::utils::normalize_iccid(&p.iccid))
                 .collect()
         });
+    let rsp_notification_sequences = capture_rsp_notification_sequences(&app).await;
 
     match app.esim_supervisor.download_profile(payload.clone()).await {
         Ok(data) => {
             if esim_command_succeeded(&data) {
+                let downloaded_iccid;
                 // Attempt to recursively find the downloaded profile details in lpac's response
                 let profile_val = data.data.clone().unwrap_or(serde_json::Value::Null);
                 if let Some(mut profile) = find_and_normalize_profile(&profile_val) {
@@ -1135,6 +1307,7 @@ pub async fn download_esim_profile_handler(
                         delete_allowed: profile.delete_allowed,
                         updated_at: chrono::Utc::now().to_rfc3339(),
                     };
+                    downloaded_iccid = Some(profile.iccid.clone());
 
                     if let Err(err) = app.database.upsert_esim_profile_cache(&entry) {
                         warn!(iccid = %entry.iccid, error = %err, "Failed to cache downloaded eSIM profile to database");
@@ -1232,6 +1405,7 @@ pub async fn download_esim_profile_handler(
                         .as_ref()
                         .map(|iccid| mask_identifier(iccid))
                         .unwrap_or_else(|| "esim".to_string());
+                    downloaded_iccid = cached_fallback_iccid;
 
                     app.system_event_emitter
                         .emit_code(
@@ -1242,6 +1416,22 @@ pub async fn download_esim_profile_handler(
                             "Profile 写入成功，已通过列表扫描更新缓存",
                         )
                         .await;
+                }
+
+                if let (Some(before_sequences), Some(target_iccid)) =
+                    (rsp_notification_sequences, downloaded_iccid)
+                {
+                    let bg_app = app.clone();
+                    tokio::spawn(async move {
+                        deliver_new_rsp_notifications(
+                            &bg_app,
+                            before_sequences,
+                            EsimRspNotificationScope::Download {
+                                target_iccid: crate::utils::normalize_iccid(&target_iccid),
+                            },
+                        )
+                        .await;
+                    });
                 }
             } else {
                 let msg = data.msg.clone();
@@ -4449,6 +4639,69 @@ pub async fn test_automation_task_handler(
 mod tests {
     use super::*;
     use crate::modem_manager::SimIdentity;
+
+    fn rsp_notification(sequence_number: u64, operation: &str, iccid: &str) -> EsimRspNotification {
+        EsimRspNotification {
+            sequence_number,
+            operation: operation.to_string(),
+            iccid: iccid.to_string(),
+        }
+    }
+
+    #[test]
+    fn selects_only_new_install_notification_for_downloaded_profile() {
+        const TARGET_ICCID: &str = "8900000000000000001";
+        const OTHER_ICCID: &str = "8900000000000000002";
+        let before_sequences = HashSet::from([10, 11]);
+        let notifications = vec![
+            rsp_notification(10, "install", TARGET_ICCID),
+            rsp_notification(12, "enable", TARGET_ICCID),
+            rsp_notification(13, "install", OTHER_ICCID),
+            rsp_notification(14, "install", TARGET_ICCID),
+        ];
+        let scope = EsimRspNotificationScope::Download {
+            target_iccid: crate::utils::normalize_iccid(TARGET_ICCID),
+        };
+
+        let selected = select_new_rsp_notifications(&before_sequences, notifications, &scope);
+
+        assert_eq!(
+            selected
+                .iter()
+                .map(|notification| notification.sequence_number)
+                .collect::<Vec<_>>(),
+            vec![14]
+        );
+    }
+
+    #[test]
+    fn selects_only_new_enable_and_previous_disable_notifications_for_switch() {
+        const TARGET_ICCID: &str = "8900000000000000001";
+        const PREVIOUS_ICCID: &str = "8900000000000000002";
+        const UNRELATED_ICCID: &str = "8900000000000000003";
+        let before_sequences = HashSet::from([20]);
+        let notifications = vec![
+            rsp_notification(25, "disable", UNRELATED_ICCID),
+            rsp_notification(24, "enable", TARGET_ICCID),
+            rsp_notification(23, "disable", PREVIOUS_ICCID),
+            rsp_notification(22, "install", TARGET_ICCID),
+            rsp_notification(20, "enable", TARGET_ICCID),
+        ];
+        let scope = EsimRspNotificationScope::Enable {
+            target_iccid: crate::utils::normalize_iccid(TARGET_ICCID),
+            previous_iccids: HashSet::from([crate::utils::normalize_iccid(PREVIOUS_ICCID)]),
+        };
+
+        let selected = select_new_rsp_notifications(&before_sequences, notifications, &scope);
+
+        assert_eq!(
+            selected
+                .iter()
+                .map(|notification| notification.sequence_number)
+                .collect::<Vec<_>>(),
+            vec![23, 24]
+        );
+    }
 
     #[test]
     fn enriches_enabled_esim_profile_from_current_sim_identity() {

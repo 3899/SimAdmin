@@ -80,6 +80,14 @@ pub struct EsimCommandResponse {
     pub data: Option<Value>,
 }
 
+/// eUICC 中等待提交到运营商服务器的 Profile 管理通知。
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct EsimRspNotification {
+    pub sequence_number: u64,
+    pub operation: String,
+    pub iccid: String,
+}
+
 #[derive(Debug, Default, Serialize, Clone)]
 pub struct EsimEuiccInfo {
     pub eid: String,
