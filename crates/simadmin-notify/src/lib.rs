@@ -11,7 +11,7 @@ use lettre::{
     Address, AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
 };
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
-use reqwest::{Client, Method, Response};
+use reqwest::{Client, Method, Response, Url};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::Sha256;
@@ -21,6 +21,8 @@ const URL_COMPONENT_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'.')
     .remove(b'_')
     .remove(b'~');
+const DEFAULT_WECOM_API_BASE_URL: &str = "https://qyapi.weixin.qq.com";
+const DEFAULT_TELEGRAM_API_BASE_URL: &str = "https://api.telegram.org";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -297,15 +299,15 @@ pub struct DeliveryReceipt {
 
 #[derive(Debug, thiserror::Error)]
 pub enum NotifyError {
-    #[error("invalid channel configuration: {0}")]
+    #[error("通知通道配置不正确：{0}")]
     InvalidConfig(String),
-    #[error("notification request failed: {0}")]
-    Request(#[from] reqwest::Error),
-    #[error("notification endpoint returned HTTP {status}: {body}")]
+    #[error("通知请求发送失败：{0}")]
+    Request(String),
+    #[error("通知服务返回 HTTP {status}：{body}")]
     Http { status: u16, body: String },
-    #[error("notification provider rejected the request: {0}")]
+    #[error("通知服务拒绝请求：{0}")]
     Provider(String),
-    #[error("email delivery failed: {0}")]
+    #[error("邮件发送失败：{0}")]
     Email(String),
 }
 
@@ -359,7 +361,7 @@ impl Sender {
         body: &str,
     ) -> Result<DeliveryReceipt, NotifyError> {
         let payload: Value = serde_json::from_str(body)
-            .map_err(|error| invalid(format!("custom body must be valid JSON: {error}")))?;
+            .map_err(|error| invalid(format!("自定义消息体必须是有效的 JSON：{error}")))?;
         match channel_type {
             ChannelType::WecomRobot => {
                 let config: WecomRobotConfig = parse(config)?;
@@ -395,7 +397,7 @@ impl Sender {
                 let mut payload = payload
                     .as_object()
                     .cloned()
-                    .ok_or_else(|| invalid("Feishu custom body must be a JSON object"))?;
+                    .ok_or_else(|| invalid("飞书自定义消息体必须是 JSON 对象"))?;
                 if !config.secret.trim().is_empty() {
                     let timestamp = unix_seconds().to_string();
                     let key = format!("{timestamp}\n{}", config.secret.trim());
@@ -409,7 +411,7 @@ impl Sender {
                 let config: TelegramConfig = parse(config)?;
                 let url = format!(
                     "{}/bot{}/sendMessage",
-                    config.api_base_url.trim().trim_end_matches('/'),
+                    telegram_api_base_url(&config.api_base_url),
                     config.bot_token.trim()
                 );
                 self.post_json("telegram", &url, payload, true).await
@@ -452,7 +454,7 @@ impl Sender {
         message: &NotificationMessage,
     ) -> Result<DeliveryReceipt, NotifyError> {
         let method = Method::from_bytes(config.http_method.trim().to_uppercase().as_bytes())
-            .map_err(|_| invalid("invalid HTTP method"))?;
+            .map_err(|_| invalid("Webhook 请求方法无效"))?;
         let body = message.custom_body.as_deref().unwrap_or(&message.body);
         let mut request = self.client.request(method.clone(), config.url.trim());
         let mut content_type = false;
@@ -555,7 +557,7 @@ impl Sender {
         config: WecomAppConfig,
         message: &NotificationMessage,
     ) -> Result<DeliveryReceipt, NotifyError> {
-        let base = config.api_base_url.trim().trim_end_matches('/');
+        let base = wecom_api_base_url(&config.api_base_url);
         let token_response = self
             .client
             .get(format!("{base}/cgi-bin/gettoken"))
@@ -565,22 +567,36 @@ impl Sender {
             ])
             .send()
             .await?;
-        let status = token_response.status().as_u16();
-        let token_body: Value = token_response.json().await?;
+        let status = token_response.status();
+        let token_body = token_response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(NotifyError::Http {
+                status: status.as_u16(),
+                body: compact(&token_body, 240),
+            });
+        }
+        let token_body: Value = serde_json::from_str(&token_body).map_err(|_| {
+            NotifyError::Provider("企业微信获取 access_token 返回了无法解析的数据".into())
+        })?;
+        if let Some(errcode) = token_body.get("errcode").and_then(Value::as_i64) {
+            if errcode != 0 {
+                return Err(NotifyError::Provider(format_wecom_error(
+                    "企业微信获取 access_token",
+                    errcode,
+                    provider_message(&token_body),
+                )));
+            }
+        }
         let token = token_body
             .get("access_token")
             .and_then(Value::as_str)
-            .ok_or_else(|| {
-                NotifyError::Provider(format!(
-                    "WeCom token HTTP {status}: {}",
-                    compact(&token_body.to_string(), 240)
-                ))
-            })?;
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| NotifyError::Provider("企业微信响应中缺少 access_token".into()))?;
         let agent_id = config
             .agent_id
             .trim()
             .parse::<i64>()
-            .map_err(|_| invalid("WeCom agent_id must be numeric"))?;
+            .map_err(|_| invalid("企业微信 AgentID 必须为数字"))?;
         let payload = json!({
             "touser": if config.to_user.trim().is_empty() { "@all" } else { config.to_user.trim() },
             "toparty": config.to_party.trim(), "totag": config.to_tag.trim(), "msgtype": "text",
@@ -660,7 +676,12 @@ impl Sender {
         let token = token_body
             .get("accessToken")
             .and_then(Value::as_str)
-            .ok_or_else(|| NotifyError::Provider(compact(&token_body.to_string(), 240)))?;
+            .ok_or_else(|| {
+                NotifyError::Provider(format!(
+                    "钉钉响应中缺少 accessToken：{}",
+                    compact(provider_message(&token_body), 160)
+                ))
+            })?;
         let robot_code = if config.robot_code.trim().is_empty() {
             config.app_key.trim()
         } else {
@@ -704,7 +725,7 @@ impl Sender {
     ) -> Result<DeliveryReceipt, NotifyError> {
         let url = format!(
             "{}/bot{}/sendMessage",
-            config.api_base_url.trim().trim_end_matches('/'),
+            telegram_api_base_url(&config.api_base_url),
             config.bot_token.trim()
         );
         let mut payload = json!({"chat_id":config.chat_id.trim(),"text":message.body,"disable_web_page_preview":config.disable_web_page_preview});
@@ -719,16 +740,16 @@ impl Sender {
         config: EmailConfig,
         message: &NotificationMessage,
     ) -> Result<DeliveryReceipt, NotifyError> {
-        let sender = mailbox(&config.sender_address, &config.sender_name, "sender")?;
+        let sender = mailbox(&config.sender_address, &config.sender_name, "发件邮箱")?;
         let receivers = config
             .receiver_addresses
             .split([',', ';', '\n', '\r'])
             .map(str::trim)
             .filter(|v| !v.is_empty())
-            .map(|v| mailbox(v, "", "receiver"))
+            .map(|v| mailbox(v, "", "收件邮箱"))
             .collect::<Result<Vec<_>, _>>()?;
         if receivers.is_empty() {
-            return Err(invalid("at least one email receiver is required"));
+            return Err(invalid("请至少填写一个收件邮箱"));
         }
         let mut builder = Message::builder().from(sender).subject(&message.title);
         for receiver in receivers {
@@ -737,7 +758,7 @@ impl Sender {
         let part = match config.message_format.trim().to_ascii_lowercase().as_str() {
             "" | "plain" | "text" => SinglePart::plain(message.body.clone()),
             "html" => SinglePart::html(message.body.clone()),
-            value => return Err(invalid(format!("unsupported email format: {value}"))),
+            value => return Err(invalid(format!("不支持的邮件格式：{value}"))),
         };
         let email = builder
             .singlepart(part)
@@ -746,7 +767,7 @@ impl Sender {
             "" | "implicit_tls" | "tls" => Tls::Wrapper(tls_parameters(&config)?),
             "starttls" => Tls::Required(tls_parameters(&config)?),
             "none" => Tls::None,
-            value => return Err(invalid(format!("unsupported SMTP security: {value}"))),
+            value => return Err(invalid(format!("不支持的 SMTP 安全模式：{value}"))),
         };
         let mut transport =
             AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(config.smtp_host.trim())
@@ -766,7 +787,7 @@ impl Sender {
         Ok(DeliveryReceipt {
             provider: "email".into(),
             status_code: 250,
-            response_summary: "SMTP accepted message".into(),
+            response_summary: "SMTP 已接受消息".into(),
         })
     }
 
@@ -778,7 +799,8 @@ impl Sender {
         let uid = if !config.uid.trim().is_empty() {
             config.uid.trim().to_owned()
         } else {
-            serverchan_uid(&config.send_key).ok_or_else(|| invalid("ServerChan UID is required"))?
+            serverchan_uid(&config.send_key)
+                .ok_or_else(|| invalid("无法从 SendKey 识别 Server酱 UID，请手动填写 UID"))?
         };
         let url = if config.api_url.trim().is_empty() {
             format!(
@@ -854,75 +876,93 @@ pub fn validate_config(channel_type: ChannelType, config: &Value) -> Result<(), 
             required(&c.url, "Webhook URL")?;
             let m = c.http_method.to_uppercase();
             if m != "GET" && m != "POST" {
-                return Err(invalid("Webhook only supports GET and POST"));
+                return Err(invalid("Webhook 仅支持 GET 和 POST 请求"));
             }
         }
         ChannelType::Bark => {
             let c: BarkConfig = parse(config)?;
-            required(&c.server_url, "Bark server URL")?;
-            required(&c.device_key, "Bark device key")?;
+            required(&c.server_url, "Bark 服务地址")?;
+            required(&c.device_key, "Bark 设备密钥")?;
         }
         ChannelType::Pushplus => {
-            required(&parse::<PushplusConfig>(config)?.token, "PushPlus token")?
+            required(&parse::<PushplusConfig>(config)?.token, "PushPlus Token")?
         }
         ChannelType::WecomApp => {
             let c: WecomAppConfig = parse(config)?;
-            required(&c.corp_id, "WeCom CorpID")?;
-            required(&c.agent_id, "WeCom AgentID")?;
-            required(&c.secret, "WeCom secret")?;
+            validate_http_base_url(&wecom_api_base_url(&c.api_base_url), "企业微信 API 地址")?;
+            required(&c.corp_id, "企业微信 CorpID")?;
+            required(&c.agent_id, "企业微信 AgentID")?;
+            required(&c.secret, "企业微信 Secret")?;
         }
         ChannelType::WecomRobot => {
             let c: WecomRobotConfig = parse(config)?;
             if c.webhook_url.trim().is_empty() {
-                required(&c.key, "WeCom robot key")?;
+                required(&c.key, "企业微信机器人 Key")?;
             }
         }
         ChannelType::DingtalkRobot => {
             let c: DingtalkRobotConfig = parse(config)?;
             if c.webhook_url.trim().is_empty() {
-                required(&c.access_token, "DingTalk access token")?;
+                required(&c.access_token, "钉钉机器人 Access Token")?;
             }
         }
         ChannelType::DingtalkApp => {
             let c: DingtalkAppConfig = parse(config)?;
-            required(&c.app_key, "DingTalk AppKey")?;
-            required(&c.app_secret, "DingTalk AppSecret")?;
-            required(&c.open_conversation_id, "DingTalk OpenConversationId")?;
+            required(&c.app_key, "钉钉 AppKey")?;
+            required(&c.app_secret, "钉钉 AppSecret")?;
+            required(&c.open_conversation_id, "钉钉 OpenConversationId")?;
         }
         ChannelType::FeishuRobot => {
             let c: FeishuRobotConfig = parse(config)?;
             if c.webhook_url.trim().is_empty() {
-                required(&c.token, "Feishu robot token")?;
+                required(&c.token, "飞书机器人 Token")?;
             }
         }
         ChannelType::Telegram => {
             let c: TelegramConfig = parse(config)?;
-            required(&c.bot_token, "Telegram bot token")?;
-            required(&c.chat_id, "Telegram chat ID")?;
+            validate_http_base_url(&telegram_api_base_url(&c.api_base_url), "Telegram API 地址")?;
+            required(&c.bot_token, "Telegram Bot Token")?;
+            required(&c.chat_id, "Telegram Chat ID")?;
         }
         ChannelType::Email => {
             let c: EmailConfig = parse(config)?;
-            required(&c.smtp_host, "SMTP host")?;
-            required(&c.sender_address, "email sender")?;
-            required(&c.receiver_addresses, "email receiver")?;
+            required(&c.smtp_host, "SMTP 服务器地址")?;
+            required(&c.sender_address, "发件邮箱")?;
+            required(&c.receiver_addresses, "收件邮箱")?;
         }
         ChannelType::Serverchan3 => required(
             &parse::<Serverchan3Config>(config)?.send_key,
-            "ServerChan SendKey",
+            "Server酱 SendKey",
         )?,
     }
     Ok(())
 }
 
 fn parse<T: DeserializeOwned>(value: &Value) -> Result<T, NotifyError> {
-    serde_json::from_value(value.clone()).map_err(|e| invalid(e.to_string()))
+    serde_json::from_value(value.clone()).map_err(|e| invalid(format!("配置数据格式错误：{e}")))
 }
 fn invalid(value: impl Into<String>) -> NotifyError {
     NotifyError::InvalidConfig(value.into())
 }
+impl From<reqwest::Error> for NotifyError {
+    fn from(error: reqwest::Error) -> Self {
+        let message = if error.is_timeout() {
+            "请求超时，请检查网络连接、服务地址或反代配置"
+        } else if error.is_connect() {
+            "无法连接通知服务，请检查网络连接、服务地址或反代配置"
+        } else if error.is_decode() {
+            "通知服务返回的数据无法解析"
+        } else if error.is_body() {
+            "读取通知服务响应失败"
+        } else {
+            "请检查网络连接和服务地址"
+        };
+        Self::Request(message.into())
+    }
+}
 fn required(value: &str, label: &str) -> Result<(), NotifyError> {
     if value.trim().is_empty() {
-        Err(invalid(format!("{label} is required")))
+        Err(invalid(format!("请填写{label}")))
     } else {
         Ok(())
     }
@@ -934,10 +974,10 @@ fn bark_server() -> String {
     "https://api.day.app".into()
 }
 fn wecom_api() -> String {
-    "https://qyapi.weixin.qq.com".into()
+    DEFAULT_WECOM_API_BASE_URL.into()
 }
 fn telegram_api() -> String {
-    "https://api.telegram.org".into()
+    DEFAULT_TELEGRAM_API_BASE_URL.into()
 }
 fn at_all() -> String {
     "@all".into()
@@ -965,8 +1005,30 @@ fn robot_url(url: &str, token: &str, prefix: &str) -> Result<String, NotifyError
     } else if !token.trim().is_empty() {
         Ok(format!("{prefix}{}", encode(token)))
     } else {
-        Err(invalid("robot webhook URL or token is required"))
+        Err(invalid("请填写机器人 Webhook URL 或访问密钥"))
     }
+}
+fn api_base_url(value: &str, default_value: &str) -> String {
+    let value = value.trim();
+    let value = if value.is_empty() {
+        default_value
+    } else {
+        value
+    };
+    value.trim_end_matches('/').to_owned()
+}
+fn wecom_api_base_url(value: &str) -> String {
+    api_base_url(value, DEFAULT_WECOM_API_BASE_URL)
+}
+fn telegram_api_base_url(value: &str) -> String {
+    api_base_url(value, DEFAULT_TELEGRAM_API_BASE_URL)
+}
+fn validate_http_base_url(value: &str, label: &str) -> Result<(), NotifyError> {
+    let url = Url::parse(value).map_err(|_| invalid(format!("{label}格式不正确")))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host().is_none() {
+        return Err(invalid(format!("{label}必须使用 HTTP 或 HTTPS 地址")));
+    }
+    Ok(())
 }
 fn is_json(value: &str) -> bool {
     serde_json::from_str::<Value>(value).is_ok()
@@ -1007,7 +1069,7 @@ fn mailbox(address: &str, name: &str, label: &str) -> Result<Mailbox, NotifyErro
     let address = address
         .trim()
         .parse::<Address>()
-        .map_err(|e| invalid(format!("invalid {label} address: {e}")))?;
+        .map_err(|e| invalid(format!("{label}地址格式不正确：{e}")))?;
     Ok(Mailbox::new(
         (!name.trim().is_empty()).then(|| name.trim().to_owned()),
         address,
@@ -1065,15 +1127,67 @@ fn validate_provider_response(provider: &str, body: &str) -> Result<(), NotifyEr
     if accepted {
         Ok(())
     } else {
-        Err(NotifyError::Provider(compact(body, 240)))
+        Err(NotifyError::Provider(provider_error(
+            provider, &value, body,
+        )))
+    }
+}
+
+fn provider_message(value: &Value) -> &str {
+    value
+        .get("errmsg")
+        .or_else(|| value.get("err_msg"))
+        .or_else(|| value.get("description"))
+        .or_else(|| value.get("message"))
+        .or_else(|| value.get("msg"))
+        .and_then(Value::as_str)
+        .unwrap_or("平台未返回错误说明")
+}
+
+fn provider_error(provider: &str, value: &Value, body: &str) -> String {
+    match provider {
+        "wecom_app" | "wecom_robot" => {
+            let errcode = value.get("errcode").and_then(Value::as_i64).unwrap_or(-1);
+            format_wecom_error("企业微信", errcode, provider_message(value))
+        }
+        "telegram" => format!("Telegram：{}", provider_message(value)),
+        "dingtalk_robot" | "dingtalk_app" => {
+            format!("钉钉：{}", provider_message(value))
+        }
+        "feishu_robot" => format!("飞书：{}", provider_message(value)),
+        "bark" => format!("Bark：{}", provider_message(value)),
+        "pushplus" => format!("PushPlus：{}", provider_message(value)),
+        "serverchan3" => format!("Server酱：{}", provider_message(value)),
+        _ => compact(body, 240),
+    }
+}
+
+fn format_wecom_error(context: &str, errcode: i64, message: &str) -> String {
+    match errcode {
+        60020 => format!(
+            "{context}返回 errcode 60020：当前出口 IP 未加入企业可信 IP，请在企业微信后台添加可信 IP，或配置固定出口的 API 反代地址"
+        ),
+        40013 => format!("{context}返回 errcode 40013：CorpID 无效，请检查企业 ID"),
+        40014 => format!("{context}返回 errcode 40014：access_token 无效"),
+        42001 => format!("{context}返回 errcode 42001：access_token 已过期"),
+        _ => format!("{context}返回 errcode {errcode}：{}", compact(message, 160)),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{body::Bytes, extract::RawForm, http::HeaderMap, routing::post, Router};
-    use std::sync::{Arc, Mutex};
+    use axum::{
+        body::Bytes,
+        extract::{Query, RawForm},
+        http::HeaderMap,
+        routing::{get, post},
+        Json, Router,
+    };
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Mutex},
+    };
 
     #[test]
     fn every_channel_is_supported_and_validated() {
@@ -1085,6 +1199,244 @@ mod tests {
                 channel.as_str()
             );
         }
+    }
+
+    #[test]
+    fn blank_api_base_urls_fall_back_to_official_endpoints() {
+        assert_eq!(wecom_api_base_url("  "), "https://qyapi.weixin.qq.com");
+        assert_eq!(telegram_api_base_url("\t"), "https://api.telegram.org");
+        assert_eq!(
+            telegram_api_base_url("https://proxy.example.com/telegram/"),
+            "https://proxy.example.com/telegram"
+        );
+    }
+
+    #[test]
+    fn invalid_api_base_url_returns_chinese_feedback() {
+        let error = validate_config(
+            ChannelType::WecomApp,
+            &json!({
+                "api_base_url": "ftp://qyapi.example.com",
+                "corp_id": "corp-id",
+                "agent_id": "1000001",
+                "secret": "secret"
+            }),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("企业微信 API 地址必须使用 HTTP 或 HTTPS 地址"));
+    }
+
+    #[tokio::test]
+    async fn wecom_app_requests_token_and_sends_expected_message() {
+        let token_query = Arc::new(Mutex::new(None::<HashMap<String, String>>));
+        let message_request = Arc::new(Mutex::new(None::<(HashMap<String, String>, Value)>));
+        let token_capture = token_query.clone();
+        let message_capture = message_request.clone();
+        let app = Router::new()
+            .route(
+                "/cgi-bin/gettoken",
+                get(move |Query(query): Query<HashMap<String, String>>| {
+                    let capture = token_capture.clone();
+                    async move {
+                        *capture.lock().unwrap() = Some(query);
+                        Json(json!({"errcode": 0, "access_token": "access-token"}))
+                    }
+                }),
+            )
+            .route(
+                "/cgi-bin/message/send",
+                post(
+                    move |Query(query): Query<HashMap<String, String>>, Json(body): Json<Value>| {
+                        let capture = message_capture.clone();
+                        async move {
+                            *capture.lock().unwrap() = Some((query, body));
+                            Json(json!({"errcode": 0, "errmsg": "ok"}))
+                        }
+                    },
+                ),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let receipt = Sender::new()
+            .unwrap()
+            .send(
+                ChannelType::WecomApp,
+                &json!({
+                    "api_base_url": format!("http://{address}"),
+                    "corp_id": "corp-id",
+                    "agent_id": "1000001",
+                    "secret": "corp-secret",
+                    "to_user": "user-a|user-b",
+                    "safe": true
+                }),
+                &NotificationMessage {
+                    title: "测试通知".into(),
+                    body: "企业微信消息正文".into(),
+                    custom_body: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(receipt.provider, "wecom_app");
+        let token_query = token_query.lock().unwrap().take().unwrap();
+        assert_eq!(
+            token_query.get("corpid").map(String::as_str),
+            Some("corp-id")
+        );
+        assert_eq!(
+            token_query.get("corpsecret").map(String::as_str),
+            Some("corp-secret")
+        );
+        let (send_query, body) = message_request.lock().unwrap().take().unwrap();
+        assert_eq!(
+            send_query.get("access_token").map(String::as_str),
+            Some("access-token")
+        );
+        assert_eq!(body["touser"], "user-a|user-b");
+        assert_eq!(body["agentid"], 1000001);
+        assert_eq!(body["text"]["content"], "企业微信消息正文");
+        assert_eq!(body["safe"], 1);
+    }
+
+    #[tokio::test]
+    async fn wecom_trusted_ip_error_has_actionable_chinese_feedback() {
+        let app = Router::new().route(
+            "/cgi-bin/gettoken",
+            get(|| async {
+                Json(json!({
+                    "errcode": 60020,
+                    "errmsg": "not allow to access from your ip"
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let error = Sender::new()
+            .unwrap()
+            .send(
+                ChannelType::WecomApp,
+                &json!({
+                    "api_base_url": format!("http://{address}"),
+                    "corp_id": "corp-id",
+                    "agent_id": "1000001",
+                    "secret": "must-not-leak"
+                }),
+                &NotificationMessage {
+                    title: "测试通知".into(),
+                    body: "测试正文".into(),
+                    custom_body: None,
+                },
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("errcode 60020"));
+        assert!(error.contains("企业可信 IP"));
+        assert!(error.contains("API 反代地址"));
+        assert!(!error.contains("must-not-leak"));
+    }
+
+    #[tokio::test]
+    async fn telegram_sends_expected_path_and_payload() {
+        let captured = Arc::new(Mutex::new(None::<Value>));
+        let capture = captured.clone();
+        let app = Router::new().route(
+            "/bottelegram-token/sendMessage",
+            post(move |Json(body): Json<Value>| {
+                let capture = capture.clone();
+                async move {
+                    *capture.lock().unwrap() = Some(body);
+                    Json(json!({"ok": true, "result": {"message_id": 1}}))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let receipt = Sender::new()
+            .unwrap()
+            .send(
+                ChannelType::Telegram,
+                &json!({
+                    "api_base_url": format!("http://{address}/"),
+                    "bot_token": "telegram-token",
+                    "chat_id": "-100123456",
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": true
+                }),
+                &NotificationMessage {
+                    title: "测试通知".into(),
+                    body: "<b>Telegram 消息正文</b>".into(),
+                    custom_body: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(receipt.provider, "telegram");
+        let body = captured.lock().unwrap().take().unwrap();
+        assert_eq!(body["chat_id"], "-100123456");
+        assert_eq!(body["text"], "<b>Telegram 消息正文</b>");
+        assert_eq!(body["parse_mode"], "HTML");
+        assert_eq!(body["disable_web_page_preview"], true);
+    }
+
+    #[tokio::test]
+    async fn telegram_rejection_identifies_provider_in_chinese_error() {
+        let app = Router::new().route(
+            "/bottoken/sendMessage",
+            post(|| async {
+                Json(json!({
+                    "ok": false,
+                    "error_code": 400,
+                    "description": "Bad Request: chat not found"
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let error = Sender::new()
+            .unwrap()
+            .send(
+                ChannelType::Telegram,
+                &json!({
+                    "api_base_url": format!("http://{address}"),
+                    "bot_token": "token",
+                    "chat_id": "missing-chat"
+                }),
+                &NotificationMessage {
+                    title: "测试通知".into(),
+                    body: "测试正文".into(),
+                    custom_body: None,
+                },
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert_eq!(
+            error,
+            "通知服务拒绝请求：Telegram：Bad Request: chat not found"
+        );
     }
 
     #[tokio::test]

@@ -73,10 +73,10 @@ const menuGroups: MenuConfigItem[] = [
   },
   {
     type: 'group',
-    label: '自动化与通知',
+    label: '通知与自动化',
     items: [
-      { path: '/automation', label: '自动化中心', icon: AutomationIcon },
       { path: '/notifications', label: '通知中心', icon: NotificationsIcon },
+      { path: '/automation', label: '自动化中心', icon: AutomationIcon },
     ],
   },
   {
