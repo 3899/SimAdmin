@@ -110,7 +110,9 @@ function ProtectedShell() {
 
   return (
     <WorkModeProvider>
-      <MainLayout />
+      <MainLayout
+        showLogout={authStatus?.settings?.password_protection_enabled === true}
+      />
     </WorkModeProvider>
   )
 }

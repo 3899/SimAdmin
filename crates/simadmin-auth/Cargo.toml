@@ -1,0 +1,12 @@
+[package]
+name = "simadmin-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+ring = "0.17"
+serde = { version = "1", features = ["derive"] }
+

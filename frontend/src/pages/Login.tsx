@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Alert,
@@ -21,7 +21,7 @@ import {
   Star as StarIcon,
 } from '@mui/icons-material'
 import { api } from '../api/current'
-import type { SecurityConfig } from '../api/types'
+import type { AuthStatusResponse, SecurityConfig } from '../api/types'
 import { PasswordStrengthHint } from '../components/PasswordStrengthHint'
 import {
   DEFAULT_SECURITY_SETTINGS,
@@ -35,12 +35,36 @@ import tgQrUrl from '../../../static/Community/TG_Chat.png'
 
 type AuthMode = 'login' | 'setup'
 
+export interface SingleAdminAuthClient {
+  getStatus(): Promise<AuthStatusResponse>
+  setup(password: string): Promise<void>
+  login(password: string): Promise<void>
+}
+
+export interface SingleAdminLoginBrand {
+  productName: string
+  loginSubtitle: string
+  setupSubtitle: string
+  logoUrl: string
+  repositoryUrl: string
+  repositoryLabel: string
+  version: string
+  copyright: string
+  community?: ReactNode
+  recovery?: {
+    description: string
+    resetCommand: string
+    clearCommand: string
+  }
+  renderForgotPassword?: (visible: boolean) => ReactNode
+}
+
 function getNextPath(next: string | null) {
   if (!next || !next.startsWith('/') || next.startsWith('/login')) return '/'
   return next
 }
 
-function LogoMark({ active }: { active: boolean }) {
+function LogoMark({ active, logoUrl, productName }: { active: boolean; logoUrl: string; productName: string }) {
   return (
     <Box
       sx={{
@@ -62,8 +86,8 @@ function LogoMark({ active }: { active: boolean }) {
     >
       <Box
         component="img"
-        src="/simadmin-logo.svg"
-        alt="SimAdmin"
+        src={logoUrl}
+        alt={productName}
         sx={{
           width: 132,
           height: 132,
@@ -155,7 +179,17 @@ function CommunityTooltip() {
   )
 }
 
-function ForgotPasswordTooltip({ visible }: { visible: boolean }) {
+function ForgotPasswordTooltip({
+  visible,
+  description,
+  resetCommand,
+  clearCommand,
+}: {
+  visible: boolean
+  description: string
+  resetCommand: string
+  clearCommand: string
+}) {
   return (
     <Tooltip
       arrow
@@ -186,18 +220,18 @@ function ForgotPasswordTooltip({ visible }: { visible: boolean }) {
       title={(
         <Stack spacing={1} sx={{ p: 1.5 }}>
           <Typography variant="body2">
-            忘记密码可通过 ADB/SSH 登录设备执行命令操作
+            {description}
           </Typography>
           <Typography variant="caption" component="div" sx={{ color: 'text.secondary', lineHeight: 1.7 }}>
             重置密码：
             <Box component="code" sx={{ fontFamily: 'monospace', color: 'text.primary' }}>
-              /opt/simadmin/simadmin auth reset-password
+              {resetCommand}
             </Box>
           </Typography>
           <Typography variant="caption" component="div" sx={{ color: 'text.secondary', lineHeight: 1.7 }}>
             清除密码：
             <Box component="code" sx={{ fontFamily: 'monospace', color: 'text.primary' }}>
-              /opt/simadmin/simadmin auth clear
+              {clearCommand}
             </Box>
           </Typography>
         </Stack>
@@ -223,7 +257,7 @@ function ForgotPasswordTooltip({ visible }: { visible: boolean }) {
   )
 }
 
-export default function Login() {
+export function SingleAdminLogin({ auth, brand }: { auth: SingleAdminAuthClient; brand: SingleAdminLoginBrand }) {
   const theme = useTheme()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -263,10 +297,9 @@ export default function Login() {
 
   useEffect(() => {
     let cancelled = false
-    api.getAuthStatus()
-      .then((response) => {
+    auth.getStatus()
+      .then((status) => {
         if (cancelled) return
-        const status = response.data
         if (status?.settings) setAuthSettings(status.settings)
         if (status?.authenticated) {
           void navigate(nextPath, { replace: true })
@@ -281,7 +314,7 @@ export default function Login() {
         if (!cancelled) setChecking(false)
       })
     return () => { cancelled = true }
-  }, [navigate, nextPath])
+  }, [auth, navigate, nextPath])
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -315,9 +348,9 @@ export default function Login() {
     setLoading(true)
     try {
       if (mode === 'setup') {
-        await api.setupAdminPassword(password)
+        await auth.setup(password)
       } else {
-        await api.login(password)
+        await auth.login(password)
       }
       void navigate(nextPath, { replace: true })
     } catch (err) {
@@ -331,8 +364,8 @@ export default function Login() {
     }
   }
 
-  const title = mode === 'setup' ? '设置管理员密码' : 'SimAdmin'
-  const subtitle = mode === 'setup' ? '此密码用于保护本设备的管理后台' : '开源 SIM/eSIM 设备管理后台'
+  const title = mode === 'setup' ? '设置管理员密码' : brand.productName
+  const subtitle = mode === 'setup' ? brand.setupSubtitle : brand.loginSubtitle
 
   return (
     <Box
@@ -384,7 +417,7 @@ export default function Login() {
             </Box>
           ) : (
             <Stack component="form" spacing={2.5} alignItems="center" noValidate onSubmit={(event) => { void handleSubmit(event) }}>
-              <LogoMark active={focused || loading} />
+              <LogoMark active={focused || loading} logoUrl={brand.logoUrl} productName={brand.productName} />
 
               <Stack spacing={1.5} sx={{ width: '100%' }}>
                 <Box
@@ -477,7 +510,7 @@ export default function Login() {
 
               <Box sx={{ width: '100%', minHeight: 24, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <Link
-                  href="https://github.com/3899/SimAdmin"
+                  href={brand.repositoryUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   underline="none"
@@ -492,7 +525,7 @@ export default function Login() {
                   }}
                 >
                   <GitHubIcon sx={{ fontSize: 18 }} />
-                  点亮 Star
+                  {brand.repositoryLabel}
                   <StarIcon sx={{ fontSize: 18, color: '#facc15' }} />
                 </Link>
                 {mode === 'login' && (
@@ -508,7 +541,15 @@ export default function Login() {
                     }}
                     aria-hidden={!showForgotPassword}
                   >
-                    <ForgotPasswordTooltip visible={showForgotPassword} />
+                    {brand.renderForgotPassword?.(showForgotPassword)
+                      ?? (brand.recovery && (
+                        <ForgotPasswordTooltip
+                          visible={showForgotPassword}
+                          description={brand.recovery.description}
+                          resetCommand={brand.recovery.resetCommand}
+                          clearCommand={brand.recovery.clearCommand}
+                        />
+                      ))}
                   </Box>
                 )}
               </Box>
@@ -526,21 +567,59 @@ export default function Login() {
           sx={{ fontSize: 13 }}
         >
           <Link
-            href="https://github.com/3899/SimAdmin"
+            href={brand.repositoryUrl}
             target="_blank"
             rel="noopener noreferrer"
             underline="none"
             color="inherit"
             sx={{ '&:hover': { color: 'primary.main' } }}
           >
-            Copyright © 2026 GitHub 3899
+            {brand.copyright}
           </Link>
+          {brand.community && <Typography component="span" color="text.disabled">|</Typography>}
+          {brand.community}
           <Typography component="span" color="text.disabled">|</Typography>
-          <CommunityTooltip />
-          <Typography component="span" color="text.disabled">|</Typography>
-          <Typography component="span" sx={{ font: 'inherit' }}>v{__APP_VERSION__}</Typography>
+          <Typography component="span" sx={{ font: 'inherit' }}>v{brand.version}</Typography>
         </Stack>
       </Stack>
     </Box>
+  )
+}
+
+const simAdminAuthClient: SingleAdminAuthClient = {
+  async getStatus() {
+    const response = await api.getAuthStatus()
+    if (!response.data) throw new Error('无法读取登录状态')
+    return response.data
+  },
+  async setup(password) {
+    await api.setupAdminPassword(password)
+  },
+  async login(password) {
+    await api.login(password)
+  },
+}
+
+export default function Login() {
+  return (
+    <SingleAdminLogin
+      auth={simAdminAuthClient}
+      brand={{
+        productName: 'SimAdmin',
+        loginSubtitle: '开源 SIM/eSIM 设备管理后台',
+        setupSubtitle: '此密码用于保护本设备的管理后台',
+        logoUrl: '/simadmin-logo.svg',
+        repositoryUrl: 'https://github.com/3899/SimAdmin',
+        repositoryLabel: '点亮 Star',
+        version: __APP_VERSION__,
+        copyright: 'Copyright © 2026 GitHub 3899',
+        community: <CommunityTooltip />,
+        recovery: {
+          description: '忘记密码可通过 ADB/SSH 登录设备执行命令操作',
+          resetCommand: '/opt/simadmin/simadmin auth reset-password',
+          clearCommand: '/opt/simadmin/simadmin auth clear',
+        },
+      }}
+    />
   )
 }

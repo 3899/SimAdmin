@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "backend",
   "crates/simadmin-agent",
+  "crates/simadmin-auth",
   "crates/simadmin-device-core",
   "crates/simadmin-notify",
   "crates/simadmin-protocol",

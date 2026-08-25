@@ -10,7 +10,11 @@ const DRAWER_WIDTH = 224
 const DRAWER_MINI_WIDTH = 64
 const LAYOUT_TRANSITION = '300ms cubic-bezier(0.4, 0, 0.2, 1)'
 
-export default function MainLayout() {
+interface MainLayoutProps {
+  showLogout?: boolean
+}
+
+export default function MainLayout({ showLogout = false }: MainLayoutProps) {
   const theme = useTheme<Theme>()
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -82,6 +86,7 @@ export default function MainLayout() {
             onMenuClick={handleDrawerToggle}
             refreshInterval={refreshInterval}
             onRefreshIntervalChange={setRefreshInterval}
+            showLogout={showLogout}
           />
 
           <Box

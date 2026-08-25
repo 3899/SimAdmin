@@ -1741,6 +1741,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "simadmin-agent",
+ "simadmin-auth",
  "simadmin-notify",
  "simadmin-protocol",
  "socket2 0.6.1",
@@ -1773,6 +1774,16 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "simadmin-auth"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "ring",
+ "serde",
 ]
 
 [[package]]

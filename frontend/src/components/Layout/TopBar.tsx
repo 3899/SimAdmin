@@ -25,6 +25,7 @@ import {
 import {
   Brightness4 as DarkModeIcon,
   Brightness7 as LightModeIcon,
+  Logout as LogoutIcon,
   Menu as MenuIcon,
   MoreVert as MoreVertIcon,
   Refresh as RefreshIcon,
@@ -45,6 +46,7 @@ interface TopBarProps {
   onMenuClick: () => void
   refreshInterval: number
   onRefreshIntervalChange: (interval: number) => void
+  showLogout?: boolean
 }
 
 function ServiceRestartIcon() {
@@ -68,6 +70,7 @@ export default function TopBar({
   onMenuClick,
   refreshInterval,
   onRefreshIntervalChange,
+  showLogout = false,
 }: TopBarProps) {
   const { mode, toggleTheme } = useTheme()
   const { triggerRefresh } = useRefreshInterval()
@@ -83,6 +86,7 @@ export default function TopBar({
   const [deviceRebootProgressOpen, setDeviceRebootProgressOpen] = useState(false)
   const [deviceRebootSteps, setDeviceRebootSteps] = useState<BasebandRestartStep[]>([])
   const [restartConfirmTarget, setRestartConfirmTarget] = useState<RestartConfirmTarget | null>(null)
+  const [logoutLoading, setLogoutLoading] = useState(false)
   const deviceRebootTimersRef = useRef<number[]>([])
   const title = drawerWidth <= 80 ? 'SimAdmin - SIM/eSIM 中枢' : 'SIM/eSIM 中枢'
 
@@ -243,6 +247,20 @@ export default function TopBar({
     setRefreshMenuAnchor(null)
   }
 
+  const handleLogout = async () => {
+    if (logoutLoading) return
+    setAnchorEl(null)
+    setLogoutLoading(true)
+    try {
+      await api.logout()
+      window.location.replace('/login')
+    } catch (err) {
+      setSystemActionSeverity('error')
+      setSystemActionMessage(err instanceof Error ? err.message : '退出登录失败')
+      setLogoutLoading(false)
+    }
+  }
+
   const getRefreshLabel = () => {
     if (refreshInterval === 0) return '手动'
     return `${refreshInterval / 1000}秒`
@@ -321,6 +339,22 @@ export default function TopBar({
           <IconButton color="default" onClick={(event) => setAnchorEl(event.currentTarget)} title="更多选项">
             <MoreVertIcon />
           </IconButton>
+          {showLogout && (
+            <Box sx={{ display: { xs: 'none', sm: 'inline-flex' } }}>
+              <Tooltip title="退出登录">
+                <IconButton
+                  color="default"
+                  aria-label="退出登录"
+                  disabled={logoutLoading}
+                  onClick={() => void handleLogout()}
+                >
+                  {logoutLoading
+                    ? <CircularProgress size={19} color="inherit" />
+                    : <LogoutIcon sx={{ fontSize: 22 }} />}
+                </IconButton>
+              </Tooltip>
+            </Box>
+          )}
         </Box>
 
         <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={() => setAnchorEl(null)} PaperProps={{ sx: { minWidth: 200, mt: 1 } }}>
@@ -340,6 +374,20 @@ export default function TopBar({
             <ListItemIcon><SpeedIcon fontSize="small" /></ListItemIcon>
             <ListItemText primary="刷新频率" secondary={getRefreshLabel()} secondaryTypographyProps={{ variant: 'caption' }} />
           </MenuItem>
+          {showLogout && (
+            <MenuItem
+              disabled={logoutLoading}
+              onClick={() => void handleLogout()}
+              sx={{ display: { xs: 'flex', sm: 'none' } }}
+            >
+              <ListItemIcon>
+                {logoutLoading
+                  ? <CircularProgress size={18} color="inherit" />
+                  : <LogoutIcon fontSize="small" />}
+              </ListItemIcon>
+              <ListItemText>退出登录</ListItemText>
+            </MenuItem>
+          )}
         </Menu>
 
         <Menu anchorEl={refreshMenuAnchor} open={Boolean(refreshMenuAnchor)} onClose={() => setRefreshMenuAnchor(null)}>

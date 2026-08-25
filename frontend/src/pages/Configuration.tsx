@@ -1,6 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
-import { createPortal } from 'react-dom'
 import {
   Alert,
   Box,
@@ -13,13 +12,7 @@ import {
   CircularProgress,
   Collapse,
   Divider,
-  FormControl,
   FormControlLabel,
-  IconButton,
-  InputBase,
-  InputLabel,
-  MenuItem,
-  Select,
   Snackbar,
   Stack,
   Switch,
@@ -29,14 +22,8 @@ import {
 } from '@mui/material'
 import Grid from '@mui/material/Grid'
 import {
-  AdminPanelSettings,
-  Add,
   FlightTakeoff,
-  Key,
-  Remove,
   Save,
-  Shield,
-  Timer,
   Wifi,
   Hub,
   ExpandMore,
@@ -48,15 +35,11 @@ import type { Theme } from '@mui/material/styles'
 import { useSimAdminApi } from '../contexts/ApiContext'
 import ErrorSnackbar from '../components/ErrorSnackbar'
 import { LAYOUT_BOTTOM_ACTION_BAR_ID } from '../components/Layout/layoutConstants'
-import { PasswordStrengthHint } from '../components/PasswordStrengthHint'
 import {
-  DEFAULT_SECURITY_SETTINGS,
-  PASSWORD_MAX_LENGTH,
-  normalizePasswordInput,
-  passwordPolicyHelperText,
-  validatePasswordAgainstSecurity,
-} from '../lib/passwordPolicy'
-import type { AirplaneModeResponse, HubConfig, HubRuntimeStatus, SecurityConfig } from '../api/types'
+  SingleAdminSecurityPanel,
+  type SingleAdminSecurityClient,
+} from '../components/SingleAdminSecurityPanel'
+import type { AirplaneModeResponse, HubConfig, HubRuntimeStatus } from '../api/types'
 
 interface HealthStatus {
   status: string
@@ -71,24 +54,6 @@ const primaryStatusChipSx = (theme: Theme) => ({
 })
 
 const controlFollowupGap = 2
-const PASSWORD_MIN_LENGTH_MIN = 1
-const SESSION_TTL_OPTIONS = [
-  { value: 24 * 60 * 60, label: '1 天' },
-  { value: 7 * 24 * 60 * 60, label: '7 天' },
-  { value: 14 * 24 * 60 * 60, label: '14 天' },
-  { value: 30 * 24 * 60 * 60, label: '30 天' },
-  { value: -1, label: '永不过期' },
-]
-const IDLE_TIMEOUT_OPTIONS = [
-  { value: 30 * 60, label: '30 分钟' },
-  { value: 60 * 60, label: '1 小时' },
-  { value: 2 * 60 * 60, label: '2 小时' },
-  { value: 3 * 60 * 60, label: '3 小时' },
-  { value: 6 * 60 * 60, label: '6 小时' },
-  { value: 0, label: '关闭' },
-]
-const DEFAULT_SECURITY_CONFIG: SecurityConfig = DEFAULT_SECURITY_SETTINGS
-const SECURITY_SETTINGS_UPDATED_EVENT = 'simadmin-security-settings-updated'
 const DEFAULT_HUB_CONFIG: HubConfig = { enabled: false, url: '', local_fallback_timeout_seconds: 120, local_fallback_enabled: true }
 
 const compactCardAlertSx = {
@@ -209,46 +174,6 @@ function ManagementModeOption({
 
 
 
-function mergeSecurityConfig(config?: Partial<SecurityConfig>): SecurityConfig {
-  return {
-    ...DEFAULT_SECURITY_CONFIG,
-    ...config,
-  }
-}
-
-function securityConfigEqual(a: SecurityConfig, b: SecurityConfig) {
-  return JSON.stringify(a) === JSON.stringify(b)
-}
-
-function countSecurityConfigChanges(a: SecurityConfig, b: SecurityConfig) {
-  const keys: Array<keyof SecurityConfig> = [
-    'password_protection_enabled',
-    'password_min_length',
-    'password_require_letters',
-    'password_require_digits',
-    'password_require_symbols',
-    'session_ttl_seconds',
-    'idle_timeout_seconds',
-  ]
-  return keys.filter((key) => a[key] !== b[key]).length
-}
-
-function validateSecurityConfig(config: SecurityConfig) {
-  if (!Number.isInteger(config.password_min_length)
-    || config.password_min_length < PASSWORD_MIN_LENGTH_MIN
-    || config.password_min_length > PASSWORD_MAX_LENGTH) {
-    return `密码最小长度需为 ${PASSWORD_MIN_LENGTH_MIN}-${PASSWORD_MAX_LENGTH} 之间的整数`
-  }
-  if (!config.password_require_letters
-    && !config.password_require_digits
-    && !config.password_require_symbols) {
-    return '字符类型要求至少需要选择一项'
-  }
-  return null
-}
-
-
-
 export default function ConfigurationPage({ embedded = false }: { embedded?: boolean }) {
   const api = useSimAdminApi()
   const location = useLocation()
@@ -261,20 +186,29 @@ export default function ConfigurationPage({ embedded = false }: { embedded?: boo
   const [airplaneSwitching, setAirplaneSwitching] = useState(false)
   const [healthStatus, setHealthStatus] = useState<HealthStatus | null>(null)
   const [healthLoading, setHealthLoading] = useState(false)
-  const [authConfigured, setAuthConfigured] = useState(false)
-  const [securityConfig, setSecurityConfig] = useState<SecurityConfig>(() => DEFAULT_SECURITY_CONFIG)
-  const [savedSecurityConfig, setSavedSecurityConfig] = useState<SecurityConfig>(() => DEFAULT_SECURITY_CONFIG)
-  const [passwordMinLengthInput, setPasswordMinLengthInput] = useState(String(DEFAULT_SECURITY_CONFIG.password_min_length))
-  const [securitySaving, setSecuritySaving] = useState(false)
-  const [passwordUpdating, setPasswordUpdating] = useState(false)
-  const [newPassword, setNewPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [bottomActionBarHost, setBottomActionBarHost] = useState<HTMLElement | null>(null)
   const [hubConfig, setHubConfig] = useState<HubConfig>(DEFAULT_HUB_CONFIG)
   const [hubRuntime, setHubRuntime] = useState<HubRuntimeStatus | null>(null)
   const [hubUrlDraft, setHubUrlDraft] = useState('')
   const [hubSaving, setHubSaving] = useState(false)
   const [hubAdvancedOpen, setHubAdvancedOpen] = useState(false)
+  const securityClient = useMemo<SingleAdminSecurityClient>(() => ({
+    async getSettings() {
+      const response = await api.getAuthSettings()
+      if (!response.data) throw new Error('读取安全设置失败')
+      return response.data
+    },
+    async saveSettings(settings) {
+      const response = await api.setAuthSettings(settings)
+      if (!response.data) throw new Error('保存安全设置失败')
+      return response.data
+    },
+    async setupPassword(password) {
+      await api.setupAdminPassword(password)
+    },
+    async changePassword(password) {
+      await api.changeAdminPassword(password)
+    },
+  }), [api])
 
   const checkHealth = async () => {
     setHealthLoading(true)
@@ -299,22 +233,14 @@ export default function ConfigurationPage({ embedded = false }: { embedded?: boo
     setError(null)
 
     try {
-      const [dataRes, airplaneModeRes, authSettingsRes, hubRes] = await Promise.all([
+      const [dataRes, airplaneModeRes, hubRes] = await Promise.all([
         api.getDataStatus(),
         api.getAirplaneMode(),
-        embedded ? Promise.resolve(null) : api.getAuthSettings(),
         embedded ? Promise.resolve(null) : api.getHubSettings(),
       ])
 
       if (dataRes.data) setDataStatus(dataRes.data.active)
       if (airplaneModeRes.data) setAirplaneMode(airplaneModeRes.data)
-      if (authSettingsRes?.data) {
-        const loadedSecurityConfig = mergeSecurityConfig(authSettingsRes.data.settings)
-        setAuthConfigured(authSettingsRes.data.configured)
-        setSecurityConfig(loadedSecurityConfig)
-        setSavedSecurityConfig(loadedSecurityConfig)
-        setPasswordMinLengthInput(String(loadedSecurityConfig.password_min_length))
-      }
       if (hubRes?.data) {
         setHubConfig(hubRes.data.config)
         setHubRuntime(hubRes.data.runtime)
@@ -341,12 +267,6 @@ export default function ConfigurationPage({ embedded = false }: { embedded?: boo
     return () => window.clearInterval(interval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [embedded])
-
-  useEffect(() => {
-    setBottomActionBarHost(document.getElementById(LAYOUT_BOTTOM_ACTION_BAR_ID))
-  }, [])
-
-
 
   const toggleDataConnection = async () => {
     try {
@@ -426,118 +346,6 @@ export default function ConfigurationPage({ embedded = false }: { embedded?: boo
   }
 
 
-
-  const patchSecurityConfig = (patch: Partial<SecurityConfig>) => {
-    setSecurityConfig((prev) => ({ ...prev, ...patch }))
-  }
-
-  const updatePasswordMinLength = (value: number) => {
-    const clampedValue = Math.min(Math.max(value, PASSWORD_MIN_LENGTH_MIN), PASSWORD_MAX_LENGTH)
-    setPasswordMinLengthInput(String(clampedValue))
-    patchSecurityConfig({ password_min_length: clampedValue })
-  }
-
-  const handlePasswordMinLengthInputChange = (value: string) => {
-    const digits = value.replace(/\D/g, '').slice(0, 2)
-    if (!digits) {
-      setPasswordMinLengthInput('')
-      return
-    }
-
-    const numericValue = Number(digits)
-    updatePasswordMinLength(numericValue)
-  }
-
-  const commitPasswordMinLengthInput = () => {
-    if (!passwordMinLengthInput) {
-      setPasswordMinLengthInput(String(securityConfig.password_min_length))
-    }
-  }
-
-  const resetSecuritySettings = () => {
-    setSecurityConfig(savedSecurityConfig)
-    setPasswordMinLengthInput(String(savedSecurityConfig.password_min_length))
-  }
-
-  const saveSecuritySettings = async () => {
-    const validationError = validateSecurityConfig(securityConfig)
-    if (validationError) {
-      setError(validationError)
-      return
-    }
-
-    setSecuritySaving(true)
-    setError(null)
-    setSuccess(null)
-    try {
-      const response = await api.setAuthSettings(securityConfig)
-      const nextSecurityConfig = mergeSecurityConfig(response.data)
-      setSecurityConfig(nextSecurityConfig)
-      setSavedSecurityConfig(nextSecurityConfig)
-      setPasswordMinLengthInput(String(nextSecurityConfig.password_min_length))
-      window.dispatchEvent(new CustomEvent(SECURITY_SETTINGS_UPDATED_EVENT, { detail: nextSecurityConfig }))
-      setSuccess('安全设置已保存')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setSecuritySaving(false)
-    }
-  }
-
-  const updateAdminPassword = async () => {
-    if (!newPassword) {
-      setError('请输入新管理员密码')
-      return
-    }
-    if (newPassword !== confirmPassword) {
-      setError('两次输入的新密码不一致')
-      return
-    }
-    const passwordError = validatePasswordAgainstSecurity(newPassword, savedSecurityConfig)
-    if (passwordError) {
-      setError(passwordError)
-      return
-    }
-
-    setPasswordUpdating(true)
-    setError(null)
-    setSuccess(null)
-    try {
-      if (authConfigured) {
-        await api.changeAdminPassword(newPassword)
-      } else {
-        await api.setupAdminPassword(newPassword)
-      }
-      setAuthConfigured(true)
-      setNewPassword('')
-      setConfirmPassword('')
-      setSuccess('管理员密码已更新')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setPasswordUpdating(false)
-    }
-  }
-
-  const handleNewPasswordChange = (value: string) => {
-    const normalized = normalizePasswordInput(value, savedSecurityConfig)
-    setNewPassword(normalized)
-    if (value !== normalized) {
-      setError(`${passwordPolicyHelperText(savedSecurityConfig)}，不能包含空格、中文或未启用的字符类型`)
-    } else if (error?.includes('不能包含空格、中文或未启用的字符类型')) {
-      setError(null)
-    }
-  }
-
-  const handleConfirmPasswordChange = (value: string) => {
-    const normalized = normalizePasswordInput(value, savedSecurityConfig)
-    setConfirmPassword(normalized)
-    if (value !== normalized) {
-      setError(`${passwordPolicyHelperText(savedSecurityConfig)}，不能包含空格、中文或未启用的字符类型`)
-    } else if (error?.includes('不能包含空格、中文或未启用的字符类型')) {
-      setError(null)
-    }
-  }
 
   const renderHealthBadge = () => {
     const healthOk = healthStatus?.status === 'ok'
@@ -637,358 +445,12 @@ export default function ConfigurationPage({ embedded = false }: { embedded?: boo
 
 
 
-  const renderSecurityPanel = () => {
-    const securityDirty = !securityConfigEqual(securityConfig, savedSecurityConfig)
-    const dirtySettingCount = countSecurityConfigChanges(securityConfig, savedSecurityConfig)
-    const typeRequirementValid = securityConfig.password_require_letters
-      || securityConfig.password_require_digits
-      || securityConfig.password_require_symbols
-
-    return (
-      <Box>
-        <Stack spacing={3}>
-          <Card>
-            <CardHeader
-              avatar={<AdminPanelSettings color="primary" />}
-              title="账户安全"
-              titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
-              action={
-                <Chip
-                  label={securityConfig.password_protection_enabled ? '已启用' : '已关闭'}
-                  color={securityConfig.password_protection_enabled ? 'success' : 'default'}
-                  variant={securityConfig.password_protection_enabled ? 'outlined' : undefined}
-                  size="small"
-                />
-              }
-            />
-            <CardContent>
-              <Typography variant="body2" color="text.secondary">
-                控制 Web 管理界面的访问权限，启用密码保护可防止未经授权的修改。
-              </Typography>
-
-              <Box
-                sx={{
-                  mt: 2.5,
-                  p: 2,
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  borderRadius: 1.5,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 2,
-                }}
-              >
-                <Box minWidth={0}>
-                  <Typography fontWeight={700}>启用密码保护</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    启用后，进入系统需验证管理员密码。
-                  </Typography>
-                </Box>
-                <Switch
-                  checked={securityConfig.password_protection_enabled}
-                  onChange={(event) => patchSecurityConfig({ password_protection_enabled: event.target.checked })}
-                />
-              </Box>
-
-              {!securityConfig.password_protection_enabled && (
-                <Alert severity="warning" sx={{ mt: 2 }}>
-                  关闭密码保护后，所有 Web 页面和业务 API 将跳过管理员密码校验。
-                </Alert>
-              )}
-
-              <Divider sx={{ my: 3 }} />
-
-              <Stack spacing={2}>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <Key color="primary" fontSize="small" />
-                  <Typography fontWeight={700}>修改管理员密码</Typography>
-                </Box>
-                <Grid container spacing={2}>
-                  <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField
-                      label="新密码"
-                      type="password"
-                      value={newPassword}
-                      onChange={(event) => handleNewPasswordChange(event.target.value)}
-                      disabled={passwordUpdating}
-                      helperText={passwordPolicyHelperText(savedSecurityConfig)}
-                      fullWidth
-                    />
-                    <Box mt={1}>
-                      <PasswordStrengthHint password={newPassword} settings={savedSecurityConfig} />
-                    </Box>
-                  </Grid>
-                  <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField
-                      label="确认新密码"
-                      type="password"
-                      value={confirmPassword}
-                      onChange={(event) => handleConfirmPasswordChange(event.target.value)}
-                      disabled={passwordUpdating}
-                      fullWidth
-                    />
-                  </Grid>
-                </Grid>
-                <Box>
-                  <Button
-                    variant="contained"
-                    onClick={() => void updateAdminPassword()}
-                    disabled={passwordUpdating || !newPassword || !confirmPassword}
-                    startIcon={passwordUpdating ? <CircularProgress size={16} color="inherit" /> : <Key />}
-                  >
-                    更新密码
-                  </Button>
-                </Box>
-              </Stack>
-            </CardContent>
-          </Card>
-
-          <Grid container spacing={3} alignItems="stretch">
-            <Grid size={{ xs: 12, md: 6 }} sx={{ display: 'flex' }}>
-              <Card sx={{ width: 1, height: '100%', display: 'flex', flexDirection: 'column' }}>
-                <CardHeader
-                  avatar={<Shield color="primary" />}
-                  title="密码策略"
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
-                />
-                <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
-                  <Typography variant="body2" color="text.secondary">
-                    设定系统接受的管理员密码强度要求，后续首次设置或修改密码时生效。
-                  </Typography>
-
-                  <Box display="flex" alignItems="center" justifyContent="space-between" gap={2} mt={3}>
-                    <Box>
-                      <Typography fontWeight={700}>最小长度</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        限制密码的最低字符数
-                      </Typography>
-                    </Box>
-                    <Box
-                      sx={(theme) => ({
-                        alignItems: 'center',
-                        bgcolor: theme.palette.background.paper,
-                        border: '1px solid',
-                        borderColor: 'divider',
-                        borderRadius: 1,
-                        display: 'inline-flex',
-                        height: 40,
-                        overflow: 'hidden',
-                      })}
-                    >
-                      <IconButton
-                        aria-label="减少密码最小长度"
-                        disabled={securityConfig.password_min_length <= PASSWORD_MIN_LENGTH_MIN}
-                        onClick={() => updatePasswordMinLength(securityConfig.password_min_length - 1)}
-                        size="small"
-                        sx={{ borderRadius: 0, height: 40, width: 40 }}
-                      >
-                        <Remove fontSize="small" />
-                      </IconButton>
-                      <InputBase
-                        value={passwordMinLengthInput}
-                        onBlur={commitPasswordMinLengthInput}
-                        onChange={(event) => handlePasswordMinLengthInputChange(event.target.value)}
-                        inputProps={{
-                          'aria-label': '密码最小长度',
-                          inputMode: 'numeric',
-                          maxLength: 2,
-                          pattern: '[0-9]*',
-                        }}
-                        aria-live="polite"
-                        sx={(theme) => ({
-                          alignSelf: 'stretch',
-                          borderLeft: `1px solid ${theme.palette.divider}`,
-                          borderRight: `1px solid ${theme.palette.divider}`,
-                          minWidth: 44,
-                          width: 44,
-                          px: 1,
-                          '& input': {
-                            color: theme.palette.text.primary,
-                            fontSize: theme.typography.body2.fontSize,
-                            fontWeight: 400,
-                            height: '100%',
-                            p: 0,
-                            textAlign: 'center',
-                          },
-                        })}
-                      />
-                      <IconButton
-                        aria-label="增加密码最小长度"
-                        disabled={securityConfig.password_min_length >= PASSWORD_MAX_LENGTH}
-                        onClick={() => updatePasswordMinLength(securityConfig.password_min_length + 1)}
-                        size="small"
-                        sx={{ borderRadius: 0, height: 40, width: 40 }}
-                      >
-                        <Add fontSize="small" />
-                      </IconButton>
-                    </Box>
-                  </Box>
-
-                  <Divider sx={{ my: 2 }} />
-
-                  <Stack spacing={1.5}>
-                    <Box display="flex" alignItems="center" justifyContent="space-between" gap={2}>
-                      <Box>
-                        <Typography component="div" fontWeight={600}>
-                          包含英文字母
-                          <Typography component="span" variant="caption" color="text.secondary">
-                            （a-z、A-Z）
-                          </Typography>
-                        </Typography>
-                      </Box>
-                      <Switch
-                        checked={securityConfig.password_require_letters}
-                        onChange={(event) => patchSecurityConfig({ password_require_letters: event.target.checked })}
-                      />
-                    </Box>
-                    <Box display="flex" alignItems="center" justifyContent="space-between" gap={2}>
-                      <Box>
-                        <Typography component="div" fontWeight={600}>
-                          包含阿拉伯数字
-                          <Typography component="span" variant="caption" color="text.secondary">
-                            （0-9）
-                          </Typography>
-                        </Typography>
-                      </Box>
-                      <Switch
-                        checked={securityConfig.password_require_digits}
-                        onChange={(event) => patchSecurityConfig({ password_require_digits: event.target.checked })}
-                      />
-                    </Box>
-                    <Box display="flex" alignItems="center" justifyContent="space-between" gap={2}>
-                      <Box>
-                        <Typography component="div" fontWeight={600}>
-                          包含特殊符号
-                          <Typography component="span" variant="caption" color="text.secondary">
-                            （! @ # $ 等可见符号）
-                          </Typography>
-                        </Typography>
-                      </Box>
-                      <Switch
-                        checked={securityConfig.password_require_symbols}
-                        onChange={(event) => patchSecurityConfig({ password_require_symbols: event.target.checked })}
-                      />
-                    </Box>
-                  </Stack>
-
-                  {!typeRequirementValid && (
-                    <Alert severity="error" sx={{ mt: 2 }}>
-                      字符类型要求至少需要选择一项。
-                    </Alert>
-                  )}
-                </CardContent>
-              </Card>
-            </Grid>
-
-            <Grid size={{ xs: 12, md: 6 }} sx={{ display: 'flex' }}>
-              <Card sx={{ width: 1, height: '100%', display: 'flex', flexDirection: 'column' }}>
-                <CardHeader
-                  avatar={<Timer color="primary" />}
-                  title="会话控制"
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
-                />
-                <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
-                  <Typography variant="body2" color="text.secondary">
-                    管理用户登录状态的有效期以及浏览器空闲自动退出行为。
-                  </Typography>
-
-                  <Stack spacing={2.5} mt={3} sx={{ flexGrow: 1 }}>
-                    <FormControl fullWidth>
-                      <InputLabel>会话有效期</InputLabel>
-                      <Select
-                        value={securityConfig.session_ttl_seconds}
-                        label="会话有效期"
-                        onChange={(event) => patchSecurityConfig({ session_ttl_seconds: Number(event.target.value) })}
-                      >
-                        {SESSION_TTL_OPTIONS.map((option) => (
-                          <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-
-                    <FormControl fullWidth>
-                      <InputLabel>空闲超时</InputLabel>
-                      <Select
-                        value={securityConfig.idle_timeout_seconds}
-                        label="空闲超时"
-                        onChange={(event) => patchSecurityConfig({ idle_timeout_seconds: Number(event.target.value) })}
-                      >
-                        {IDLE_TIMEOUT_OPTIONS.map((option) => (
-                          <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-
-                    <Alert severity="warning" sx={{ ...compactCardAlertSx, mt: 'auto' }}>
-                      公共网络环境建议设置较短的空闲超时，避免设备被未授权人员操作。
-                    </Alert>
-                  </Stack>
-                </CardContent>
-              </Card>
-            </Grid>
-          </Grid>
-        </Stack>
-
-        {isSecurity && bottomActionBarHost && securityDirty && createPortal(
-          <Box
-            sx={{
-              '@keyframes securityActionBarIn': {
-                from: {
-                  opacity: 0,
-                  transform: 'translateY(8px)',
-                },
-                to: {
-                  opacity: 1,
-                  transform: 'translateY(0)',
-                },
-              },
-              alignItems: 'center',
-              animation: 'securityActionBarIn 180ms ease',
-              display: 'flex',
-              gap: 1.5,
-              justifyContent: 'space-between',
-              minWidth: 0,
-              width: 1,
-            }}
-          >
-            <Typography
-              variant="body2"
-              color="warning.main"
-              sx={{
-                fontWeight: 500,
-                minWidth: 0,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              有未保存的设置项：{dirtySettingCount}
-            </Typography>
-            <Box display="flex" justifyContent="flex-end" gap={1.5} flexShrink={0}>
-              <Button
-                variant="outlined"
-                disabled={securitySaving}
-                onClick={resetSecuritySettings}
-              >
-                还原
-              </Button>
-              <Button
-                variant="contained"
-                startIcon={securitySaving ? <CircularProgress size={16} color="inherit" /> : <Save />}
-                disabled={securitySaving || !typeRequirementValid}
-                onClick={() => void saveSecuritySettings()}
-              >
-                保存安全设置
-              </Button>
-            </Box>
-          </Box>,
-          bottomActionBarHost,
-        )}
-      </Box>
-    )
-  }
-
+  const renderSecurityPanel = () => (
+    <SingleAdminSecurityPanel
+      client={securityClient}
+      actionBarHostId={LAYOUT_BOTTOM_ACTION_BAR_ID}
+    />
+  )
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">

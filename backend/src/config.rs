@@ -11,6 +11,7 @@ use std::sync::{Arc, RwLock};
 use tracing::{info, warn};
 
 use crate::models::WorkMode;
+pub use simadmin_auth::SecurityConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HubConfig {
@@ -645,25 +646,6 @@ pub struct VersionUpdateNotificationConfig {
     pub proxy_prefix: String,
     #[serde(default)]
     pub last_notified_version: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct SecurityConfig {
-    #[serde(default)]
-    pub password_protection_enabled: bool,
-    #[serde(default = "default_password_min_length")]
-    pub password_min_length: u8,
-    #[serde(default = "default_true")]
-    pub password_require_letters: bool,
-    #[serde(default = "default_true")]
-    pub password_require_digits: bool,
-    #[serde(default = "default_true")]
-    pub password_require_symbols: bool,
-    #[serde(default = "default_session_ttl_seconds")]
-    pub session_ttl_seconds: i64,
-    #[serde(default = "default_idle_timeout_seconds")]
-    pub idle_timeout_seconds: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1396,20 +1378,6 @@ impl Default for VersionUpdateNotificationConfig {
     }
 }
 
-impl Default for SecurityConfig {
-    fn default() -> Self {
-        Self {
-            password_protection_enabled: false,
-            password_min_length: default_password_min_length(),
-            password_require_letters: true,
-            password_require_digits: true,
-            password_require_symbols: true,
-            session_ttl_seconds: default_session_ttl_seconds(),
-            idle_timeout_seconds: default_idle_timeout_seconds(),
-        }
-    }
-}
-
 impl Default for DdnsConfig {
     fn default() -> Self {
         Self {
@@ -1814,18 +1782,6 @@ fn default_roaming_allowed() -> bool {
 
 fn default_data_enabled() -> bool {
     false
-}
-
-fn default_password_min_length() -> u8 {
-    8
-}
-
-fn default_session_ttl_seconds() -> i64 {
-    7 * 24 * 60 * 60
-}
-
-fn default_idle_timeout_seconds() -> i64 {
-    60 * 60
 }
 
 fn default_apn_protocol() -> String {
