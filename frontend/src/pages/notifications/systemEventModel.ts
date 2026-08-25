@@ -57,6 +57,7 @@ export const SYSTEM_EVENT_GROUPS: SystemEventGroup[] = [
       { code: 'esim.profile_enable_failed', label: 'Profile 启用失败', defaultEnabled: true },
       { code: 'esim.profile_deleted', label: 'Profile 删除', defaultEnabled: true },
       { code: 'esim.profile_switch_baseband_recovery_failed', label: 'Profile 切换后基带恢复失败', defaultEnabled: true },
+      { code: 'esim.rsp_notification_delivery_failed', label: '运营商 Profile 通知提交失败', defaultEnabled: true },
     ],
   },
   {

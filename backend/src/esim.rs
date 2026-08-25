@@ -17,8 +17,8 @@ use tokio::sync::Mutex;
 use crate::config::ConfigManager;
 use crate::models::{
     EsimCommandResponse, EsimDownloadRequest, EsimEuiccInfo, EsimLpacRepairRequest,
-    EsimLpacRepairResponse, EsimLpacStatusResponse, EsimProfile, EsimProfilesResponse, WorkMode,
-    WorkModeResponse,
+    EsimLpacRepairResponse, EsimLpacStatusResponse, EsimProfile, EsimProfilesResponse,
+    EsimRspNotification, WorkMode, WorkModeResponse,
 };
 
 const ESIM_SHORT_TIMEOUT_SECS: u64 = 20;
@@ -263,19 +263,66 @@ impl EsimSupervisor {
         Ok(normalize_profiles(response))
     }
 
+    /// 读取 eUICC 中尚未处理的 RSP Profile 管理通知。
+    pub async fn get_rsp_notifications(&self) -> Result<Vec<EsimRspNotification>, EsimApiError> {
+        let response = self
+            .call_lpac(
+                "notifications",
+                &["notification", "list"],
+                ESIM_SHORT_TIMEOUT_SECS,
+            )
+            .await?;
+        if !command_succeeded(&response) {
+            return Err(EsimApiError::Command(response.msg));
+        }
+        Ok(normalize_rsp_notifications(response))
+    }
+
+    /// 将指定 RSP 通知提交到运营商服务器，但不从 eUICC 删除。
+    pub async fn process_rsp_notification(&self, sequence_number: u64) -> Result<(), EsimApiError> {
+        self.run_rsp_notification_command("process", sequence_number)
+            .await
+    }
+
+    /// 从 eUICC 删除已经成功提交的 RSP 通知。
+    pub async fn remove_rsp_notification(&self, sequence_number: u64) -> Result<(), EsimApiError> {
+        self.run_rsp_notification_command("remove", sequence_number)
+            .await
+    }
+
+    async fn run_rsp_notification_command(
+        &self,
+        subcommand: &str,
+        sequence_number: u64,
+    ) -> Result<(), EsimApiError> {
+        let sequence_number = sequence_number.to_string();
+        let response = self
+            .call_lpac(
+                "notification",
+                &["notification", subcommand, sequence_number.as_str()],
+                ESIM_LONG_TIMEOUT_SECS,
+            )
+            .await?;
+        if command_succeeded(&response) {
+            Ok(())
+        } else {
+            Err(EsimApiError::Command(response.msg))
+        }
+    }
+
     pub async fn enable_profile(&self, iccid: String) -> Result<EsimCommandResponse, EsimApiError> {
         self.enable_profile_with_refresh_flag(iccid, true).await
     }
 
     pub async fn enable_profile_with_refresh_flag(
         &self,
-        iccid: String,
+        identifier: String,
         refresh: bool,
     ) -> Result<EsimCommandResponse, EsimApiError> {
         let refresh_flag = if refresh { "1" } else { "0" };
         self.call_lpac(
             "enable",
-            &["profile", "enable", iccid.as_str(), refresh_flag],
+            &["profile", "enable", identifier.as_str(), refresh_flag],
             ESIM_LONG_TIMEOUT_SECS,
         )
         .await
@@ -338,6 +385,33 @@ fn command_succeeded(response: &EsimCommandResponse) -> bool {
         && (response.status.is_empty()
             || response.status.eq_ignore_ascii_case("success")
             || response.status.eq_ignore_ascii_case("ok"))
+}
+
+fn normalize_rsp_notifications(response: EsimCommandResponse) -> Vec<EsimRspNotification> {
+    response
+        .data
+        .as_ref()
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|value| {
+            let sequence_number = value
+                .get("seqNumber")
+                .or_else(|| value.get("sequenceNumber"))
+                .or_else(|| value.get("sequence_number"))
+                .and_then(|value| {
+                    value
+                        .as_u64()
+                        .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+                })?;
+            Some(EsimRspNotification {
+                sequence_number,
+                operation: string_from(value, &["profileManagementOperation", "operation"])
+                    .unwrap_or_default(),
+                iccid: string_from(value, &["iccid", "ICCID"]).unwrap_or_default(),
+            })
+        })
+        .collect()
 }
 
 struct LpacProbe {
@@ -1684,5 +1758,40 @@ mod tests {
         assert_eq!(profile.mnc.as_deref(), Some("010"));
         assert_eq!(profile.disable_allowed, Some(true));
         assert_eq!(profile.delete_allowed, Some(true));
+    }
+
+    #[test]
+    fn parses_rsp_notification_list_and_sequence_aliases() {
+        let response = EsimCommandResponse {
+            data: Some(json!([
+                {
+                    "seqNumber": 41,
+                    "profileManagementOperation": "install",
+                    "iccid": "TEST_ICCID_1"
+                },
+                {
+                    "sequenceNumber": "42",
+                    "operation": "enable",
+                    "ICCID": "TEST_ICCID_2"
+                }
+            ])),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            normalize_rsp_notifications(response),
+            vec![
+                EsimRspNotification {
+                    sequence_number: 41,
+                    operation: "install".to_string(),
+                    iccid: "TEST_ICCID_1".to_string(),
+                },
+                EsimRspNotification {
+                    sequence_number: 42,
+                    operation: "enable".to_string(),
+                    iccid: "TEST_ICCID_2".to_string(),
+                },
+            ]
+        );
     }
 }
