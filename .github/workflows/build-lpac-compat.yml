@@ -216,5 +216,4 @@ jobs:
             release/lpac-linux-*.zip
             release/lpac.json
             release/SHA256SUMS
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.SIMADMIN_RELEASE_TOKEN || github.token }}

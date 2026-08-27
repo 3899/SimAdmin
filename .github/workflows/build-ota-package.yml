@@ -258,7 +258,6 @@ jobs:
           full_changelog_line = f'**Full Changelog**: https://github.com/{repository}/compare/{prev_tag}...v{version}'
 
           body = (
-              f'## OTA 更新包\n\n'
               f'### 版本信息\n\n'
               f'- **版本**: {version}\n'
               f'- **Commit**: {commit_sha}\n'
@@ -290,8 +289,7 @@ jobs:
           draft: false
           prerelease: ${{ inputs.release_type == '预发布版（pre-release）' }}
           make_latest: ${{ inputs.release_type == '最新正式版（latest release）' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.SIMADMIN_RELEASE_TOKEN || github.token }}
 
       - name: Build summary
         env:

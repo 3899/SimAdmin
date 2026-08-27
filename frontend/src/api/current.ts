@@ -57,6 +57,7 @@ import type {
   OperatorListResponse,
   OtaStatusResponse,
   OtaLatestReleaseResponse,
+  OtaLatestReleaseRequest,
   OtaOnlinePrepareRequest,
   OtaUploadResponse,
   RadioMode,
@@ -1031,7 +1032,7 @@ export class SimAdminCurrentAPI {
     })
   }
 
-  async getLatestOtaRelease(config: OtaOnlinePrepareRequest) {
+  async getLatestOtaRelease(config: OtaLatestReleaseRequest) {
     return this.request<ApiResponse<OtaLatestReleaseResponse>>('/ota/latest-release', {
       method: 'POST',
       body: JSON.stringify(config),

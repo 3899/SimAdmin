@@ -973,6 +973,8 @@ pub struct OtaMeta {
     pub min_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub edition: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wificalling: Option<bool>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -1005,6 +1007,14 @@ pub struct OtaUploadResponse {
 #[derive(Debug, Default, Deserialize)]
 pub struct OtaOnlinePrepareRequest {
     pub proxy_prefix: Option<String>,
+    pub asset_name: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct OtaLatestReleaseRequest {
+    pub proxy_prefix: Option<String>,
+    #[serde(default)]
+    pub include_variants: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -1023,6 +1033,8 @@ pub struct OtaLatestReleaseResponse {
     pub body: Option<String>,
     pub html_url: Option<String>,
     pub assets: Vec<OtaReleaseAsset>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_asset_selection: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

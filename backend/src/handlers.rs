@@ -4445,7 +4445,7 @@ pub async fn upload_ota_handler(body: axum::body::Bytes) -> impl IntoResponse {
 
 /// POST /api/ota/latest-release
 pub async fn get_latest_ota_release_handler(
-    Json(req): Json<crate::models::OtaOnlinePrepareRequest>,
+    Json(req): Json<crate::models::OtaLatestReleaseRequest>,
 ) -> impl IntoResponse {
     let result: Result<crate::models::OtaLatestReleaseResponse, String> = async {
         let include_builtin_proxies = req
@@ -4464,15 +4464,17 @@ pub async fn get_latest_ota_release_handler(
         .await?;
 
         let installed_status = crate::ota::get_ota_status();
-        let target_edition = installed_status.current_edition.as_deref();
-
-        // The UI historically displays the first archive. Return only the asset
-        // that matches this running binary so multi-architecture releases cannot
-        // offer an arm64 package to x86_64 devices (or vice versa).
-        release.assets = crate::ota::supported_release_asset(&release, target_edition)
-            .cloned()
-            .into_iter()
-            .collect();
+        let current_arch = installed_status
+            .current_arch
+            .clone()
+            .unwrap_or_else(crate::ota::resolve_current_target_triple);
+        release.assets = crate::ota::supported_release_assets_for_target(
+            &release,
+            &current_arch,
+            installed_status.current_edition.as_deref(),
+            req.include_variants,
+        );
+        release.supports_asset_selection = Some(true);
         Ok(release)
     }
     .await;
@@ -4514,9 +4516,27 @@ pub async fn prepare_online_ota_handler(
 
         let installed_status = crate::ota::get_ota_status();
         let target_edition = installed_status.current_edition.as_deref();
+        let current_arch = installed_status
+            .current_arch
+            .as_deref()
+            .ok_or_else(|| "Unable to determine current OTA target architecture".to_string())?;
 
-        let asset = crate::ota::supported_release_asset(&release, target_edition)
-            .ok_or_else(|| "No supported OTA asset found in latest release".to_string())?;
+        let asset = if let Some(ref asset_name) = req.asset_name {
+            crate::ota::supported_release_asset_by_name_for_target(
+                &release,
+                current_arch,
+                asset_name,
+            )
+            .ok_or_else(|| {
+                format!(
+                    "Specified OTA asset '{}' was not found or is incompatible with architecture {}",
+                    asset_name, current_arch
+                )
+            })?
+        } else {
+            crate::ota::supported_release_asset(&release, target_edition)
+                .ok_or_else(|| "No supported OTA asset found in latest release".to_string())?
+        };
 
         if asset.size > crate::ota::MAX_OTA_BYTES {
             return Err(format!(

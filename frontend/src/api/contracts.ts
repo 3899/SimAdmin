@@ -895,6 +895,7 @@ export interface OtaMeta {
   arch: string
   min_version?: string
   edition?: string
+  wificalling?: boolean
 }
 
 export interface OtaValidation {
@@ -926,6 +927,12 @@ export interface OtaUploadResponse {
 
 export interface OtaOnlinePrepareRequest {
   proxy_prefix?: string
+  asset_name?: string
+}
+
+export interface OtaLatestReleaseRequest {
+  proxy_prefix?: string
+  include_variants?: boolean
 }
 
 export interface OtaReleaseAsset {
@@ -942,6 +949,7 @@ export interface OtaLatestReleaseResponse {
   body?: string
   html_url?: string
   assets?: OtaReleaseAsset[]
+  supports_asset_selection?: boolean
 }
 
 export type DdnsProvider = 'cloudflare' | 'alidns' | 'tencentcloud'
