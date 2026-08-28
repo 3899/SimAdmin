@@ -169,17 +169,12 @@ impl BackupKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ImportMode {
+    #[default]
     Merge,
     Replace,
-}
-
-impl Default for ImportMode {
-    fn default() -> Self {
-        Self::Merge
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -788,12 +783,7 @@ fn normalize_backup_config(mut config: BackupConfig) -> BackupConfig {
         "fixed" | "interval" | "manual" => config.schedule.mode,
         _ => "manual".to_string(),
     };
-    config.schedule.weekdays = config
-        .schedule
-        .weekdays
-        .into_iter()
-        .filter(|day| (1..=7).contains(day))
-        .collect();
+    config.schedule.weekdays.retain(|day| (1..=7).contains(day));
     if config.schedule.weekdays.is_empty() {
         config.schedule.weekdays = vec![1, 2, 3, 4, 5, 6, 7];
     }
@@ -1357,9 +1347,7 @@ fn apply_backup(
                 let value = component_value(parsed, *component)?;
                 let notifications: NotificationConfig = serde_json::from_value(value)
                     .map_err(|err| format!("Invalid notification config: {err}"))?;
-                next_config.webhook = notifications
-                    .first_webhook_config()
-                    .unwrap_or_else(Default::default);
+                next_config.webhook = notifications.first_webhook_config().unwrap_or_default();
                 next_config.notifications = notifications;
                 config_changed = true;
             }

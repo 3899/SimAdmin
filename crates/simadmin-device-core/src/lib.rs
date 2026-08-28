@@ -8,6 +8,9 @@ use chrono::{Duration, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use simadmin_protocol::{
+    AccessMethod, BindingControlMode, CapabilityManifest, DeviceFeatureSnapshot, DeviceKind,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DeviceError {
@@ -157,8 +160,12 @@ pub struct DiscoveredDevice {
     pub usb_path: String,
     pub control_paths: Vec<String>,
     pub network_interfaces: Vec<String>,
+    pub simadmin_urls: Vec<String>,
     pub backend: BackendKind,
     pub capabilities: Vec<String>,
+    pub device_kind: DeviceKind,
+    pub access_method: AccessMethod,
+    pub capability_manifest: CapabilityManifest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -173,11 +180,15 @@ pub struct DeviceBinding {
     pub device_id: String,
     pub fingerprint: HardwareFingerprint,
     pub policy: BindingPolicy,
+    pub control_mode: BindingControlMode,
     pub slot_id: Option<String>,
     pub current_usb_path: String,
     pub control_paths: Vec<String>,
     pub backend: BackendKind,
     pub capabilities: Vec<String>,
+    pub device_kind: DeviceKind,
+    pub access_method: AccessMethod,
+    pub capability_manifest: CapabilityManifest,
     pub binding_version: i64,
     pub worker_generation: i64,
     pub status: String,
@@ -221,13 +232,40 @@ impl BindingStore {
                 device_id TEXT PRIMARY KEY, fingerprint_json TEXT NOT NULL, fingerprint_key TEXT NOT NULL,
                 policy TEXT NOT NULL, slot_id TEXT, current_usb_path TEXT NOT NULL, control_paths_json TEXT NOT NULL,
                 backend_json TEXT NOT NULL, capabilities_json TEXT NOT NULL, binding_version INTEGER NOT NULL,
-                worker_generation INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, updated_at TEXT NOT NULL);
+                worker_generation INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, updated_at TEXT NOT NULL,
+                control_mode TEXT NOT NULL DEFAULT 'control',
+                device_kind TEXT NOT NULL DEFAULT 'unknown', access_method TEXT NOT NULL DEFAULT 'host_direct',
+                capability_manifest_json TEXT NOT NULL DEFAULT '{}');
             CREATE TABLE IF NOT EXISTS ownership_leases (
                 fingerprint_key TEXT PRIMARY KEY, owner TEXT NOT NULL, worker_generation INTEGER NOT NULL,
                 expires_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS connection_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, device_id TEXT NOT NULL, usb_path TEXT NOT NULL,
                 worker_generation INTEGER NOT NULL, event TEXT NOT NULL, created_at TEXT NOT NULL);" )?;
+        ensure_column(
+            &connection,
+            "device_bindings",
+            "device_kind",
+            "TEXT NOT NULL DEFAULT 'unknown'",
+        )?;
+        ensure_column(
+            &connection,
+            "device_bindings",
+            "capability_manifest_json",
+            "TEXT NOT NULL DEFAULT '{}'",
+        )?;
+        ensure_column(
+            &connection,
+            "device_bindings",
+            "access_method",
+            "TEXT NOT NULL DEFAULT 'host_direct'",
+        )?;
+        ensure_column(
+            &connection,
+            "device_bindings",
+            "control_mode",
+            "TEXT NOT NULL DEFAULT 'control'",
+        )?;
         Ok(Self {
             connection: Mutex::new(connection),
         })
@@ -266,16 +304,24 @@ impl BindingStore {
             };
             transaction.execute("INSERT INTO device_bindings (device_id, fingerprint_json, fingerprint_key, policy,
                 slot_id, current_usb_path, control_paths_json, backend_json, capabilities_json, binding_version,
-                worker_generation, status, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
+                worker_generation, status, updated_at, device_kind, access_method,
+                capability_manifest_json, control_mode)
+                VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
                 ON CONFLICT(device_id) DO UPDATE SET fingerprint_json=excluded.fingerprint_json,
                 fingerprint_key=excluded.fingerprint_key, policy=excluded.policy, slot_id=excluded.slot_id,
                 backend_json=excluded.backend_json, capabilities_json=excluded.capabilities_json,
-                binding_version=excluded.binding_version, updated_at=excluded.updated_at",
+                binding_version=excluded.binding_version, device_kind=excluded.device_kind,
+                access_method=excluded.access_method,
+                capability_manifest_json=excluded.capability_manifest_json,
+                control_mode=excluded.control_mode, updated_at=excluded.updated_at",
                 params![binding.device_id, serde_json::to_string(&fingerprint)?, key,
                     serde_json::to_string(&binding.policy)?, binding.slot_id, binding.current_usb_path,
                     serde_json::to_string(&binding.control_paths)?, serde_json::to_string(&binding.backend)?,
                     serde_json::to_string(&binding.capabilities)?, binding.binding_version,
-                    binding.worker_generation, binding.status, Utc::now().to_rfc3339()])?;
+                    binding.worker_generation, binding.status, Utc::now().to_rfc3339(),
+                    binding.device_kind.as_str(), binding.access_method.as_str(),
+                    serde_json::to_string(&binding.capability_manifest)?,
+                    control_mode_label(binding.control_mode)])?;
         }
         let existing = {
             let mut statement = transaction.prepare("SELECT device_id FROM device_bindings")?;
@@ -302,7 +348,8 @@ impl BindingStore {
             .lock()
             .map_err(|_| DeviceError::Backend("binding lock poisoned".into()))?;
         let mut statement = connection.prepare("SELECT device_id, fingerprint_json, policy, slot_id, current_usb_path,
-            control_paths_json, backend_json, capabilities_json, binding_version, worker_generation, status
+            control_paths_json, backend_json, capabilities_json, binding_version, worker_generation, status,
+            device_kind, access_method, capability_manifest_json, control_mode
             FROM device_bindings WHERE status != 'revoked' ORDER BY device_id")?;
         let rows = statement.query_map([], |row| {
             Ok(DeviceBinding {
@@ -317,6 +364,10 @@ impl BindingStore {
                 binding_version: row.get(8)?,
                 worker_generation: row.get(9)?,
                 status: row.get(10)?,
+                device_kind: parse_device_kind(row.get::<_, String>(11)?),
+                access_method: parse_access_method(row.get::<_, String>(12)?),
+                capability_manifest: parse_manifest(row, 13, 7)?,
+                control_mode: parse_control_mode(row.get::<_, String>(14)?),
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -417,10 +468,12 @@ impl BindingStore {
                 binding.worker_generation += 1;
             }
             transaction.execute("UPDATE device_bindings SET current_usb_path=?2, control_paths_json=?3,
-                backend_json=?4, capabilities_json=?5, worker_generation=?6, status='ready', updated_at=?7 WHERE device_id=?1",
+                backend_json=?4, capabilities_json=?5, worker_generation=?6, status='ready', updated_at=?7,
+                device_kind=?8, access_method=?9, capability_manifest_json=?10 WHERE device_id=?1",
                 params![binding.device_id, candidate.usb_path, serde_json::to_string(&candidate.control_paths)?,
                     serde_json::to_string(&candidate.backend)?, serde_json::to_string(&candidate.capabilities)?,
-                    binding.worker_generation, Utc::now().to_rfc3339()])?;
+                    binding.worker_generation, Utc::now().to_rfc3339(), candidate.device_kind.as_str(),
+                    candidate.access_method.as_str(), serde_json::to_string(&candidate.capability_manifest)?])?;
             if changed {
                 transaction.execute("INSERT INTO connection_history (device_id, usb_path, worker_generation, event, created_at)
                 VALUES (?1,?2,?3,'path_changed',?4)", params![binding.device_id, candidate.usb_path, binding.worker_generation, Utc::now().to_rfc3339()])?;
@@ -457,8 +510,8 @@ impl BindingStore {
             .lock()
             .map_err(|_| DeviceError::Backend("binding lock poisoned".into()))?;
         let transaction = connection.transaction()?;
-        let (key, current_generation, status): (String, i64, String) = transaction.query_row("SELECT fingerprint_key, worker_generation, status FROM device_bindings WHERE device_id=?1", [device_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(DeviceError::BindingNotFound)?;
-        if status != "ready" || current_generation != generation {
+        let (key, current_generation, status, control_mode): (String, i64, String, String) = transaction.query_row("SELECT fingerprint_key, worker_generation, status, control_mode FROM device_bindings WHERE device_id=?1", [device_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).optional()?.ok_or(DeviceError::BindingNotFound)?;
+        if status != "ready" || current_generation != generation || control_mode != "control" {
             return Err(DeviceError::StaleWorker);
         }
         let now = Utc::now();
@@ -495,7 +548,8 @@ impl BindingStore {
             .map_err(|_| DeviceError::Backend("binding lock poisoned".into()))?;
         let valid: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM ownership_leases l JOIN device_bindings b ON b.fingerprint_key=l.fingerprint_key
             WHERE b.device_id=?1 AND l.fingerprint_key=?2 AND l.owner=?3 AND l.worker_generation=?4
-            AND b.worker_generation=?4 AND b.status='ready' AND l.expires_at>?5)", params![lease.device_id, lease.fingerprint_key, lease.owner, lease.worker_generation, Utc::now().to_rfc3339()], |row| row.get(0))?;
+            AND b.worker_generation=?4 AND b.status='ready' AND b.control_mode='control'
+            AND l.expires_at>?5)", params![lease.device_id, lease.fingerprint_key, lease.owner, lease.worker_generation, Utc::now().to_rfc3339()], |row| row.get(0))?;
         if !valid {
             return Err(DeviceError::StaleWorker);
         }
@@ -526,7 +580,7 @@ fn parse<T: for<'de> Deserialize<'de>>(
     })
 }
 fn load_bindings(connection: &Connection) -> DeviceResult<Vec<DeviceBinding>> {
-    let mut statement = connection.prepare("SELECT device_id, fingerprint_json, policy, slot_id, current_usb_path, control_paths_json, backend_json, capabilities_json, binding_version, worker_generation, status FROM device_bindings")?;
+    let mut statement = connection.prepare("SELECT device_id, fingerprint_json, policy, slot_id, current_usb_path, control_paths_json, backend_json, capabilities_json, binding_version, worker_generation, status, device_kind, access_method, capability_manifest_json, control_mode FROM device_bindings")?;
     let bindings = statement
         .query_map([], |row| {
             Ok(DeviceBinding {
@@ -541,10 +595,79 @@ fn load_bindings(connection: &Connection) -> DeviceResult<Vec<DeviceBinding>> {
                 binding_version: row.get(8)?,
                 worker_generation: row.get(9)?,
                 status: row.get(10)?,
+                device_kind: parse_device_kind(row.get::<_, String>(11)?),
+                access_method: parse_access_method(row.get::<_, String>(12)?),
+                capability_manifest: parse_manifest(row, 13, 7)?,
+                control_mode: parse_control_mode(row.get::<_, String>(14)?),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(bindings)
+}
+
+fn parse_device_kind(value: String) -> DeviceKind {
+    match value.as_str() {
+        "system_device" => DeviceKind::SystemDevice,
+        "modem" => DeviceKind::Modem,
+        _ => DeviceKind::Unknown,
+    }
+}
+
+fn parse_access_method(value: String) -> AccessMethod {
+    match value.as_str() {
+        "network" => AccessMethod::Network,
+        "local_system" => AccessMethod::LocalSystem,
+        _ => AccessMethod::HostDirect,
+    }
+}
+
+fn parse_control_mode(value: String) -> BindingControlMode {
+    if value == "observed_only" {
+        BindingControlMode::ObservedOnly
+    } else {
+        BindingControlMode::Control
+    }
+}
+
+fn control_mode_label(value: BindingControlMode) -> &'static str {
+    match value {
+        BindingControlMode::Control => "control",
+        BindingControlMode::ObservedOnly => "observed_only",
+    }
+}
+
+fn parse_manifest(
+    row: &rusqlite::Row<'_>,
+    manifest_index: usize,
+    legacy_index: usize,
+) -> rusqlite::Result<CapabilityManifest> {
+    let value: String = row.get(manifest_index)?;
+    if let Ok(manifest) = serde_json::from_str::<CapabilityManifest>(&value) {
+        if manifest.schema_version > 0 {
+            return Ok(manifest.normalized());
+        }
+    }
+    let legacy: Vec<String> = parse(row, legacy_index)?;
+    Ok(CapabilityManifest::from_legacy(&legacy))
+}
+
+fn ensure_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> DeviceResult<()> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if !columns.iter().any(|value| value == column) {
+        connection.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+            [],
+        )?;
+    }
+    Ok(())
 }
 fn load_binding(connection: &Connection, device_id: &str) -> DeviceResult<Option<DeviceBinding>> {
     Ok(load_bindings(connection)?
@@ -572,6 +695,9 @@ pub trait DeviceBackend: Send + Sync {
         command_type: &str,
         payload: &serde_json::Value,
     ) -> DeviceResult<serde_json::Value>;
+    fn feature_snapshot(&self, _binding: &DeviceBinding) -> DeviceResult<DeviceFeatureSnapshot> {
+        Ok(DeviceFeatureSnapshot::default())
+    }
 }
 
 #[derive(Default)]
@@ -618,29 +744,39 @@ mod tests {
         }
     }
     fn binding(id: &str, imei: &str, serial: &str, path: &str) -> DeviceBinding {
+        let capabilities = vec!["sms".into(), "network".into()];
         DeviceBinding {
             device_id: id.into(),
             fingerprint: fingerprint(imei, serial),
             policy: BindingPolicy::HardwareBound,
+            control_mode: BindingControlMode::Control,
             slot_id: None,
             current_usb_path: path.into(),
             control_paths: vec![format!("{path}/ttyUSB2")],
             backend: BackendKind::DirectAt,
-            capabilities: vec!["sms".into(), "network".into()],
+            capability_manifest: CapabilityManifest::from_legacy(&capabilities),
+            capabilities,
+            device_kind: DeviceKind::Modem,
+            access_method: AccessMethod::HostDirect,
             binding_version: 1,
             worker_generation: 1,
             status: "ready".into(),
         }
     }
     fn discovered(id: &str, imei: &str, serial: &str, path: &str) -> DiscoveredDevice {
+        let capabilities = vec!["sms".into(), "network".into()];
         DiscoveredDevice {
             discovery_id: id.into(),
             fingerprint: fingerprint(imei, serial),
             usb_path: path.into(),
             control_paths: vec![format!("{path}/ttyUSB2")],
             network_interfaces: vec![],
+            simadmin_urls: vec![],
             backend: BackendKind::DirectAt,
-            capabilities: vec!["sms".into(), "network".into()],
+            capability_manifest: CapabilityManifest::from_legacy(&capabilities),
+            capabilities,
+            device_kind: DeviceKind::Modem,
+            access_method: AccessMethod::HostDirect,
         }
     }
 
@@ -677,6 +813,27 @@ mod tests {
         );
         assert!(matches!(
             store.acquire_lease("a", 1, "host-1", 30),
+            Err(DeviceError::StaleWorker)
+        ));
+    }
+
+    #[test]
+    fn observed_only_binding_never_grants_an_execution_lease() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = BindingStore::open(directory.path().join("bindings.db")).unwrap();
+        let mut observed = binding("a", "860000000000001", "A", "1-1");
+        observed.control_mode = BindingControlMode::ObservedOnly;
+        store.replace_confirmed_bindings(&[observed]).unwrap();
+        let result = store
+            .reconcile(&[discovered("x", "860000000000001", "A", "1-1")])
+            .unwrap();
+        let generation = match &result[0] {
+            ReconcileOutcome::Ready { generation, .. } => *generation,
+            outcome => panic!("unexpected reconcile outcome: {outcome:?}"),
+        };
+
+        assert!(matches!(
+            store.acquire_lease("a", generation, "host-1", 30),
             Err(DeviceError::StaleWorker)
         ));
     }

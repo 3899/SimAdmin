@@ -95,6 +95,16 @@ pub struct AutomationLogsResponse {
     pub total: i64,
 }
 
+pub struct LogQuery<'a> {
+    pub kind: &'a str,
+    pub status: &'a str,
+    pub search: &'a str,
+    pub start_date: &'a str,
+    pub end_date: &'a str,
+    pub limit: i64,
+    pub offset: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NotificationStatusCounts {
     pub success: i64,
@@ -1162,24 +1172,15 @@ impl Database {
         )
     }
 
-    pub fn get_notification_logs(
-        &self,
-        event_type: &str,
-        status: &str,
-        query: &str,
-        start_date: &str,
-        end_date: &str,
-        limit: i64,
-        offset: i64,
-    ) -> Result<NotificationLogsResponse> {
+    pub fn get_notification_logs(&self, query: LogQuery<'_>) -> Result<NotificationLogsResponse> {
         let conn = self.conn.lock().unwrap();
-        let limit = limit.clamp(1, 200);
-        let offset = offset.max(0);
-        let event_type = event_type.trim();
-        let status = status.trim();
-        let query = query.trim();
-        let start_at = notification_log_start_bound(start_date);
-        let end_at = notification_log_end_bound(end_date);
+        let limit = query.limit.clamp(1, 200);
+        let offset = query.offset.max(0);
+        let event_type = query.kind.trim();
+        let status = query.status.trim();
+        let search = query.search.trim();
+        let start_at = notification_log_start_bound(query.start_date);
+        let end_at = notification_log_end_bound(query.end_date);
 
         let total = conn.query_row(
             "SELECT COUNT(*) FROM notification_logs
@@ -1194,7 +1195,7 @@ impl Database {
                )
                AND (?4 = '' OR created_at >= ?4)
                AND (?5 = '' OR created_at <= ?5)",
-            params![event_type, status, query, start_at, end_at],
+            params![event_type, status, search, start_at, end_at],
             |row| row.get(0),
         )?;
 
@@ -1218,7 +1219,7 @@ impl Database {
         )?;
 
         let rows = stmt.query_map(
-            params![event_type, status, query, start_at, end_at, limit, offset],
+            params![event_type, status, search, start_at, end_at, limit, offset],
             |row| {
                 Ok(NotificationLogEntry {
                     id: row.get(0)?,
@@ -2211,25 +2212,16 @@ impl Database {
     }
 
     /// 获取自动化执行日志（分页与过滤）
-    pub fn get_automation_logs(
-        &self,
-        task_type: &str,
-        status: &str,
-        query: &str,
-        start_date: &str,
-        end_date: &str,
-        limit: i64,
-        offset: i64,
-    ) -> Result<AutomationLogsResponse> {
+    pub fn get_automation_logs(&self, query: LogQuery<'_>) -> Result<AutomationLogsResponse> {
         let conn = self.conn.lock().unwrap();
-        let limit = limit.clamp(1, 200);
-        let offset = offset.max(0);
-        let task_type = task_type.trim();
-        let status = status.trim();
-        let query = query.trim();
+        let limit = query.limit.clamp(1, 200);
+        let offset = query.offset.max(0);
+        let task_type = query.kind.trim();
+        let status = query.status.trim();
+        let search = query.search.trim();
 
-        let start_at = notification_log_start_bound(start_date);
-        let end_at = notification_log_end_bound(end_date);
+        let start_at = notification_log_start_bound(query.start_date);
+        let end_at = notification_log_end_bound(query.end_date);
 
         let total = conn.query_row(
             "SELECT COUNT(*) FROM automation_logs
@@ -2242,7 +2234,7 @@ impl Database {
                )
                AND (?4 = '' OR created_at >= ?4)
                AND (?5 = '' OR created_at <= ?5)",
-            params![task_type, status, query, start_at, end_at],
+            params![task_type, status, search, start_at, end_at],
             |row| row.get(0),
         )?;
 
@@ -2263,7 +2255,7 @@ impl Database {
         )?;
 
         let rows = stmt.query_map(
-            params![task_type, status, query, start_at, end_at, limit, offset],
+            params![task_type, status, search, start_at, end_at, limit, offset],
             |row| {
                 let mut detail: String = row.get(5)?;
                 if detail == "执行成功 (0)" || detail.starts_with("执行成功 (0)") {

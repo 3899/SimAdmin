@@ -947,6 +947,30 @@ fn detect_zip_format(data: &[u8]) -> bool {
     data[0] == 0x50 && data[1] == 0x4B && data[2] == 0x03 && data[3] == 0x04
 }
 
+/// 修复文件权限（用于 ZIP 解压后）
+fn fix_file_permissions() -> Result<(), String> {
+    let binary_path = format!("{}/simadmin", OTA_STAGING_DIR);
+    let www_path = format!("{}/www", OTA_STAGING_DIR);
+
+    if Path::new(&binary_path).exists() {
+        Command::new("chmod")
+            .args(["755", &binary_path])
+            .output()
+            .map_err(|e| format!("Failed to chmod binary: {}", e))?;
+    }
+
+    if Path::new(&www_path).exists() {
+        let _ = Command::new("find")
+            .args([&www_path, "-type", "d", "-exec", "chmod", "755", "{}", "+"])
+            .output();
+        let _ = Command::new("find")
+            .args([&www_path, "-type", "f", "-exec", "chmod", "644", "{}", "+"])
+            .output();
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1206,33 +1230,4 @@ mod tests {
             ]
         );
     }
-}
-
-/// 修复文件权限（用于 ZIP 解压后）
-fn fix_file_permissions() -> Result<(), String> {
-    let binary_path = format!("{}/simadmin", OTA_STAGING_DIR);
-    let www_path = format!("{}/www", OTA_STAGING_DIR);
-
-    // 设置二进制文件权限为 755（可执行）
-    if Path::new(&binary_path).exists() {
-        Command::new("chmod")
-            .args(["755", &binary_path])
-            .output()
-            .map_err(|e| format!("Failed to chmod binary: {}", e))?;
-    }
-
-    // 设置前端文件权限：目录 755，文件 644
-    if Path::new(&www_path).exists() {
-        // 所有目录设置为 755
-        let _ = Command::new("find")
-            .args([&www_path, "-type", "d", "-exec", "chmod", "755", "{}", "+"])
-            .output();
-
-        // 所有文件设置为 644
-        let _ = Command::new("find")
-            .args([&www_path, "-type", "f", "-exec", "chmod", "644", "{}", "+"])
-            .output();
-    }
-
-    Ok(())
 }

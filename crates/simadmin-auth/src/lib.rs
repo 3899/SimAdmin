@@ -330,11 +330,13 @@ mod tests {
 
     #[test]
     fn invalid_security_options_are_rejected_or_normalized() {
-        let mut settings = SecurityConfig::default();
-        settings.password_min_length = 0;
-        settings.password_require_letters = false;
-        settings.password_require_digits = false;
-        settings.password_require_symbols = false;
+        let settings = SecurityConfig {
+            password_min_length: 0,
+            password_require_letters: false,
+            password_require_digits: false,
+            password_require_symbols: false,
+            ..SecurityConfig::default()
+        };
         assert!(validate_security_settings(&settings).is_err());
         let normalized = normalize_security_settings(settings);
         assert_eq!(normalized.password_min_length, 8);

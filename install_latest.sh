@@ -21,6 +21,7 @@ SIMADMIN_INSTALL_SYSTEM_DEPS="${SIMADMIN_INSTALL_SYSTEM_DEPS:-1}"
 SIMADMIN_ENABLE_NETWORKMANAGER="${SIMADMIN_ENABLE_NETWORKMANAGER:-1}"
 SIMADMIN_REFRESH_MODEM_DEVICES="${SIMADMIN_REFRESH_MODEM_DEVICES:-1}"
 SIMADMIN_INSTALL_LPAC="${SIMADMIN_INSTALL_LPAC:-1}"
+SIMADMIN_LPAC_ONLY="${SIMADMIN_LPAC_ONLY:-0}"
 LPAC_REPO="${LPAC_REPO:-estkme-group/lpac}"
 LPAC_RELEASE_BASE_URL="${LPAC_RELEASE_BASE_URL:-https://github.com/${LPAC_REPO}/releases/latest/download}"
 LPAC_LATEST_RELEASE_URL="${LPAC_LATEST_RELEASE_URL:-https://github.com/${LPAC_REPO}/releases/latest}"
@@ -77,7 +78,7 @@ usage() {
     'Examples:' \
     '  sh install_latest.sh                        # Install latest standard release' \
     '  sh install_latest.sh --wfc                  # Install latest Wi-Fi Calling release' \
-    '  sh install_latest.sh -v1.1.11 --wfc         # Install v1.1.11 Wi-Fi Calling release' \
+    '  sh install_latest.sh -v1.1.12 --wfc         # Install v1.1.12 Wi-Fi Calling release' \
     '  curl -fsSL .../install_latest.sh | WFC=1 sh # Install latest WFC release via env' \
     '' \
     'Options:' \
@@ -87,6 +88,7 @@ usage() {
     '  --install-dir PATH     Installation directory (default: /opt/simadmin)' \
     '  --service-name NAME    Main systemd service name (default: simadmin)' \
     '  --no-lpac              Skip lpac installation' \
+    '  --lpac-only            Install or update only the shared lpac runtime' \
     '  -h, --help             Show this help' \
     '' \
     'Environment Variables:' \
@@ -158,6 +160,9 @@ parse_args() {
         ;;
       --no-lpac|--skip-lpac)
         SIMADMIN_INSTALL_LPAC=0
+        ;;
+      --lpac-only)
+        SIMADMIN_LPAC_ONLY=1
         ;;
       -h|--help)
         usage
@@ -608,10 +613,11 @@ PY
     return $?
   fi
 
-  # Use simadmin's built-in zip extractor if external tools are unavailable.
-  if [ -x "${INSTALL_DIR}/simadmin" ]; then
-    echo "    using simadmin extract-zip (built-in)"
-    "${INSTALL_DIR}/simadmin" extract-zip "$archive" "$target"
+  # Use the installed SimAdmin-compatible binary when external tools are unavailable.
+  zip_extractor="${SIMADMIN_ZIP_EXTRACTOR:-${INSTALL_DIR}/simadmin}"
+  if [ -x "$zip_extractor" ]; then
+    echo "    using ${zip_extractor} extract-zip (built-in)"
+    "$zip_extractor" extract-zip "$archive" "$target"
     return $?
   fi
 
@@ -651,6 +657,9 @@ copy_lpac_tree() {
     cp -R "${copy_extract_dir}/libraries/." "${copy_destination}/lib/"
   fi
 
+  normalize_lpac_library_links "${copy_destination}/lib" "libqmi-glib"
+  normalize_lpac_library_links "${copy_destination}/lib" "libmbim-glib"
+
   chmod -R a+rX "${copy_destination}"
   chmod 0755 "${copy_destination}/lpac"
 
@@ -661,6 +670,24 @@ ${copy_asset_url}
 Project:
 https://github.com/estkme-group/lpac
 EOF
+}
+
+normalize_lpac_library_links() {
+  library_dir="$1"
+  library_name="$2"
+  [ -d "$library_dir" ] || return 0
+
+  real_library="$(find "$library_dir" -type f -name "${library_name}.so.*.*.*" -print | head -n 1 || true)"
+  [ -n "$real_library" ] || return 0
+  real_name="$(basename "$real_library")"
+  soname="$(printf '%s\n' "$real_name" | sed -nE 's/^(.+\.so\.[0-9]+)\..*$/\1/p')"
+  [ -n "$soname" ] || return 0
+
+  for alias in "${library_name}.so" "$soname"; do
+    [ "$alias" = "$real_name" ] && continue
+    rm -f "${library_dir}/${alias}"
+    ln -s "$real_name" "${library_dir}/${alias}"
+  done
 }
 
 lpac_env_prefix() {
@@ -1088,8 +1115,17 @@ install_lpac() {
 main() {
   parse_args "$@"
   require_root
-  require_cmd systemctl
   require_cmd mktemp
+
+  if truthy "$SIMADMIN_LPAC_ONLY"; then
+    require_cmd curl
+    tmp_dir="$(mktemp -d)"
+    trap 'rm -rf "$tmp_dir"' EXIT INT TERM
+    install_lpac
+    return 0
+  fi
+
+  require_cmd systemctl
 
   echo "==> installing SimAdmin"
   echo "    version: ${VERSION}"

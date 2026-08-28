@@ -5,6 +5,15 @@ use serde_json::Value;
 
 use crate::db::{CallRecord, CallStats, SmsMessage, SmsStats};
 
+pub use simadmin_device_runtime::{
+    AirplaneModeResponse, DataConnectionResponse, DeviceInfoResponse, NetworkInfoResponse,
+    RadioModeResponse, SimInfoResponse,
+};
+pub use simadmin_device_runtime::{
+    ConnectionAddressesResponse, ConnectivityCheckResponse, CpuLoadInfo, DiskInfo, IpAddress,
+    NetworkInterfaceInfo, PingResult, SystemInfo, SystemStatsResponse, ThermalZone,
+};
+
 #[derive(Debug, Serialize)]
 pub struct ApiResponse<T> {
     pub status: String,
@@ -227,24 +236,8 @@ pub struct CellsResponse {
     pub cells: Vec<CellInfo>,
 }
 
-#[derive(Debug, Default, Serialize)]
-pub struct DeviceInfoResponse {
-    pub imei: String,
-    pub manufacturer: String,
-    pub model: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub revision: Option<String>,
-    pub online: bool,
-    pub powered: bool,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct DataConnectionRequest {
-    pub active: bool,
-}
-
-#[derive(Debug, Default, Serialize)]
-pub struct DataConnectionResponse {
     pub active: bool,
 }
 
@@ -264,13 +257,6 @@ pub struct AirplaneModeRequest {
     pub enabled: bool,
 }
 
-#[derive(Debug, Default, Serialize)]
-pub struct AirplaneModeResponse {
-    pub enabled: bool,
-    pub powered: bool,
-    pub online: bool,
-}
-
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct BasebandRestartStep {
     pub step: String,
@@ -287,55 +273,6 @@ pub struct BasebandRestartResponse {
     pub current_registration: Option<String>,
 }
 
-#[derive(Debug, Serialize, Clone)]
-pub struct ThermalZone {
-    pub zone: String,
-    #[serde(rename = "type")]
-    pub sensor_type: String,
-    pub label: String,
-    pub temperature: f64,
-}
-
-#[derive(Debug, Default, Serialize)]
-pub struct SimInfoResponse {
-    pub present: bool,
-    pub iccid: String,
-    pub imsi: String,
-    pub phone_numbers: Vec<String>,
-    pub sms_center: String,
-    pub mcc: String,
-    pub mnc: String,
-    pub phone_number_is_manual: bool,
-    pub sms_center_is_manual: bool,
-    pub sim_path: String,
-    pub modem_path: String,
-    pub sim_type: String,
-    pub esim_status: String,
-    pub active: bool,
-    pub operator_name: String,
-    pub registered_operator_name: String,
-    pub registered_operator_code: String,
-    pub lock_status: String,
-    pub pin1_retries: Option<u32>,
-    pub puk1_retries: Option<u32>,
-    pub pin2_retries: Option<u32>,
-    pub puk2_retries: Option<u32>,
-    pub carrier_config: String,
-    pub carrier_config_revision: String,
-}
-
-#[derive(Debug, Default, Serialize)]
-pub struct NetworkInfoResponse {
-    pub operator_name: String,
-    pub registration_status: String,
-    pub technology_preference: String,
-    pub signal_strength: u8,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mcc: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mnc: Option<String>,
-}
-
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RadioMode {
@@ -344,13 +281,6 @@ pub enum RadioMode {
     LteOnly,
     #[serde(rename = "nr")]
     NrOnly,
-}
-
-#[derive(Debug, Default, Serialize)]
-pub struct RadioModeResponse {
-    pub mode: String,
-    pub technology_preference: String,
-    pub supported_modes: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -428,85 +358,6 @@ fn default_nr_rat() -> u8 {
 pub struct SystemRebootRequest {
     #[serde(default)]
     pub delay_seconds: u32,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct NetworkSpeed {
-    pub interface: String,
-    pub rx_bytes_per_sec: u64,
-    pub tx_bytes_per_sec: u64,
-    pub total_rx_bytes: u64,
-    pub total_tx_bytes: u64,
-}
-
-#[derive(Debug, Default, Serialize, Clone)]
-pub struct NetworkSpeedResponse {
-    pub interfaces: Vec<NetworkSpeed>,
-    pub interval_seconds: f64,
-}
-
-#[derive(Debug, Default, Serialize, Clone)]
-pub struct MemoryInfo {
-    pub total_bytes: u64,
-    pub available_bytes: u64,
-    pub used_bytes: u64,
-    pub used_percent: f64,
-    pub cached_bytes: u64,
-    pub buffers_bytes: u64,
-}
-
-#[derive(Debug, Default, Serialize, Clone)]
-pub struct UptimeInfo {
-    pub uptime_seconds: u64,
-    pub idle_seconds: u64,
-    pub uptime_formatted: String,
-}
-
-#[derive(Debug, Default, Serialize, Clone)]
-pub struct SystemInfo {
-    pub sysname: String,
-    pub nodename: String,
-    pub release: String,
-    pub version: String,
-    pub machine: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub domainname: String,
-    pub full_info: String,
-}
-
-#[derive(Debug, Default, Serialize, Clone)]
-pub struct SystemStatsResponse {
-    pub network_speed: NetworkSpeedResponse,
-    pub memory: MemoryInfo,
-    pub disk: Vec<DiskInfo>,
-    pub cpu_load: CpuLoadInfo,
-    pub uptime: UptimeInfo,
-    pub system_info: SystemInfo,
-    pub temperature: Vec<ThermalZone>,
-}
-
-#[derive(Debug, Default, Serialize, Clone)]
-pub struct DiskInfo {
-    pub mount_point: String,
-    pub fs_type: String,
-    pub total_bytes: u64,
-    pub used_bytes: u64,
-    pub available_bytes: u64,
-    pub used_percent: f64,
-}
-
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct PingResult {
-    pub success: bool,
-    pub latency_ms: Option<f64>,
-    pub target: String,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Default, Serialize)]
-pub struct ConnectivityCheckResponse {
-    pub ipv4: PingResult,
-    pub ipv6: PingResult,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -650,15 +501,6 @@ fn default_true_bool() -> bool {
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
-pub struct CpuLoadInfo {
-    pub load_1min: f64,
-    pub load_5min: f64,
-    pub load_15min: f64,
-    pub core_count: u32,
-    pub load_percent: f64,
-}
-
-#[derive(Debug, Clone, Default, Serialize)]
 pub struct CpuCore {
     pub processor: u32,
     pub bogomips: String,
@@ -677,50 +519,6 @@ pub struct CpuInfo {
     pub hardware: String,
     pub serial: String,
     pub model_name: String,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct IpAddress {
-    pub address: String,
-    pub prefix_len: u8,
-    pub ip_type: String,
-    pub scope: String,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct NetworkInterfaceInfo {
-    pub name: String,
-    pub status: String,
-    pub is_wireless: bool,
-    pub is_cellular: bool,
-    pub is_default_ipv4: bool,
-    pub is_default_ipv6: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mac_address: Option<String>,
-    pub mtu: u32,
-    pub ip_addresses: Vec<IpAddress>,
-    pub rx_bytes: u64,
-    pub tx_bytes: u64,
-    pub rx_packets: u64,
-    pub tx_packets: u64,
-    pub rx_errors: u64,
-    pub tx_errors: u64,
-}
-
-#[derive(Debug, Default, Serialize)]
-pub struct NetworkInterfacesResponse {
-    pub interfaces: Vec<NetworkInterfaceInfo>,
-    pub total_count: usize,
-}
-
-#[derive(Debug, Default, Serialize)]
-pub struct ConnectionAddressesResponse {
-    pub ipv4: Vec<String>,
-    pub ipv6: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ipv4_interface: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ipv6_interface: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize)]

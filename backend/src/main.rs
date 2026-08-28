@@ -57,7 +57,7 @@ use handlers::*;
 use modem_manager::{ensure_nm_modem_profile, init_data_connection};
 use notification::NotificationSender;
 use notification_queue::*;
-use state::AppState;
+use state::{AppState, AppStateDependencies};
 use system_event::{
     codes as system_event_codes, severity as system_event_severity, status as system_event_status,
     SystemEventEmitter,
@@ -78,6 +78,9 @@ fn get_www_dir() -> PathBuf {
 }
 
 fn get_data_db_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("SIMADMIN_DATA_DIR") {
+        return PathBuf::from(path).join("data.db");
+    }
     std::env::current_exe()
         .expect("Failed to get executable path")
         .parent()
@@ -325,6 +328,15 @@ async fn main() -> Result<()> {
     let config_path = get_default_config_path();
     info!(path = ?config_path, "Loading config");
     let config_manager = Arc::new(ConfigManager::new(config_path));
+    if local_device_service_mode() {
+        let mut hub = config_manager.get_hub_config();
+        if !hub.enabled {
+            hub.enabled = true;
+            config_manager
+                .set_hub_config(hub)
+                .map_err(anyhow::Error::msg)?;
+        }
+    }
     let data_user_disabled = Arc::new(AtomicBool::new(!config_manager.get_data_enabled()));
     let airplane_mode_requested = Arc::new(AtomicBool::new(false));
     let cell_monitoring_active = Arc::new(AtomicBool::new(false));
@@ -485,19 +497,19 @@ async fn main() -> Result<()> {
     // 创建统一的应用状态
     spawn_system_stats_sampler(Arc::clone(&dbus_conn));
 
-    let app_state = AppState::new(
+    let app_state = AppState::new(AppStateDependencies {
         dbus_conn,
-        app_db,
+        database: app_db,
         config_manager,
         notification_sender,
         system_event_emitter,
         ddns_manager,
-        Arc::clone(&esim_supervisor),
+        esim_supervisor: Arc::clone(&esim_supervisor),
         sms_resync,
         data_user_disabled,
         airplane_mode_requested,
         cell_monitoring_active,
-    );
+    });
 
     app_state
         .hub_agent_manager
@@ -1036,6 +1048,12 @@ async fn main() -> Result<()> {
         .await?;
 
     Ok(())
+}
+
+fn local_device_service_mode() -> bool {
+    std::env::var("SIMADMIN_DEVICE_SERVICE")
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes" | "on"))
 }
 
 /// 绑定端口，如果被占用则轮询等待

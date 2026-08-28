@@ -28,9 +28,10 @@ import { useSimAdminApi } from '@/contexts/ApiContext'
 interface SimCardInfoProps {
   simInfo: SimInfo | null
   onRefresh?: () => void
+  readOnly?: boolean
 }
 
-export function SimCardInfo({ simInfo, onRefresh }: SimCardInfoProps) {
+export function SimCardInfo({ simInfo, onRefresh, readOnly = false }: SimCardInfoProps) {
   const api = useSimAdminApi()
   const [showInfo, setShowInfo] = useState(false)
   const [editingPhone, setEditingPhone] = useState(false)
@@ -157,7 +158,7 @@ export function SimCardInfo({ simInfo, onRefresh }: SimCardInfoProps) {
                   <Typography data-sensitive="true" variant="body2" sx={{ ...valueTextSx, ...getSensitiveStyle(showInfo) }}>
                     {!isPhoneEmpty ? simInfo.phone_numbers[0] : 'N/A'}
                   </Typography>
-                  {showInfo && (isPhoneEmpty || simInfo?.phone_number_is_manual) && simInfo?.present && (
+                  {!readOnly && showInfo && (isPhoneEmpty || simInfo?.phone_number_is_manual) && simInfo?.present && (
                     <IconButton size="small" onClick={() => { setPhoneInput(simInfo?.phone_numbers?.[0] || ''); setEditingPhone(true); }}>
                       <Edit sx={{ fontSize: '1rem' }} />
                     </IconButton>
@@ -191,7 +192,7 @@ export function SimCardInfo({ simInfo, onRefresh }: SimCardInfoProps) {
                   <Typography data-sensitive="true" variant="body2" sx={{ ...valueTextSx, ...getSensitiveStyle(showInfo) }}>
                     {!isSmscEmpty ? simInfo.sms_center : '未读取到'}
                   </Typography>
-                  {showInfo && (isSmscEmpty || simInfo?.sms_center_is_manual) && simInfo?.present && (
+                  {!readOnly && showInfo && (isSmscEmpty || simInfo?.sms_center_is_manual) && simInfo?.present && (
                     <IconButton size="small" onClick={() => { setSmscInput(simInfo?.sms_center || ''); setEditingSmsc(true); }}>
                       <Edit sx={{ fontSize: '1rem' }} />
                     </IconButton>

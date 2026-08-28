@@ -10,13 +10,12 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::process::{Command, Output};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, OnceLock};
-use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
+use std::time::Duration;
 use tracing::{error, info, warn};
 use zbus::Connection;
 
@@ -43,11 +42,7 @@ use crate::{
         codes as system_event_codes, mask_identifier, severity as system_event_severity,
         status as system_event_status,
     },
-    utils::{
-        connection_addresses_from_interfaces, format_uptime, get_active_interfaces, read_cpu_info,
-        read_cpu_load_sync, read_disk_info, read_interface_stats, read_memory_info,
-        read_network_interfaces, read_system_info, read_uptime, sample_cpu_usage,
-    },
+    utils::read_cpu_info,
 };
 
 const ESIM_SIM_IDENTITY_TIMEOUT_SECS: u64 = 3;
@@ -1670,7 +1665,7 @@ pub async fn download_esim_profile_handler(
                                     delete_allowed: p.delete_allowed,
                                     updated_at: chrono::Utc::now().to_rfc3339(),
                                 };
-                                if let Ok(_) = app.database.upsert_esim_profile_cache(&entry) {
+                                if app.database.upsert_esim_profile_cache(&entry).is_ok() {
                                     cached_fallback_iccid = Some(p.iccid.clone());
                                     break;
                                 }
@@ -1852,7 +1847,7 @@ pub async fn update_sim_cache_handler(
         crate::modem_manager::cache_own_numbers_for_identity(
             &app.database,
             &identity,
-            &[phone_number.clone()],
+            std::slice::from_ref(phone_number),
             "manual",
         );
     }
@@ -2271,52 +2266,28 @@ pub async fn unlock_all_cells_handler(State(app): State<AppState>) -> impl IntoR
 
 /// GET /api/network/interfaces
 pub async fn get_network_interfaces_info(
-    State(dbus_conn): State<Arc<Connection>>,
+    State(_dbus_conn): State<Arc<Connection>>,
 ) -> impl IntoResponse {
-    match read_network_interfaces(Some(&dbus_conn)).await {
-        Ok(interfaces) => {
-            let total_count = interfaces.len();
-            (
-                StatusCode::OK,
-                Json(ApiResponse::success_with_message(
-                    "Success",
-                    NetworkInterfacesResponse {
-                        interfaces,
-                        total_count,
-                    },
-                )),
-            )
-        }
-        Err(e) => (
-            StatusCode::OK,
-            Json(ApiResponse::<NetworkInterfacesResponse>::error(format!(
-                "Failed: {}",
-                e
-            ))),
-        ),
-    }
+    (
+        StatusCode::OK,
+        Json(ApiResponse::success_with_message(
+            "Success",
+            simadmin_device_runtime::network_interfaces(),
+        )),
+    )
 }
 
 /// GET /api/network/connection-addresses
 pub async fn get_network_connection_addresses(
-    State(dbus_conn): State<Arc<Connection>>,
+    State(_dbus_conn): State<Arc<Connection>>,
 ) -> impl IntoResponse {
-    match read_network_interfaces(Some(&dbus_conn)).await {
-        Ok(interfaces) => (
-            StatusCode::OK,
-            Json(ApiResponse::success_with_message(
-                "Success",
-                connection_addresses_from_interfaces(&interfaces),
-            )),
-        ),
-        Err(e) => (
-            StatusCode::OK,
-            Json(ApiResponse::<ConnectionAddressesResponse>::error(format!(
-                "Failed: {}",
-                e
-            ))),
-        ),
-    }
+    (
+        StatusCode::OK,
+        Json(ApiResponse::success_with_message(
+            "Success",
+            simadmin_device_runtime::connection_addresses(),
+        )),
+    )
 }
 
 /// GET /api/device-network/ddns/config
@@ -2341,9 +2312,7 @@ pub async fn set_device_ddns_config_handler(
     if is_masked_secret(&payload.access_id) {
         payload.access_id = current.access_id;
     }
-    if payload.access_secret.trim().is_empty() {
-        payload.access_secret = current.access_secret;
-    } else if is_masked_secret(&payload.access_secret) {
+    if payload.access_secret.trim().is_empty() || is_masked_secret(&payload.access_secret) {
         payload.access_secret = current.access_secret;
     }
     if payload.interval_seconds == 0 {
@@ -3231,7 +3200,6 @@ pub async fn delete_sms_batch_handler(
 
 // ============ 系统信息 ============
 
-/// 读取温度传感器数据
 // ============ 电话功能 ============
 
 async fn track_call_start(
@@ -3704,7 +3672,7 @@ pub(crate) fn temperature_sensor_label(sensor_type: &str, zone: &str) -> String 
     }
 
     let cleaned = source
-        .replace(|ch: char| matches!(ch, '-' | '_' | ' '), " ")
+        .replace(['-', '_', ' '], " ")
         .split_whitespace()
         .filter(|part| {
             !matches!(
@@ -3797,146 +3765,30 @@ pub(crate) fn read_temperature_sensors() -> Vec<ThermalZone> {
     sensors
 }
 
-static SYSTEM_STATS_SNAPSHOT: OnceLock<Arc<RwLock<Option<SystemStatsResponse>>>> = OnceLock::new();
-const SYSTEM_STATS_LOW_FREQUENCY_REFRESH_SECS: u64 = 10;
+static SYSTEM_RUNTIME: OnceLock<simadmin_device_runtime::SystemRuntime> = OnceLock::new();
 
-#[derive(Default)]
-struct SystemStatsSamplerState {
-    previous_network: HashMap<String, (u64, u64)>,
-    last_low_frequency_refresh: Option<Instant>,
-    memory: MemoryInfo,
-    disk: Vec<DiskInfo>,
-    uptime: UptimeInfo,
-    system_info: SystemInfo,
-    temperature: Vec<ThermalZone>,
+fn system_runtime() -> &'static simadmin_device_runtime::SystemRuntime {
+    SYSTEM_RUNTIME.get_or_init(simadmin_device_runtime::SystemRuntime::new)
 }
 
-fn system_stats_snapshot() -> Arc<RwLock<Option<SystemStatsResponse>>> {
-    Arc::clone(SYSTEM_STATS_SNAPSHOT.get_or_init(|| Arc::new(RwLock::new(None))))
-}
-
-async fn collect_system_stats_snapshot(
-    dbus_conn: &Connection,
-    state: &mut SystemStatsSamplerState,
-    interval_seconds: f64,
-) -> Result<SystemStatsResponse, String> {
-    let interfaces =
-        get_active_interfaces().map_err(|e| format!("Failed to get interfaces: {}", e))?;
-
-    let mut speed_data = Vec::new();
-    let elapsed = interval_seconds.max(0.001);
-    for iface in &interfaces {
-        if let Ok((rx, tx)) = read_interface_stats(iface, Some(dbus_conn)).await {
-            let (rx_speed, tx_speed) = state
-                .previous_network
-                .get(iface)
-                .map(|(prev_rx, prev_tx)| {
-                    (
-                        (rx.saturating_sub(*prev_rx) as f64 / elapsed) as u64,
-                        (tx.saturating_sub(*prev_tx) as f64 / elapsed) as u64,
-                    )
-                })
-                .unwrap_or((0, 0));
-            speed_data.push(NetworkSpeed {
-                interface: iface.clone(),
-                rx_bytes_per_sec: rx_speed,
-                tx_bytes_per_sec: tx_speed,
-                total_rx_bytes: rx,
-                total_tx_bytes: tx,
-            });
-            state.previous_network.insert(iface.clone(), (rx, tx));
-        }
-    }
-    state
-        .previous_network
-        .retain(|iface, _| interfaces.iter().any(|current| current == iface));
-
-    let cpu_usage = sample_cpu_usage().await.unwrap_or(0.0);
-    let mut cpu_load = read_cpu_load_sync().unwrap_or_default();
-    cpu_load.load_percent = cpu_usage;
-
-    let should_refresh_low_frequency = state
-        .last_low_frequency_refresh
-        .map(|last| last.elapsed() >= Duration::from_secs(SYSTEM_STATS_LOW_FREQUENCY_REFRESH_SECS))
-        .unwrap_or(true);
-    if should_refresh_low_frequency {
-        let (total, available, cached, buffers) = read_memory_info()?;
-        let used = total.saturating_sub(available);
-        let used_percent = if total > 0 {
-            (used as f64 / total as f64) * 100.0
-        } else {
-            0.0
-        };
-        let (uptime, idle) = read_uptime()?;
-        state.memory = MemoryInfo {
-            total_bytes: total,
-            available_bytes: available,
-            used_bytes: used,
-            used_percent,
-            cached_bytes: cached,
-            buffers_bytes: buffers,
-        };
-        state.disk = read_disk_info();
-        state.uptime = UptimeInfo {
-            uptime_seconds: uptime,
-            idle_seconds: idle,
-            uptime_formatted: format_uptime(uptime),
-        };
-        state.system_info = read_system_info()?;
-        state.temperature = read_temperature_sensors();
-        state.last_low_frequency_refresh = Some(Instant::now());
-    }
-
-    Ok(SystemStatsResponse {
-        network_speed: NetworkSpeedResponse {
-            interfaces: speed_data,
-            interval_seconds: elapsed,
-        },
-        memory: state.memory.clone(),
-        disk: state.disk.clone(),
-        cpu_load,
-        uptime: state.uptime.clone(),
-        system_info: state.system_info.clone(),
-        temperature: state.temperature.clone(),
-    })
-}
-
-pub fn spawn_system_stats_sampler(dbus_conn: Arc<Connection>) {
-    let snapshot = system_stats_snapshot();
-    tokio::spawn(async move {
-        let mut sampler_state = SystemStatsSamplerState::default();
-        let mut last_sample = Instant::now();
-        loop {
-            let elapsed = last_sample.elapsed().as_secs_f64().max(1.0);
-            last_sample = Instant::now();
-            match collect_system_stats_snapshot(&dbus_conn, &mut sampler_state, elapsed).await {
-                Ok(stats) => {
-                    *snapshot.write().await = Some(stats);
-                }
-                Err(err) => warn!(error = %err, "Failed to sample system stats"),
-            }
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-    });
+pub fn spawn_system_stats_sampler(_dbus_conn: Arc<Connection>) {
+    let _ = system_runtime();
 }
 
 /// GET /api/stats
 pub async fn get_system_stats(State(_dbus_conn): State<Arc<Connection>>) -> impl IntoResponse {
-    let snapshot = system_stats_snapshot();
-    if let Some(data) = snapshot.read().await.clone() {
-        return (
+    match system_runtime().stats().await {
+        Ok(data) => (
             StatusCode::OK,
             Json(ApiResponse::success_with_message("Success", data)),
-        );
+        ),
+        Err(error) => (
+            StatusCode::OK,
+            Json(ApiResponse::<SystemStatsResponse>::error(format!(
+                "Failed: {error}"
+            ))),
+        ),
     }
-
-    (
-        StatusCode::OK,
-        Json(ApiResponse::success_with_message(
-            "No system stats sample yet",
-            SystemStatsResponse::default(),
-        )),
-    )
 }
 
 /// GET /api/stats/cpu
@@ -3956,77 +3808,17 @@ pub async fn get_cpu_info() -> impl IntoResponse {
 /// GET /api/connectivity
 pub async fn get_connectivity_check() -> (StatusCode, Json<ApiResponse<ConnectivityCheckResponse>>)
 {
-    // 两个 ping 并行执行，超时从 2s 缩短到 1s
-    let (ipv4_result, ipv6_result) = tokio::join!(
-        async_ping_host("223.5.5.5", false),
-        async_ping_host("2400:3200::1", true),
-    );
     (
         StatusCode::OK,
         Json(ApiResponse::success_with_message(
             "Connectivity check completed",
-            ConnectivityCheckResponse {
-                ipv4: ipv4_result,
-                ipv6: ipv6_result,
-            },
+            simadmin_device_runtime::connectivity().await,
         )),
     )
 }
 
 pub(crate) async fn async_ping_host(target: &str, is_ipv6: bool) -> PingResult {
-    let cmd = if is_ipv6 { "ping6" } else { "ping" };
-    let output = tokio::process::Command::new(cmd)
-        .args(["-c", "1", "-W", "1", target])
-        .output()
-        .await;
-    match output {
-        Ok(result) => {
-            if result.status.success() {
-                let stdout = String::from_utf8_lossy(&result.stdout);
-                let latency = parse_ping_latency(&stdout);
-                PingResult {
-                    success: true,
-                    latency_ms: latency,
-                    target: target.to_string(),
-                    error: None,
-                }
-            } else {
-                let stderr = String::from_utf8_lossy(&result.stderr);
-                PingResult {
-                    success: false,
-                    latency_ms: None,
-                    target: target.to_string(),
-                    error: Some(if stderr.is_empty() {
-                        "Unreachable".to_string()
-                    } else {
-                        stderr.trim().to_string()
-                    }),
-                }
-            }
-        }
-        Err(e) => PingResult {
-            success: false,
-            latency_ms: None,
-            target: target.to_string(),
-            error: Some(format!("Failed: {}", e)),
-        },
-    }
-}
-
-fn parse_ping_latency(output: &str) -> Option<f64> {
-    for line in output.lines() {
-        if let Some(time_pos) = line.find("time=") {
-            let after_time = &line[time_pos + 5..];
-            let num_str: String = after_time
-                .chars()
-                .take_while(|c| c.is_ascii_digit() || *c == '.')
-                .collect();
-            if let Ok(latency) = num_str.parse::<f64>() {
-                return Some(latency);
-            }
-        }
-    }
-    None
+    simadmin_device_runtime::ping_host(target, is_ipv6).await
 }
 
 /// POST /api/system/reboot
@@ -4365,15 +4157,15 @@ pub async fn get_notification_logs_handler(
     StatusCode,
     Json<ApiResponse<crate::db::NotificationLogsResponse>>,
 ) {
-    match database.get_notification_logs(
-        &query.event_type,
-        &query.status,
-        &query.q,
-        &query.start_date,
-        &query.end_date,
-        query.limit,
-        query.offset,
-    ) {
+    match database.get_notification_logs(crate::db::LogQuery {
+        kind: &query.event_type,
+        status: &query.status,
+        search: &query.q,
+        start_date: &query.start_date,
+        end_date: &query.end_date,
+        limit: query.limit,
+        offset: query.offset,
+    }) {
         Ok(logs) => (
             StatusCode::OK,
             Json(ApiResponse::success_with_message("Success", logs)),
@@ -4697,15 +4489,15 @@ pub async fn get_automation_logs_handler(
     StatusCode,
     Json<ApiResponse<crate::db::AutomationLogsResponse>>,
 ) {
-    match database.get_automation_logs(
-        &query.task_type,
-        &query.status,
-        &query.q,
-        &query.start_date,
-        &query.end_date,
-        query.limit,
-        query.offset,
-    ) {
+    match database.get_automation_logs(crate::db::LogQuery {
+        kind: &query.task_type,
+        status: &query.status,
+        search: &query.q,
+        start_date: &query.start_date,
+        end_date: &query.end_date,
+        limit: query.limit,
+        offset: query.offset,
+    }) {
         Ok(logs) => (
             StatusCode::OK,
             Json(ApiResponse::success_with_message("Success", logs)),

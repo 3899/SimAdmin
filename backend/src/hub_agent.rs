@@ -22,11 +22,12 @@ use simadmin_agent::{
     AgentConfig, AgentError, AgentExecutor, AgentResult, AgentRuntime, AgentStore, ExecutionResult,
 };
 use simadmin_protocol::{
-    AgentType, CommandPayload, CommandResultStatus, ConfigSyncPayload, ConnectionScope,
-    DeviceAction, DeviceActionCommandPayload, DeviceFeatureSnapshot, DeviceProvisionRequest,
-    DeviceStatus, DeviceStatusItem, Envelope, EventItem, EventType, HardwareFingerprintPayload,
-    LayerStatus, MessageAckPayload, OtaUpdateCommandPayload, SendSmsCommandPayload,
-    SessionReadyPayload, SmsDirection, SmsItem, SmsStatus,
+    AccessMethod, AgentType, CapabilityManifest, CommandPayload, CommandResultStatus,
+    ConfigSyncPayload, ConnectionScope, DeviceAction, DeviceActionCommandPayload,
+    DeviceFeatureSnapshot, DeviceKind, DeviceProvisionRequest, DeviceStatus, DeviceStatusItem,
+    Envelope, EventItem, EventType, ExecutorType, HardwareFingerprintPayload, LayerStatus,
+    MessageAckPayload, OtaUpdateCommandPayload, SendSmsCommandPayload, SessionReadyPayload,
+    SmsDirection, SmsItem, SmsStatus,
 };
 use tokio::sync::{Mutex as AsyncMutex, Notify, RwLock};
 use tower::ServiceExt;
@@ -170,6 +171,9 @@ impl SimAdminExecutor {
                 "home" | "roaming" | "registered"
             )
         });
+        let local_device_service = std::env::var("SIMADMIN_DEVICE_SERVICE")
+            .ok()
+            .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes" | "on"));
         let mut capabilities = vec![
             "sim",
             "sms",
@@ -183,13 +187,23 @@ impl SimAdminExecutor {
             "phone",
             "call",
             "system",
+            "baseband_restart",
             "notifications",
             "automation",
-            "ota",
         ];
+        if !local_device_service {
+            capabilities.extend(["backup", "ota"]);
+        }
         if self.app.config_manager.get_work_mode() == WorkMode::Esim {
             capabilities.push("esim");
         }
+        let capabilities = capabilities
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let mut capability_manifest = CapabilityManifest::from_legacy(&capabilities);
+        capability_manifest.features.push("panel.full".into());
+        capability_manifest = capability_manifest.normalized();
 
         DeviceStatusItem {
             item_id: format!("status-{}", Uuid::new_v4()),
@@ -219,7 +233,11 @@ impl SimAdminExecutor {
                 Some(false) => LayerStatus::Warning,
                 None => LayerStatus::Unknown,
             },
-            capabilities: capabilities.into_iter().map(str::to_owned).collect(),
+            capabilities,
+            device_kind: Some(DeviceKind::SystemDevice),
+            access_method: None,
+            executor_type: Some(ExecutorType::SimadminAgent),
+            capability_manifest: Some(capability_manifest),
             simadmin_version: Some(env!("CARGO_PKG_VERSION").to_owned()),
             architecture: Some(std::env::consts::ARCH.to_owned()),
             phone_number: sim
@@ -893,6 +911,9 @@ fn parse_event_type(value: &str) -> AgentResult<EventType> {
 }
 
 fn agent_store_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("SIMADMIN_DATA_DIR") {
+        return PathBuf::from(path).join("hub-agent.db");
+    }
     let legacy = std::env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(PathBuf::from))
@@ -917,15 +938,25 @@ fn agent_store_path() -> PathBuf {
 }
 
 fn new_agent_config(hub: &HubConfig, enrollment_token: Option<String>) -> AgentConfig {
+    let local_device_service = std::env::var("SIMADMIN_DEVICE_SERVICE")
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes" | "on"));
     let mut config = AgentConfig::new(
         hub.url.clone(),
         AgentType::Simadmin,
-        ConnectionScope::Remote,
+        if local_device_service {
+            ConnectionScope::Local
+        } else {
+            ConnectionScope::Remote
+        },
         read_system_info()
             .map(|value| value.nodename)
             .unwrap_or_else(|_| "simadmin".into()),
         env!("CARGO_PKG_VERSION").into(),
     );
+    if local_device_service {
+        config.access_method = Some(AccessMethod::LocalSystem);
+    }
     config.enrollment_token = enrollment_token;
     config
 }

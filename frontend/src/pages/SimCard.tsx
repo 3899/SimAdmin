@@ -163,7 +163,7 @@ function InfoField({ label, value, sensitive = false, showSensitive, extra }: {
 
 
 
-function SimBasicInfo() {
+function SimBasicInfo({ readOnly = false }: { readOnly?: boolean }) {
   const api = useSimAdminApi()
   const { mode, refreshWorkMode } = useWorkMode()
   const [loading, setLoading] = useState(true)
@@ -213,7 +213,7 @@ function SimBasicInfo() {
         const data = simRes.data
         const missingSlowFields =
           data.present && (!data.phone_numbers?.length || !data.sms_center)
-        if (missingSlowFields && data.iccid && autoDetailsRefreshIccidRef.current !== data.iccid) {
+        if (!readOnly && missingSlowFields && data.iccid && autoDetailsRefreshIccidRef.current !== data.iccid) {
           autoDetailsRefreshIccidRef.current = data.iccid
           setDetailsRefreshing(true)
           void api.refreshSimDetails()
@@ -338,7 +338,7 @@ function SimBasicInfo() {
                         <IconButton
                           size="small"
                           onClick={() => void handleRefreshDetails()}
-                          disabled={detailsRefreshing || !simInfo?.present}
+                          disabled={readOnly || detailsRefreshing || !simInfo?.present}
                         >
                           {detailsRefreshing ? <CircularProgress size={16} /> : <Refresh fontSize="small" />}
                         </IconButton>
@@ -408,7 +408,7 @@ function SimBasicInfo() {
                         showSensitive={showSensitive}
                         value={simInfo?.phone_numbers?.length ? simInfo.phone_numbers.join(', ') : 'N/A'}
                         extra={
-                          showSensitive && (isPhoneEmpty || simInfo?.phone_number_is_manual) && simInfo?.present && (
+                          !readOnly && showSensitive && (isPhoneEmpty || simInfo?.phone_number_is_manual) && simInfo?.present && (
                             <IconButton size="small" sx={{ p: 0.25 }} onClick={() => { setPhoneInput(simInfo?.phone_numbers?.[0] || ''); setEditingPhone(true); }}>
                               <Edit sx={{ fontSize: '0.9rem' }} />
                             </IconButton>
@@ -448,7 +448,7 @@ function SimBasicInfo() {
                         showSensitive={showSensitive}
                         value={simInfo?.sms_center || '未读取到'}
                         extra={
-                          showSensitive && (isSmscEmpty || simInfo?.sms_center_is_manual) && simInfo?.present && (
+                          !readOnly && showSensitive && (isSmscEmpty || simInfo?.sms_center_is_manual) && simInfo?.present && (
                             <IconButton size="small" sx={{ p: 0.25 }} onClick={() => { setSmscInput(simInfo?.sms_center || ''); setEditingSmsc(true); }}>
                               <Edit sx={{ fontSize: '0.9rem' }} />
                             </IconButton>
@@ -587,7 +587,7 @@ function SimBasicInfo() {
       </Grid>
 
       {/* 工作模式卡片（底部轻量化呈现） */}
-      <Card sx={{ mt: 3 }}>
+      <Card sx={{ mt: 3, display: readOnly ? 'none' : 'block' }}>
         <CardHeader
           avatar={<Tune color="primary" />}
           title="工作模式设置"
@@ -726,9 +726,10 @@ function SimBasicInfo() {
 
 export interface SimCardPageProps {
   embeddedBasicOnly?: boolean
+  readOnly?: boolean
 }
 
-export default function SimCardPage({ embeddedBasicOnly = false }: SimCardPageProps) {
+export default function SimCardPage({ embeddedBasicOnly = false, readOnly = false }: SimCardPageProps) {
   const { mode, loading } = useWorkMode()
   const [searchParams, setSearchParams] = useSearchParams()
   let activeTab = searchParams.get('tab') || 'basic'
@@ -755,7 +756,7 @@ export default function SimCardPage({ embeddedBasicOnly = false }: SimCardPagePr
     )
   }
 
-  if (embeddedBasicOnly) return <SimBasicInfo />
+  if (embeddedBasicOnly) return <SimBasicInfo readOnly={readOnly} />
 
   return (
     <Box>
@@ -773,7 +774,7 @@ export default function SimCardPage({ embeddedBasicOnly = false }: SimCardPagePr
       </Box>
 
       <Box sx={{ mt: 2 }}>
-        {activeTab === 'basic' && <SimBasicInfo />}
+        {activeTab === 'basic' && <SimBasicInfo readOnly={readOnly} />}
         {activeTab === 'esim' && mode === 'esim' && <EsimManagerPage />}
       </Box>
     </Box>

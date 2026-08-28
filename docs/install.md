@@ -40,6 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.s
 | `--install-dir PATH` | 指定安装目录，默认 `/opt/simadmin` |
 | `--service-name NAME` | 指定 systemd 主服务名，默认 `simadmin` |
 | `--no-lpac` | 跳过 lpac (eSIM CLI) 的自动下载与安装 |
+| `--lpac-only` | 仅安装或更新共享 lpac 运行时，不安装 SimAdmin 服务 |
 | `-h, --help` | 显示帮助信息 |
 
 ### 可选环境变量

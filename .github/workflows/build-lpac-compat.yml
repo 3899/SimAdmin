@@ -93,6 +93,7 @@ jobs:
                 build-essential binutils cmake git ca-certificates zip \
                 pkg-config python3 python3-pip ninja-build \
                 libcurl4-openssl-dev libglib2.0-dev \
+                libmbim-glib-dev \
                 libpcsclite-dev libgudev-1.0-dev libglib2.0-doc \
                 libudev-dev udev
               pip3 install meson
@@ -113,7 +114,7 @@ jobs:
               cmake -S /lpac -B /lpac/build \
                 -DCMAKE_BUILD_TYPE=Release -DSTANDALONE_MODE=ON \
                 -DLPAC_WITH_APDU_PCSC=OFF -DLPAC_WITH_APDU_AT=ON \
-                -DLPAC_WITH_APDU_QMI=ON \
+                -DLPAC_WITH_APDU_QMI=ON -DLPAC_WITH_APDU_MBIM=ON \
                 -DCMAKE_INSTALL_RPATH="\$ORIGIN/lib"
               cmake --build /lpac/build --parallel
               DESTDIR=/tmp/lpac-install cmake --install /lpac/build
@@ -130,13 +131,25 @@ jobs:
               qmi_basename="$(basename "$qmi_so")"
               ln -s "$qmi_basename" "$bundle/lib/libqmi-glib.so.5"
               ln -s "$qmi_basename" "$bundle/lib/libqmi-glib.so"
+
+              mbim_so="$(find /usr/lib /usr/local/lib -type f -name "libmbim-glib.so.*.*.*" -print -quit)"
+              test -n "$mbim_so"
+              cp -L "$mbim_so" "$bundle/lib/"
+              mbim_basename="$(basename "$mbim_so")"
+              mbim_soname="$(readelf -d "$mbim_so" | sed -n "s/.*SONAME.*\[\(.*\)\].*/\1/p")"
+              test -n "$mbim_soname"
+              ln -s "$mbim_basename" "$bundle/lib/$mbim_soname"
+              ln -s "$mbim_basename" "$bundle/lib/libmbim-glib.so"
               printf "%s\n" "$COMPAT_REVISION" > "$bundle/COMPAT_REVISION.txt"
 
               readelf -d "$bundle/lpac" | grep -E "\(RPATH\)|\(RUNPATH\)" | grep -F ORIGIN/lib
               ldd "$bundle/lpac" | grep -F "$bundle/lib/libqmi-glib.so.5"
+              ldd "$bundle/lpac" | grep -F "$bundle/lib/$mbim_soname"
               LPAC_APDU=stdio LPAC_HTTP=stdio "$bundle/lpac" driver list \
                 | tee /tmp/lpac-drivers.json
               grep -Fq qmi /tmp/lpac-drivers.json
+              grep -Fq mbim /tmp/lpac-drivers.json
+              grep -Fq at_csim /tmp/lpac-drivers.json
               grep -Fq curl /tmp/lpac-drivers.json
 
               cd "$bundle"

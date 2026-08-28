@@ -8,19 +8,16 @@ use crate::db::{
 use crate::modem_manager::{cache_smsc_for_identity, current_sim_identity, find_modem_path};
 use crate::notification::NotificationSender;
 use futures_util::StreamExt;
+use simadmin_device_runtime::{ModemContext, ReceivedSms as IncomingSms};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, MissedTickBehavior};
 use tracing::{info, warn};
-use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 use zbus::{Connection, MessageStream, Proxy};
 
 /// ModemManager 常量
 const MM_SERVICE: &str = "org.freedesktop.ModemManager1";
 const MM_MESSAGING: &str = "org.freedesktop.ModemManager1.Modem.Messaging";
-const MM_SMS: &str = "org.freedesktop.ModemManager1.Sms";
-const DBUS_PROPERTIES: &str = "org.freedesktop.DBus.Properties";
-const MM_SMS_STATE_RECEIVED: u32 = 3;
 const SMS_DELETE_DELAY_SECS: u64 = 5;
 const MODEM_RETRY_DELAY_SECS: u64 = 5;
 const SMS_POLL_INTERVAL_SECS: u64 = 15;
@@ -58,23 +55,6 @@ impl SmsResyncHandle {
     }
 }
 
-#[derive(Debug)]
-struct IncomingSms {
-    path: String,
-    number: String,
-    content: String,
-    timestamp: String,
-    smsc: String,
-}
-
-fn decode_sms_data(value: &OwnedValue) -> Option<String> {
-    let bytes = Vec::<u8>::try_from(value.clone()).ok()?;
-    if bytes.is_empty() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&bytes).into_owned())
-}
-
 fn sms_marker(incoming: &IncomingSms) -> String {
     let raw = if incoming.timestamp.is_empty() {
         format!(
@@ -103,63 +83,16 @@ fn should_forward_after_insert(mode: SmsIngestMode, forward_reconciled_new_sms: 
 }
 
 /// 从 SMS 对象路径读取短信内容
-async fn read_sms_content(conn: &Connection, sms_path: &str) -> Option<IncomingSms> {
-    let proxy = Proxy::new(conn, MM_SERVICE, sms_path, DBUS_PROPERTIES)
+async fn read_sms_content(
+    conn: &Connection,
+    modem_path: &str,
+    sms_path: &str,
+) -> Option<IncomingSms> {
+    ModemContext::new(conn, modem_path)
+        .ok()?
+        .received_sms_at(sms_path)
         .await
-        .ok()?;
-
-    let props: std::collections::HashMap<String, OwnedValue> =
-        proxy.call("GetAll", &(MM_SMS,)).await.ok()?;
-
-    let number = props
-        .get("Number")
-        .and_then(|v| String::try_from(v.clone()).ok())
-        .unwrap_or_else(|| "Unknown".to_string());
-
-    let text = props
-        .get("Text")
-        .and_then(|v| String::try_from(v.clone()).ok())
-        .unwrap_or_default();
-    let data = props.get("Data").and_then(decode_sms_data);
-    let smsc = ["SMSC", "Smsc", "SmsCenter"]
-        .iter()
-        .find_map(|key| {
-            props
-                .get(*key)
-                .and_then(|v| String::try_from(v.clone()).ok())
-        })
-        .unwrap_or_default();
-    let timestamp = ["Timestamp", "Time", "ReceivedTimestamp"]
-        .iter()
-        .find_map(|key| {
-            props
-                .get(*key)
-                .and_then(|v| String::try_from(v.clone()).ok())
-        })
-        .unwrap_or_default();
-
-    let state = props
-        .get("State")
-        .and_then(|v| u32::try_from(v.clone()).ok())
-        .unwrap_or(0);
-
-    if state != MM_SMS_STATE_RECEIVED {
-        return None;
-    }
-
-    let content = if text.is_empty() {
-        data.unwrap_or_default()
-    } else {
-        text
-    };
-
-    Some(IncomingSms {
-        path: sms_path.to_string(),
-        number,
-        content,
-        timestamp,
-        smsc,
-    })
+        .ok()?
 }
 
 fn schedule_sms_delete(conn: &Connection, modem_path: &str, sms_path: String) {
@@ -167,24 +100,12 @@ fn schedule_sms_delete(conn: &Connection, modem_path: &str, sms_path: String) {
     let modem_path = modem_path.to_string();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(SMS_DELETE_DELAY_SECS)).await;
-        let proxy = Proxy::new(&conn_clone, MM_SERVICE, modem_path.as_str(), MM_MESSAGING).await;
-        match proxy {
-            Ok(proxy) => {
-                let sms_path_obj = zbus::zvariant::ObjectPath::try_from(sms_path.as_str());
-                match sms_path_obj {
-                    Ok(path) => {
-                        if let Err(e) = proxy.call::<_, _, ()>("Delete", &(path,)).await {
-                            warn!(error = %e, path = %sms_path, "Failed to delete processed SMS from ModemManager");
-                        }
-                    }
-                    Err(e) => {
-                        warn!(error = %e, path = %sms_path, "Invalid SMS path for deletion");
-                    }
-                }
-            }
-            Err(e) => {
-                warn!(error = %e, path = %sms_path, "Failed to create Messaging proxy for SMS deletion");
-            }
+        let result = match ModemContext::new(&conn_clone, &modem_path) {
+            Ok(context) => context.delete_sms(&sms_path).await,
+            Err(error) => Err(error),
+        };
+        if let Err(error) = result {
+            warn!(%error, path = %sms_path, "Failed to delete processed SMS from ModemManager");
         }
     });
 }
@@ -198,7 +119,7 @@ async fn process_sms_path(
     mode: SmsIngestMode,
     forward_reconciled_new_sms: bool,
 ) {
-    let Some(incoming) = read_sms_content(conn, sms_path).await else {
+    let Some(incoming) = read_sms_content(conn, modem_path, sms_path).await else {
         return;
     };
 
@@ -249,9 +170,9 @@ async fn process_sms_path(
         "SMS content read"
     );
 
-    if !incoming.smsc.is_empty() {
+    if !incoming.sms_center.is_empty() {
         if let Some(identity) = current_sim_identity(conn).await {
-            cache_smsc_for_identity(db, &identity, &incoming.smsc, "sms_object");
+            cache_smsc_for_identity(db, &identity, &incoming.sms_center, "sms_object");
         }
     }
 
@@ -289,9 +210,11 @@ async fn process_sms_path(
 }
 
 async fn list_sms_paths(conn: &Connection, modem_path: &str) -> zbus::Result<Vec<String>> {
-    let proxy = Proxy::new(conn, MM_SERVICE, modem_path, MM_MESSAGING).await?;
-    let paths: Vec<OwnedObjectPath> = proxy.call("List", &()).await?;
-    Ok(paths.into_iter().map(|path| path.to_string()).collect())
+    ModemContext::new(conn, modem_path)
+        .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?
+        .sms_paths()
+        .await
+        .map_err(|error| zbus::fdo::Error::Failed(error.to_string()).into())
 }
 
 async fn scan_sms_paths(

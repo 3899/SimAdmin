@@ -163,7 +163,7 @@ pub struct WecomAppConfig {
     pub safe: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WecomRobotConfig {
     #[serde(flatten)]
     pub common: MessageChannelConfig,
@@ -173,7 +173,7 @@ pub struct WecomRobotConfig {
     pub key: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DingtalkRobotConfig {
     #[serde(flatten)]
     pub common: MessageChannelConfig,
@@ -205,7 +205,7 @@ pub struct DingtalkAppConfig {
     pub msg_key: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FeishuRobotConfig {
     #[serde(flatten)]
     pub common: MessageChannelConfig,
@@ -233,7 +233,7 @@ pub struct TelegramConfig {
     pub disable_web_page_preview: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ServerChan3Config {
     #[serde(flatten)]
     pub common: MessageChannelConfig,
@@ -273,7 +273,7 @@ pub struct EmailConfig {
     pub message_format: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LegacyNotificationConfig {
     #[serde(default)]
     pub webhook: WebhookConfig,
@@ -630,7 +630,7 @@ impl<'de> Deserialize<'de> for NotificationConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct DeviceNetworkConfig {
     #[serde(default)]
@@ -876,29 +876,6 @@ impl Default for WecomAppConfig {
     }
 }
 
-impl Default for WecomRobotConfig {
-    fn default() -> Self {
-        Self {
-            common: MessageChannelConfig::default(),
-            webhook_url: String::new(),
-            key: String::new(),
-        }
-    }
-}
-
-impl Default for DingtalkRobotConfig {
-    fn default() -> Self {
-        Self {
-            common: MessageChannelConfig::default(),
-            webhook_url: String::new(),
-            access_token: String::new(),
-            secret: String::new(),
-            at_mobiles: String::new(),
-            at_all: false,
-        }
-    }
-}
-
 impl Default for DingtalkAppConfig {
     fn default() -> Self {
         Self {
@@ -912,17 +889,6 @@ impl Default for DingtalkAppConfig {
     }
 }
 
-impl Default for FeishuRobotConfig {
-    fn default() -> Self {
-        Self {
-            common: MessageChannelConfig::default(),
-            webhook_url: String::new(),
-            token: String::new(),
-            secret: String::new(),
-        }
-    }
-}
-
 impl Default for TelegramConfig {
     fn default() -> Self {
         Self {
@@ -932,18 +898,6 @@ impl Default for TelegramConfig {
             chat_id: String::new(),
             parse_mode: String::new(),
             disable_web_page_preview: true,
-        }
-    }
-}
-
-impl Default for ServerChan3Config {
-    fn default() -> Self {
-        Self {
-            common: MessageChannelConfig::default(),
-            send_key: String::new(),
-            uid: String::new(),
-            channel: String::new(),
-            openid: String::new(),
         }
     }
 }
@@ -962,24 +916,6 @@ impl Default for EmailConfig {
             sender_name: String::new(),
             receiver_addresses: String::new(),
             message_format: default_email_message_format(),
-        }
-    }
-}
-
-impl Default for LegacyNotificationConfig {
-    fn default() -> Self {
-        Self {
-            webhook: WebhookConfig::default(),
-            bark: BarkConfig::default(),
-            pushplus: PushPlusConfig::default(),
-            wecom_app: WecomAppConfig::default(),
-            wecom_robot: WecomRobotConfig::default(),
-            dingtalk_robot: DingtalkRobotConfig::default(),
-            dingtalk_app: DingtalkAppConfig::default(),
-            feishu_robot: FeishuRobotConfig::default(),
-            telegram: TelegramConfig::default(),
-            serverchan3: ServerChan3Config::default(),
-            email: EmailConfig::default(),
         }
     }
 }
@@ -1357,14 +1293,6 @@ pub fn default_rule_title_template(event_type: NotificationEventType) -> String 
         NotificationEventType::SystemEvent => "{{分类}}事件：{{本机号码}}".to_string(),
         NotificationEventType::DeviceStatus => "设备状态：{{本机号码}}".to_string(),
         NotificationEventType::Automation => "{{任务类型}}：{{本机号码}}".to_string(),
-    }
-}
-
-impl Default for DeviceNetworkConfig {
-    fn default() -> Self {
-        Self {
-            ddns: DdnsConfig::default(),
-        }
     }
 }
 
@@ -1896,14 +1824,16 @@ fn migrate_legacy_webhook_config(config: &mut AppConfig) {
         && config.notifications.rules.is_empty()
         && config.webhook != WebhookConfig::default()
     {
-        let mut legacy = LegacyNotificationConfig::default();
-        legacy.webhook = config.webhook.clone();
+        let legacy = LegacyNotificationConfig {
+            webhook: config.webhook.clone(),
+            ..Default::default()
+        };
         config.notifications = NotificationConfig::from_legacy(legacy);
     }
     config.webhook = config
         .notifications
         .first_webhook_config()
-        .unwrap_or_else(WebhookConfig::default);
+        .unwrap_or_default();
 }
 
 fn migrate_update_template_string(template: &mut String) -> bool {
@@ -1995,10 +1925,10 @@ fn migrate_update_templates(config: &mut AppConfig) -> bool {
 
     // 2. Notification rules templates
     for rule in &mut config.notifications.rules {
-        if rule.event_type == NotificationEventType::VersionUpdate {
-            if migrate_update_template_string(&mut rule.template) {
-                changed = true;
-            }
+        if rule.event_type == NotificationEventType::VersionUpdate
+            && migrate_update_template_string(&mut rule.template)
+        {
+            changed = true;
         }
     }
 
@@ -2243,9 +2173,7 @@ impl ConfigManager {
     pub fn set_notifications(&self, notifications: NotificationConfig) -> Result<(), String> {
         {
             let mut config = self.config.write().unwrap();
-            config.webhook = notifications
-                .first_webhook_config()
-                .unwrap_or_else(WebhookConfig::default);
+            config.webhook = notifications.first_webhook_config().unwrap_or_default();
             config.notifications = notifications;
         }
         self.save()
@@ -2272,6 +2200,9 @@ impl ConfigManager {
 
 /// 获取默认配置文件路径
 pub fn get_default_config_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("SIMADMIN_DATA_DIR") {
+        return PathBuf::from(path).join("config.json");
+    }
     // 尝试 /data/config.json（设备上的持久化目录）
     let device_path = PathBuf::from("/data/config.json");
     if device_path.parent().map(|p| p.exists()).unwrap_or(false) {

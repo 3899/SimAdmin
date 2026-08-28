@@ -47,8 +47,8 @@
 * **普通 SIM 模式**：「SIM 卡管理」页面中将隐藏「eSIM 管理」标签页，`/api/esim/*` 所有相关接口返回 `403`，前端不加载 eSIM 关联页面 chunk 资源，后端不会主动拉起或调用 `lpac`。
 * **eSIM 模式**：切换到 eSIM 模式后，只有切入「eSIM 管理」Tab 页或用户执行 Profile 写卡、切换、重命名等操作时，后端才会按需调用 `lpac chip info`、`lpac profile list`、`lpac profile enable`、`lpac profile nickname` 和 `lpac profile delete` 进行瞬时通信。
 * **`lpac` 下载与维护**：
-  - 一键安装脚本 `install_latest.sh` 会根据 `uname -m` 和 glibc 版本，优先匹配架构并拉取带 QMI APDU 后端的 `lpac` 至 `/opt/simadmin/lpac/lpac`。脚本通过 `lpac driver list` 校验 `qmi` 和 `curl` 驱动，缺少所需驱动或动态库时不会覆盖已有可用版本。如果需要阻止脚本下载，请在安装时设置环境变量 `SIMADMIN_INSTALL_LPAC=0`。
-  - 后端默认自动选择 `/dev/cdc-wdm*` QMI 设备，并兼容 `/dev/wwan*qmi*`；仍可通过 `LPAC_APDU_QMI_DEVICE` 显式覆盖。
+  - 一键安装脚本 `install_latest.sh` 会根据 `uname -m` 和 glibc 版本，优先匹配架构并拉取带 QMI、MBIM、AT APDU 后端的 `lpac` 至 `/opt/simadmin/lpac/lpac`。脚本通过 `lpac driver list` 校验 APDU 与 `curl` 驱动，缺少所需驱动或动态库时不会覆盖已有可用版本。如果需要阻止脚本下载，请在安装时设置环境变量 `SIMADMIN_INSTALL_LPAC=0`。
+  - SimAdmin 本机后端默认自动选择 `/dev/cdc-wdm*` QMI 设备，并兼容 `/dev/wwan*qmi*`；仍可通过 `LPAC_APDU_QMI_DEVICE` 显式覆盖。共享运行时可为 SimAdminHub Host Agent 按设备显式选择 QMI、MBIM 或 AT 端点，多个模组不会共用默认控制口。
   - 单独手动应用 OTA 包**不会**自动安装或升级 `lpac`。
   - 若系统检测到有 eSIM 支持却缺失 `lpac`，管理页面会提供「安装/修复 lpac」的便捷入口。其内部修复逻辑由后端内置 zip 解压引擎在内存中运行完成，不依赖外部环境命令。
 

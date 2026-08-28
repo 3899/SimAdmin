@@ -11,10 +11,10 @@ use reqwest::Url;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use simadmin_protocol::{
-    AgentClaimResponse, AgentRegistrationRequest, AgentRegistrationResponse, AgentType,
-    CommandAckPayload, CommandPayload, CommandResultPayload, CommandResultStatus,
-    ConfigApplyResultPayload, ConfigApplyStatus, ConfigSyncPayload, ConnectionScope, Envelope,
-    HeartbeatPayload, MessageAckPayload, SessionReadyPayload,
+    AccessMethod, AgentClaimResponse, AgentRegistrationRequest, AgentRegistrationResponse,
+    AgentType, CommandAckPayload, CommandPayload, CommandResultPayload, CommandResultStatus,
+    ConfigApplyResultPayload, ConfigApplyStatus, ConfigSyncPayload, ConnectionScope, DeviceKind,
+    Envelope, HeartbeatPayload, MessageAckPayload, SessionReadyPayload,
 };
 use tokio::sync::{mpsc, Notify};
 use tokio_tungstenite::{
@@ -58,6 +58,10 @@ pub struct AgentConfig {
     pub pairing_code: Option<String>,
     pub agent_type: AgentType,
     pub connection_scope: ConnectionScope,
+    #[serde(default)]
+    pub device_kind: Option<DeviceKind>,
+    #[serde(default)]
+    pub access_method: Option<AccessMethod>,
     pub hostname: String,
     pub version: String,
     pub suggested_device_name: Option<String>,
@@ -81,6 +85,10 @@ impl AgentConfig {
         hostname: String,
         version: String,
     ) -> Self {
+        let (device_kind, access_method) = match agent_type {
+            AgentType::Simadmin => (Some(DeviceKind::SystemDevice), Some(AccessMethod::Network)),
+            AgentType::Host => (None, None),
+        };
         Self {
             enabled: true,
             hub_url,
@@ -95,6 +103,8 @@ impl AgentConfig {
             pairing_code: None,
             agent_type,
             connection_scope,
+            device_kind,
+            access_method,
             hostname,
             version,
             suggested_device_name: None,
@@ -580,6 +590,8 @@ impl<E: AgentExecutor> AgentRuntime<E> {
                     bootstrap_token: Some(self.config.token.clone()),
                     enrollment_token: self.config.enrollment_token.clone(),
                     hardware_fingerprint: self.executor.registration_fingerprint().await?,
+                    device_kind: self.config.device_kind,
+                    access_method: self.config.access_method,
                 })
                 .send()
                 .await?

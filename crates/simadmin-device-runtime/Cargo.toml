@@ -1,0 +1,16 @@
+[package]
+name = "simadmin-device-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+futures-util = "0.3"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serialport = { version = "4", default-features = false }
+simadmin-protocol = { path = "../simadmin-protocol" }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "process", "sync", "time"] }
+zbus = { version = "5", default-features = false, features = ["tokio"] }

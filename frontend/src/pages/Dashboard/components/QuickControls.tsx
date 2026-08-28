@@ -9,6 +9,7 @@ interface QuickControlsProps {
   onToggleData: () => void
   onToggleAirplaneMode: () => void
   onToggleRoaming: () => void
+  disabled?: boolean
 }
 
 export function QuickControls({
@@ -18,6 +19,7 @@ export function QuickControls({
   onToggleData,
   onToggleAirplaneMode,
   onToggleRoaming,
+  disabled = false,
 }: QuickControlsProps) {
   return (
     <Card sx={{ height: '100%' }}>
@@ -34,6 +36,7 @@ export function QuickControls({
               <Typography variant="body2">数据连接</Typography>
             </Box>
             <Switch
+              disabled={disabled}
               checked={dataStatus}
               onChange={() => {
                 void onToggleData()
@@ -52,6 +55,7 @@ export function QuickControls({
               )}
             </Box>
             <Switch
+              disabled={disabled}
               checked={roaming?.roaming_allowed || false}
               onChange={() => {
                 void onToggleRoaming()
@@ -67,6 +71,7 @@ export function QuickControls({
               <Typography variant="body2">飞行模式</Typography>
             </Box>
             <Switch
+              disabled={disabled}
               checked={airplaneMode?.enabled || false}
               onChange={() => {
                 void onToggleAirplaneMode()

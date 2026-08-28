@@ -158,7 +158,11 @@ function StatusBar({ data }: { data: DashboardData }) {
   )
 }
 
-export default function DashboardPage() {
+export interface DashboardPageProps {
+  readOnly?: boolean
+}
+
+export default function DashboardPage({ readOnly = false }: DashboardPageProps) {
   const { refreshInterval, refreshKey } = useRefreshInterval()
   const { initialLoading, error, setError, data, actions } = useDashboardData(refreshInterval, refreshKey)
 
@@ -186,11 +190,12 @@ export default function DashboardPage() {
               onToggleData={() => void actions.toggleData()}
               onToggleAirplaneMode={() => void actions.toggleAirplaneMode()}
               onToggleRoaming={() => void actions.toggleRoaming()}
+              disabled={readOnly}
             />
           </Grid>
 
           <Grid size={{ xs: 12, md: 6, lg: 3 }}>
-            <SimCardInfo simInfo={data.simInfo} onRefresh={() => void actions.loadData()} />
+            <SimCardInfo simInfo={data.simInfo} onRefresh={() => void actions.loadData()} readOnly={readOnly} />
           </Grid>
 
           <Grid size={{ xs: 12, lg: 6 }}>

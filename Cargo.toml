@@ -5,6 +5,7 @@ members = [
   "crates/simadmin-agent",
   "crates/simadmin-auth",
   "crates/simadmin-device-core",
+  "crates/simadmin-device-runtime",
   "crates/simadmin-notify",
   "crates/simadmin-protocol",
 ]

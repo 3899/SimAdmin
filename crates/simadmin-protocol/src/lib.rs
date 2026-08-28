@@ -1,9 +1,177 @@
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
 pub const PROTOCOL_VERSION: u16 = 1;
+pub const CAPABILITY_SCHEMA_VERSION: u16 = 2;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceKind {
+    SystemDevice,
+    Modem,
+    #[default]
+    Unknown,
+}
+
+impl DeviceKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SystemDevice => "system_device",
+            Self::Modem => "modem",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessMethod {
+    Network,
+    LocalSystem,
+    HostDirect,
+}
+
+impl AccessMethod {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Network => "network",
+            Self::LocalSystem => "local_system",
+            Self::HostDirect => "host_direct",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutorType {
+    SimadminAgent,
+    HostAgent,
+}
+
+impl ExecutorType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SimadminAgent => "simadmin_agent",
+            Self::HostAgent => "host_agent",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CapabilityManifest {
+    pub schema_version: u16,
+    #[serde(default)]
+    pub features: Vec<String>,
+    #[serde(default)]
+    pub attributes: BTreeMap<String, Value>,
+}
+
+impl Default for CapabilityManifest {
+    fn default() -> Self {
+        Self {
+            schema_version: CAPABILITY_SCHEMA_VERSION,
+            features: Vec::new(),
+            attributes: BTreeMap::new(),
+        }
+    }
+}
+
+impl CapabilityManifest {
+    pub fn new(features: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        let mut manifest = Self {
+            features: features.into_iter().map(Into::into).collect(),
+            ..Self::default()
+        };
+        manifest.normalize();
+        manifest
+    }
+
+    pub fn from_legacy(capabilities: &[String]) -> Self {
+        let mut features = vec!["panel.overview".to_owned()];
+        for capability in capabilities {
+            features.extend(
+                match capability.as_str() {
+                    "sim" => &["sim.info", "sim.files.read"][..],
+                    "sms" => &["sms.read"][..],
+                    "sms_send" => &["sms.send"][..],
+                    "sms_receive" => &["sms.receive.event"][..],
+                    "network" => &["cellular.status", "cellular.signal.detail"][..],
+                    "data_control" => &["cellular.data.status", "cellular.data.control"][..],
+                    "roaming_control" => &["cellular.roaming.control"][..],
+                    "airplane_mode" => &["cellular.airplane.control"][..],
+                    "radio_mode" => &["cellular.radio_mode.read", "cellular.radio_mode.write"][..],
+                    "apn_control" => &["cellular.apn.read", "cellular.apn.write"][..],
+                    "esim" => &[
+                        "esim.euicc.detected",
+                        "esim.profile.read",
+                        "esim.profile.manage",
+                    ][..],
+                    "wifi_calling" => &[
+                        "wificalling.available",
+                        "wificalling.status",
+                        "wificalling.control",
+                    ][..],
+                    "device_network" => &["device.network.interfaces"][..],
+                    "wlan" => &["device.network.wlan"][..],
+                    "system" => &[
+                        "device.system.stats",
+                        "device.system.reboot",
+                        "device.settings",
+                    ][..],
+                    "backup" => &["device.backup", "device.restore"][..],
+                    "ota" => &["device.ota"][..],
+                    "baseband_restart" => &["baseband.restart"][..],
+                    "sim_apdu" => &["sim.apdu"][..],
+                    "ussd" => &["ussd.execute"][..],
+                    "temperature" => &["device.temperature.read"][..],
+                    "notifications" => &["device.notifications.local"][..],
+                    "automation" => &["device.automation.local"][..],
+                    _ => &[][..],
+                }
+                .iter()
+                .map(|value| (*value).to_owned()),
+            );
+        }
+        let mut manifest = Self::new(features);
+        manifest.attributes.insert(
+            "legacy_capabilities".into(),
+            Value::Array(capabilities.iter().cloned().map(Value::String).collect()),
+        );
+        manifest
+    }
+
+    pub fn effective(value: Option<&Self>, legacy: &[String]) -> Self {
+        value
+            .cloned()
+            .filter(|manifest| manifest.schema_version > 0)
+            .unwrap_or_else(|| Self::from_legacy(legacy))
+            .normalized()
+    }
+
+    pub fn supports(&self, feature: &str) -> bool {
+        self.features
+            .binary_search_by(|candidate| candidate.as_str().cmp(feature))
+            .is_ok()
+    }
+
+    pub fn normalized(mut self) -> Self {
+        self.normalize();
+        self
+    }
+
+    fn normalize(&mut self) {
+        if self.schema_version == 0 {
+            self.schema_version = CAPABILITY_SCHEMA_VERSION;
+        }
+        self.features.retain(|feature| !feature.trim().is_empty());
+        self.features.sort();
+        self.features.dedup();
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AgentRegistrationRequest {
@@ -20,6 +188,10 @@ pub struct AgentRegistrationRequest {
     pub enrollment_token: Option<String>,
     #[serde(default)]
     pub hardware_fingerprint: Option<HardwareFingerprintPayload>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_kind: Option<DeviceKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_method: Option<AccessMethod>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -68,9 +240,17 @@ pub struct HostDiscoveryItem {
     pub control_paths: Vec<String>,
     #[serde(default)]
     pub network_interfaces: Vec<String>,
+    #[serde(default)]
+    pub simadmin_urls: Vec<String>,
     pub backend: String,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub device_kind: DeviceKind,
+    #[serde(default = "default_host_direct_access_method")]
+    pub access_method: AccessMethod,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_manifest: Option<CapabilityManifest>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -79,6 +259,14 @@ pub enum BindingPolicyPayload {
     #[default]
     HardwareBound,
     SlotBound,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BindingControlMode {
+    #[default]
+    Control,
+    ObservedOnly,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -93,6 +281,8 @@ pub struct HostBindingPayload {
     pub fingerprint: HardwareFingerprintPayload,
     pub binding_policy: BindingPolicyPayload,
     #[serde(default)]
+    pub control_mode: BindingControlMode,
+    #[serde(default)]
     pub slot_id: Option<String>,
     pub usb_path: String,
     #[serde(default)]
@@ -100,7 +290,17 @@ pub struct HostBindingPayload {
     pub backend: String,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub device_kind: DeviceKind,
+    #[serde(default = "default_host_direct_access_method")]
+    pub access_method: AccessMethod,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_manifest: Option<CapabilityManifest>,
     pub binding_version: i64,
+}
+
+const fn default_host_direct_access_method() -> AccessMethod {
+    AccessMethod::HostDirect
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -389,6 +589,14 @@ pub struct DeviceStatusItem {
     pub data_connection_status: LayerStatus,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_kind: Option<DeviceKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_method: Option<AccessMethod>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor_type: Option<ExecutorType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_manifest: Option<CapabilityManifest>,
     #[serde(default)]
     pub simadmin_version: Option<String>,
     #[serde(default)]
@@ -685,7 +893,7 @@ mod tests {
             None,
             HeartbeatPayload {
                 agent_type: AgentType::Simadmin,
-                agent_version: "1.1.11".into(),
+                agent_version: "1.1.12".into(),
                 session_generation: 4,
                 managed_device_count: 1,
                 local_queue_size: 0,
@@ -702,5 +910,40 @@ mod tests {
         let decoded: Envelope = serde_json::from_value(json).expect("decode envelope");
         let payload: HeartbeatPayload = decoded.decode_payload().expect("decode payload");
         assert_eq!(payload.session_generation, 4);
+    }
+
+    #[test]
+    fn legacy_registration_without_three_axis_fields_remains_compatible() {
+        let registration: AgentRegistrationRequest = serde_json::from_value(serde_json::json!({
+            "installation_id": "legacy-installation",
+            "agent_type": "simadmin",
+            "connection_scope": "remote",
+            "hostname": "legacy-device",
+            "version": "1.1.10"
+        }))
+        .expect("decode legacy registration");
+
+        assert_eq!(registration.device_kind, None);
+        assert_eq!(registration.access_method, None);
+    }
+
+    #[test]
+    fn legacy_capabilities_are_projected_to_schema_v2() {
+        let manifest = CapabilityManifest::from_legacy(&[
+            "sim".into(),
+            "sms_send".into(),
+            "esim".into(),
+            "system".into(),
+        ]);
+
+        assert_eq!(manifest.schema_version, CAPABILITY_SCHEMA_VERSION);
+        assert!(manifest.supports("sim.info"));
+        assert!(manifest.supports("sms.send"));
+        assert!(manifest.supports("esim.euicc.detected"));
+        assert!(manifest.supports("device.system.stats"));
+        assert_eq!(
+            manifest.attributes["legacy_capabilities"],
+            serde_json::json!(["sim", "sms_send", "esim", "system"])
+        );
     }
 }

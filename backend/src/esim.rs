@@ -450,7 +450,7 @@ fn normalize_lpac_arch(raw: &str) -> Option<&'static str> {
 }
 
 async fn detect_glibc_version() -> Result<String, String> {
-    if let Ok(output) = tokio::time::timeout(
+    if let Ok(Ok(output)) = tokio::time::timeout(
         Duration::from_secs(LPAC_PROBE_TIMEOUT_SECS),
         tokio::process::Command::new("getconf")
             .arg("GNU_LIBC_VERSION")
@@ -458,13 +458,11 @@ async fn detect_glibc_version() -> Result<String, String> {
     )
     .await
     {
-        if let Ok(output) = output {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Some(version) = stdout.split_whitespace().last() {
-                    if !version.trim().is_empty() {
-                        return Ok(version.trim().to_string());
-                    }
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(version) = stdout.split_whitespace().last() {
+                if !version.trim().is_empty() {
+                    return Ok(version.trim().to_string());
                 }
             }
         }
@@ -784,6 +782,7 @@ async fn install_lpac_asset(bytes: &[u8], asset_url: &str) -> Result<(), EsimApi
             .map_err(|err| EsimApiError::Command(format!("Failed to create lpac dir: {err}")))?;
         copy_dir_recursive(&bundle_root, &new_dir)?;
         copy_optional_lpac_libs(&extract_dir, &new_dir)?;
+        normalize_lpac_library_links(&new_dir)?;
         fs::write(
             new_dir.join("SOURCE.txt"),
             format!(
@@ -890,6 +889,52 @@ fn copy_optional_lpac_libs(extract_dir: &Path, target_dir: &Path) -> Result<(), 
             })?;
             copy_dir_recursive(&source, &target_lib)?;
             return Ok(());
+        }
+    }
+    Ok(())
+}
+
+fn normalize_lpac_library_links(target_dir: &Path) -> Result<(), EsimApiError> {
+    let library_dir = target_dir.join("lib");
+    if !library_dir.is_dir() {
+        return Ok(());
+    }
+    for library in ["libqmi-glib", "libmbim-glib"] {
+        let prefix = format!("{library}.so.");
+        let real_library = fs::read_dir(&library_dir)
+            .map_err(|err| EsimApiError::Command(format!("Failed to read lpac libraries: {err}")))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(|name| name.strip_prefix(&prefix))
+                    .is_some_and(|version| version.matches('.').count() >= 2)
+            });
+        let Some(real_library) = real_library else {
+            continue;
+        };
+        let real_name = real_library
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| EsimApiError::Command("Invalid lpac library name".to_string()))?;
+        let major = real_name
+            .strip_prefix(&prefix)
+            .and_then(|version| version.split('.').next())
+            .ok_or_else(|| EsimApiError::Command("Invalid lpac library version".to_string()))?;
+        for alias in [format!("{library}.so"), format!("{library}.so.{major}")] {
+            let alias = library_dir.join(alias);
+            if alias == real_library {
+                continue;
+            }
+            if alias.exists() {
+                fs::remove_file(&alias).map_err(|err| {
+                    EsimApiError::Command(format!("Failed to replace lpac library alias: {err}"))
+                })?;
+            }
+            fs::hard_link(&real_library, &alias).map_err(|err| {
+                EsimApiError::Command(format!("Failed to link lpac library alias: {err}"))
+            })?;
         }
     }
     Ok(())
@@ -1702,6 +1747,27 @@ mod tests {
         assert!(!lpac_driver_list_has_required_drivers(
             &missing_qmi.to_string()
         ));
+    }
+
+    #[test]
+    fn normalizes_bundled_library_aliases_to_shared_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let library_dir = directory.path().join("lib");
+        fs::create_dir_all(&library_dir).unwrap();
+        fs::write(library_dir.join("libqmi-glib.so.5.11.0"), b"shared-library").unwrap();
+        fs::write(library_dir.join("libqmi-glib.so.5"), b"expanded-alias").unwrap();
+        fs::write(library_dir.join("libqmi-glib.so"), b"expanded-alias").unwrap();
+
+        normalize_lpac_library_links(directory.path()).unwrap();
+
+        assert_eq!(
+            fs::read(library_dir.join("libqmi-glib.so.5")).unwrap(),
+            b"shared-library"
+        );
+        assert_eq!(
+            fs::read(library_dir.join("libqmi-glib.so")).unwrap(),
+            b"shared-library"
+        );
     }
 
     #[test]
