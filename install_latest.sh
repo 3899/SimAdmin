@@ -78,7 +78,7 @@ usage() {
     'Examples:' \
     '  sh install_latest.sh                        # Install latest standard release' \
     '  sh install_latest.sh --wfc                  # Install latest Wi-Fi Calling release' \
-    '  sh install_latest.sh -v1.1.12 --wfc         # Install v1.1.12 Wi-Fi Calling release' \
+    '  sh install_latest.sh -v1.1.13 --wfc         # Install v1.1.13 Wi-Fi Calling release' \
     '  curl -fsSL .../install_latest.sh | WFC=1 sh # Install latest WFC release via env' \
     '' \
     'Options:' \

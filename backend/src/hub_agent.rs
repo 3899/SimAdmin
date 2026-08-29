@@ -938,9 +938,7 @@ fn agent_store_path() -> PathBuf {
 }
 
 fn new_agent_config(hub: &HubConfig, enrollment_token: Option<String>) -> AgentConfig {
-    let local_device_service = std::env::var("SIMADMIN_DEVICE_SERVICE")
-        .ok()
-        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes" | "on"));
+    let local_device_service = local_device_service_enabled();
     let mut config = AgentConfig::new(
         hub.url.clone(),
         AgentType::Simadmin,
@@ -959,6 +957,12 @@ fn new_agent_config(hub: &HubConfig, enrollment_token: Option<String>) -> AgentC
     }
     config.enrollment_token = enrollment_token;
     config
+}
+
+fn local_device_service_enabled() -> bool {
+    std::env::var("SIMADMIN_DEVICE_SERVICE")
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes" | "on"))
 }
 
 const SIMADMIN_SERVICE_TYPE: &str = "_simadmin-agent._tcp.local.";
@@ -1147,6 +1151,11 @@ impl HubAgentManager {
             config.hub_version = None;
             config.canonical_hub_url = None;
             config.last_connected_at = None;
+        }
+        if local_device_service_enabled() {
+            config.connection_scope = ConnectionScope::Local;
+            config.device_kind = Some(DeviceKind::SystemDevice);
+            config.access_method = Some(AccessMethod::LocalSystem);
         }
         config.enabled = true;
         config.hub_url = hub.url.trim_end_matches('/').to_owned();

@@ -14,6 +14,7 @@ import type {
 import { isTransientModemError, createThrottledWarner } from '@/utils/modemErrors'
 
 export const SPEED_HISTORY_MAX_POINTS = 30
+const SLOW_DATA_REFRESH_INTERVAL = 30_000
 
 /** ModemManager 通常不暴露 QCI；在数据连接开启时从 WWAN 网卡字节速率估算上下行（kbps，与旧 QosInfo 字段一致）。 */
 function qosFromWwanInterface(stats: SystemStatsResponse, dataActive: boolean): QosInfo | null {
@@ -88,6 +89,8 @@ export function useDashboardData(refreshInterval: number, refreshKey: number) {
   const [roaming, setRoaming] = useState<RoamingResponse | null>(null)
   const [speedHistory, setSpeedHistory] = useState<Record<string, InterfaceSpeedHistory>>({})
   const speedHistoryRef = useRef<Record<string, InterfaceSpeedHistory>>({})
+  const loadingRef = useRef(false)
+  const lastSlowRefreshRef = useRef(0)
 
   const updateSpeedHistory = useCallback((stats: SystemStatsResponse | null) => {
     if (!stats?.network_speed?.interfaces) return
@@ -117,6 +120,14 @@ export function useDashboardData(refreshInterval: number, refreshKey: number) {
   }, [])
 
   const loadData = useCallback(async (background = false) => {
+    if (loadingRef.current) return
+    loadingRef.current = true
+    const progressiveTimer = !background
+      ? window.setTimeout(() => setInitialLoading(false), 800)
+      : undefined
+    const refreshSlowData = !background
+      || Date.now() - lastSlowRefreshRef.current >= SLOW_DATA_REFRESH_INTERVAL
+    if (refreshSlowData) lastSlowRefreshRef.current = Date.now()
     if (!background) setError(null)
     const failures: string[] = []
 
@@ -133,19 +144,21 @@ export function useDashboardData(refreshInterval: number, refreshKey: number) {
     try {
       // 快速请求：决定 initialLoading，通常 <200ms 即可全部返回
       const fastPromise = Promise.all([
-        requestOrNull(api.getDeviceInfo(), 'device'),
-        requestOrNull(api.getSimInfo(), 'sim'),
-        requestOrNull(api.getNetworkInfo(), 'network'),
+        refreshSlowData ? requestOrNull(api.getDeviceInfo(), 'device') : Promise.resolve(null),
+        refreshSlowData ? requestOrNull(api.getSimInfo(), 'sim') : Promise.resolve(null),
+        refreshSlowData ? requestOrNull(api.getNetworkInfo(), 'network') : Promise.resolve(null),
         requestOrNull(api.getDataStatus(), 'data'),
         requestOrNull(api.getAirplaneMode(), 'airplane-mode'),
-        requestOrNull(api.getNetworkConnectionAddresses(), 'connection-addresses'),
+        refreshSlowData ? requestOrNull(api.getNetworkConnectionAddresses(), 'connection-addresses') : Promise.resolve(null),
         requestOrNull(api.getRoamingStatus(), 'roaming'),
         requestOrNull(api.getCellsInfo(), 'cells'),
       ])
 
       // 慢速请求：不阻塞页面渲染，异步填充数据
       const statsPromise = requestOrNull(api.getSystemStats(), 'stats')
-      const connectivityPromise = requestOrNull(api.getConnectivity(), 'connectivity')
+      const connectivityPromise = refreshSlowData
+        ? requestOrNull(api.getConnectivity(), 'connectivity')
+        : Promise.resolve(null)
 
       // 等待快速请求完成即可渲染页面
       const [
@@ -205,6 +218,9 @@ export function useDashboardData(refreshInterval: number, refreshKey: number) {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       setInitialLoading(false)
+    } finally {
+      if (progressiveTimer !== undefined) window.clearTimeout(progressiveTimer)
+      loadingRef.current = false
     }
   }, [api, updateSpeedHistory])
 
