@@ -928,7 +928,8 @@ fn euicc_from_cache_entry(entry: EsimEuiccCacheEntry) -> EsimEuiccInfo {
 /// GET /api/work-mode
 pub async fn get_work_mode_handler(State(app): State<AppState>) -> impl IntoResponse {
     let mode = app.config_manager.get_work_mode();
-    let worker_running = app.esim_supervisor.worker_running().await;
+    let esim_supported = app.esim_supervisor.esim_supported().await;
+    let worker_running = mode == WorkMode::Esim && esim_supported;
     (
         StatusCode::OK,
         Json(ApiResponse::success_with_message(
@@ -936,6 +937,7 @@ pub async fn get_work_mode_handler(State(app): State<AppState>) -> impl IntoResp
             WorkModeResponse {
                 mode,
                 worker_running,
+                esim_supported,
             },
         )),
     )
@@ -1031,6 +1033,10 @@ pub async fn repair_esim_lpac_handler(
 
 /// GET /api/esim/config
 pub async fn get_esim_config_handler(State(app): State<AppState>) -> impl IntoResponse {
+    if let Err(err) = app.esim_supervisor.ensure_lpac_supported().await {
+        return esim_error_response::<crate::config::EsimConfig>(err);
+    }
+
     let esim_config = app.config_manager.get_esim_config();
     (
         StatusCode::OK,
@@ -1043,6 +1049,10 @@ pub async fn set_esim_config_handler(
     State(app): State<AppState>,
     Json(payload): Json<crate::config::EsimConfig>,
 ) -> impl IntoResponse {
+    if let Err(err) = app.esim_supervisor.ensure_lpac_supported().await {
+        return esim_error_response::<()>(err);
+    }
+
     match app.config_manager.set_esim_config(payload) {
         Ok(_) => (
             StatusCode::OK,
@@ -1063,6 +1073,10 @@ pub async fn get_esim_euicc_handler(
     State(app): State<AppState>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
+    if let Err(err) = app.esim_supervisor.ensure_lpac_supported().await {
+        return esim_error_response::<EsimEuiccInfo>(err);
+    }
+
     if !live_refresh_requested(&query) {
         match app.database.latest_esim_euicc_cache() {
             Ok(Some(entry)) => {
@@ -1102,6 +1116,10 @@ pub async fn get_esim_profiles_handler(
     State(app): State<AppState>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
+    if let Err(err) = app.esim_supervisor.ensure_lpac_supported().await {
+        return esim_error_response::<EsimProfilesResponse>(err);
+    }
+
     if cached_profiles_requested(&query) {
         return match app.database.list_esim_profile_cache() {
             Ok(entries) => {
@@ -1188,6 +1206,10 @@ pub async fn enable_esim_profile_handler(
     State(app): State<AppState>,
     Path(iccid): Path<String>,
 ) -> impl IntoResponse {
+    if let Err(err) = app.esim_supervisor.ensure_lpac_supported().await {
+        return esim_error_response::<EsimCommandResponse>(err);
+    }
+
     let event_entity = mask_identifier(&iccid);
 
     modem_manager::reset_baseband_restart_progress();

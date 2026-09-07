@@ -73,6 +73,9 @@ pub struct WorkModeRequest {
 pub struct WorkModeResponse {
     pub mode: WorkMode,
     pub worker_running: bool,
+    /// Whether the current architecture exposes the eSIM/lpac module.
+    /// Older clients ignore this field; missing values remain compatible there.
+    pub esim_supported: bool,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]

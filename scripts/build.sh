@@ -14,12 +14,15 @@ normalize_target() {
         aarch64|arm64|aarch64-unknown-linux-musl)
             echo "aarch64-unknown-linux-musl"
             ;;
+        armv7|armv7l|armhf|armv7-unknown-linux-musleabihf)
+            echo "armv7-unknown-linux-musleabihf"
+            ;;
         x86_64|amd64|x86_64-unknown-linux-musl)
             echo "x86_64-unknown-linux-musl"
             ;;
         *)
             echo "❌ 错误: 不支持的构建目标: $1" >&2
-            echo "支持: aarch64-unknown-linux-musl, x86_64-unknown-linux-musl" >&2
+            echo "支持: aarch64-unknown-linux-musl, armv7-unknown-linux-musleabihf, x86_64-unknown-linux-musl" >&2
             exit 1
             ;;
     esac
@@ -105,7 +108,7 @@ for arg in "$@"; do
             echo "  --frontend-only  只构建前端"
             echo "  --no-upx         禁用 UPX 压缩 (默认启用)"
             echo "  --no-ota         跳过 OTA 包生成"
-            echo "  --target=TARGET   构建目标: aarch64 或 x86_64 (默认: aarch64)"
+            echo "  --target=TARGET   构建目标: aarch64、armv7 或 x86_64 (默认: aarch64)"
             echo "  --help, -h       显示帮助信息"
             echo ""
             echo "示例:"
@@ -113,6 +116,7 @@ for arg in "$@"; do
             echo "  ./scripts/build.sh --no-upx           # 不压缩"
             echo "  ./scripts/build.sh --no-ota           # 不生成 OTA 包"
             echo "  ./scripts/build.sh --frontend-only    # 仅构建前端"
+            echo "  ./scripts/build.sh --target=armv7     # 构建 ARMv7 hard-float OTA 包"
             echo "  ./scripts/build.sh --target=x86_64    # 构建 x86_64 OTA 包"
             exit 0
             ;;
@@ -209,6 +213,22 @@ if [ "$BUILD_BACKEND" = true ]; then
             export CC_aarch64_unknown_linux_musl="$MUSL_CC"
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$MUSL_CC"
             ;;
+        armv7-unknown-linux-musleabihf)
+            MUSL_CC=""
+            for candidate in arm-linux-musleabihf-gcc armv7l-linux-musleabihf-gcc armv7-unknown-linux-musleabihf-gcc; do
+                if command -v "$candidate" >/dev/null 2>&1; then
+                    MUSL_CC="$candidate"
+                    break
+                fi
+            done
+            if [ -z "$MUSL_CC" ]; then
+                echo "❌ 错误: 未找到 ARMv7 hard-float musl 编译器"
+                echo "请安装 arm-linux-musleabihf-gcc（或等价 ARMv7 musleabihf 工具链），或使用 GitHub Actions。"
+                exit 1
+            fi
+            export CC_armv7_unknown_linux_musleabihf="$MUSL_CC"
+            export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER="$MUSL_CC"
+            ;;
         x86_64-unknown-linux-musl)
             if command -v x86_64-unknown-linux-musl-gcc >/dev/null 2>&1; then
                 MUSL_CC="x86_64-unknown-linux-musl-gcc"
@@ -240,7 +260,11 @@ if [ "$BUILD_BACKEND" = true ]; then
     ls -lh "$BINARY_PATH"
     
     # UPX 压缩
-    if [ "$USE_UPX" = true ]; then
+    if [ "$USE_UPX" = true ] && [ "$TARGET" = "armv7-unknown-linux-musleabihf" ] \
+        && [[ "${SIMADMIN_ALLOW_UPX_ARMV7:-0}" != "1" && "${SIMADMIN_ALLOW_UPX_ARMV7:-0}" != "true" ]]; then
+        echo "⚠️  ARMv7 默认跳过 UPX，尚未在 UFI210 上完成运行时验收。"
+        echo "   如已完成验证，可设置 SIMADMIN_ALLOW_UPX_ARMV7=1 强制压缩。"
+    elif [ "$USE_UPX" = true ]; then
         echo ""
         echo "UPX 压缩..."
     

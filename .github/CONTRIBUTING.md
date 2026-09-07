@@ -19,7 +19,7 @@
 
 在提交 Issue 前，请遵循以下步骤：
 1. **搜索已有问题**：检查是否已经有类似或已被解答的 Issue。
-2. **提供复现细节**：对于 Bug 报告，请提供完整的运行环境信息（硬件架构 `aarch64` / `x86_64`、Debian/Ubuntu 版本、ModemManager/NetworkManager 版本等）以及日志与复现步骤。
+2. **提供复现细节**：对于 Bug 报告，请提供完整的运行环境信息（硬件架构 `aarch64` / `armv7l` / `x86_64`、Debian/Ubuntu 版本、ModemManager/NetworkManager 版本等）以及日志与复现步骤。
 3. **清晰描述期望**：对于新功能建议，请清晰指出您想要的变更以及期望的最终行为。
 
 ---

@@ -132,16 +132,18 @@ function inferArch(assetName?: string) {
   return '未知'
 }
 
-function resolveTargetArch(rawArch?: string | null): 'arm64' | 'x86_64' | 'unknown' {
+function resolveTargetArch(rawArch?: string | null): 'armv7' | 'arm64' | 'x86_64' | 'unknown' {
   if (!rawArch) return 'unknown'
   const lower = rawArch.toLowerCase()
   if (lower.includes('x86_64') || lower.includes('amd64')) return 'x86_64'
   if (lower.includes('aarch64') || lower.includes('arm64')) return 'arm64'
+  if (lower.includes('armv7') || lower.includes('armhf') || lower === 'arm' || lower.startsWith('arm-')) return 'armv7'
   return 'unknown'
 }
 
 function formatArchLabel(rawArch?: string | null): string {
   const type = resolveTargetArch(rawArch)
+  if (type === 'armv7') return 'ARMv7 hard-float / armhf'
   if (type === 'arm64') return 'aarch64 / arm64'
   if (type === 'x86_64') return 'x86_64 / amd64'
   return rawArch || '检测中...'
@@ -215,7 +217,16 @@ function deriveSiblingReleaseAsset(
   const arch = resolveTargetArch(source.name)
   if (arch === 'unknown') return null
 
-  const siblingName = `simadmin-${isWfc ? '' : 'wfc-'}${arch === 'arm64' ? 'aarch64' : 'x86_64'}.tar.gz`
+  const siblingArchName = arch === 'arm64'
+    ? 'aarch64'
+    : arch === 'armv7'
+      ? 'armv7'
+      : arch === 'x86_64'
+        ? 'x86_64'
+        : null
+  if (!siblingArchName) return null
+
+  const siblingName = `simadmin-${isWfc ? '' : 'wfc-'}${siblingArchName}.tar.gz`
   const lastSlash = source.browser_download_url.lastIndexOf('/')
   const baseUrl = lastSlash > 0
     ? source.browser_download_url.slice(0, lastSlash)
@@ -923,7 +934,7 @@ export default function OtaUpdate() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const targetArchType = useMemo<'arm64' | 'x86_64' | 'unknown'>(() => {
+  const targetArchType = useMemo<'armv7' | 'arm64' | 'x86_64' | 'unknown'>(() => {
     const raw = status?.current_arch || status?.installed_meta?.arch
     return resolveTargetArch(raw)
   }, [status])
@@ -947,6 +958,7 @@ export default function OtaUpdate() {
       const first = rawAssets[0].name.toLowerCase()
       if (first.includes('x86_64') || first.includes('amd64')) archType = 'x86_64'
       else if (first.includes('aarch64') || first.includes('arm64')) archType = 'arm64'
+      else if (first.includes('armv7') || first.includes('armhf')) archType = 'armv7'
     }
 
     const filtered = rawAssets.filter(asset => {
@@ -956,13 +968,24 @@ export default function OtaUpdate() {
       }
       if (archType === 'arm64') {
         if (lower.includes('amd64') || lower.includes('x86_64')) return false
+        if (lower.includes('armv7') || lower.includes('armhf')) return false
         return lower.includes('arm64') || lower.includes('aarch64') || lower === 'simadmin.tar.gz' || lower === 'simadmin.tgz' || lower === 'simadmin.zip'
+      }
+      if (archType === 'armv7') {
+        if (lower.includes('amd64') || lower.includes('x86_64')) return false
+        if (lower.includes('arm64') || lower.includes('aarch64')) return false
+        return lower.includes('armv7') || lower.includes('armhf')
       }
       if (archType === 'x86_64') {
         if (lower.includes('arm64') || lower.includes('aarch64')) return false
+        if (lower.includes('armv7') || lower.includes('armhf')) return false
         return lower.includes('amd64') || lower.includes('x86_64')
       }
-      return true
+      // Do not show architecture-labelled assets when the device architecture
+      // is unknown; selecting one would risk preparing an incompatible OTA.
+      return !lower.includes('arm64') && !lower.includes('aarch64')
+        && !lower.includes('armv7') && !lower.includes('armhf')
+        && !lower.includes('amd64') && !lower.includes('x86_64')
     })
 
     return filtered.map(asset => {

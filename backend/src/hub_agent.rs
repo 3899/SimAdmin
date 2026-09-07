@@ -194,7 +194,7 @@ impl SimAdminExecutor {
         if !local_device_service {
             capabilities.extend(["backup", "ota"]);
         }
-        if self.app.config_manager.get_work_mode() == WorkMode::Esim {
+        if self.app.config_manager.get_work_mode() == WorkMode::Esim && esim.is_some() {
             capabilities.push("esim");
         }
         let capabilities = capabilities

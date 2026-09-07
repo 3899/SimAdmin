@@ -41,7 +41,7 @@ SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的
 - 后端：Rust + Axum + zbus，主要通过 ModemManager D-Bus 接口管理 modem，并在部分场景使用 `mmcli`、`qmicli` 或 AT 直连兜底。
 - 前端：React + Vite + Material UI，提供仪表盘、SIM 卡管理、蜂窝网络、设备网络、短信管理、通知中心、自动化中心和 OTA 更新页面。
 - 部署形态：后端二进制同进程托管前端 SPA，默认安装到 `/opt/simadmin`，通过 systemd 运行。
-- 发布架构：提供 `aarch64-unknown-linux-musl` 与 `x86_64-unknown-linux-musl` 两种静态构建，安装脚本会按设备架构选择。
+- 发布架构：提供 `aarch64-unknown-linux-musl`、`armv7-unknown-linux-musleabihf` 与 `x86_64-unknown-linux-musl` 三种静态构建，安装脚本会按设备架构选择。ARMv7 MVP 暂不包含 lpac/eSIM。
 
 健康检查整体按支持 ModemManager 的 Linux 蜂窝设备组织，不同 modem 固件、内核、ModemManager 版本暴露的能力不同，具体功能以实际设备为准。
 
@@ -184,7 +184,8 @@ SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的
 - APN 列表读取和 APN 修改。
 - 运营商列表、扫描、手动注册、自动注册。
 - eSIM 模式下按需调用 `lpac` 管理实体 eUICC SIM 卡 Profiles；普通 SIM 模式下不调用 eSIM 能力。
-- 安装脚本按设备架构自动准备带 QMI APDU 后端的私有 `lpac`，并校验 `qmi` / `curl` 驱动能力；OTA 包本身不绑定 `lpac` 架构或版本。
+- 安装脚本按设备架构自动准备带 QMI APDU 后端的私有 `lpac`，并校验 `qmi` / `curl` 驱动能力；OTA 包本身不绑定 `lpac` 架构或版本。ARMv7 MVP 暂不安装或调用 `lpac`，并在前端隐藏工作模式与 eSIM 管理入口。
+- ARMv7 MVP 以 QMI 为已验证 modem 路径；MBIM 和短信能力不在首个候选版本的声明范围内。
 - OTA 上传、在线下载、校验、替换二进制和前端资源。
 
 ---

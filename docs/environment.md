@@ -3,19 +3,20 @@
 ## 目标设备运行要求
 
 - **操作系统**：Linux / Debian 系统。
-- **CPU 架构**：ARM64 (`aarch64`) 或 x86_64 (`amd64`)；安装与 OTA 包必须和设备架构一致。
+- **CPU 架构**：ARM64 (`aarch64`)、ARMv7 hard-float (`armhf`/`armv7l`) 或 x86_64 (`amd64`)；安装与 OTA 包必须和设备架构及 ABI 一致。
 - **系统管理器**：systemd。
 - **权限**：需要 root 运行权限。
 - **IPC 机制**：system D-Bus。
 - **核心依赖包与指令**：
   - `ModemManager` 和 `mmcli`
   - `NetworkManager` 和 `nmcli`
-  - `qmicli`（用于基站定位/网络小区信息兜底读取）
-  - `libqmi` / `libmbim` / `libpcsclite`（`lpac` QMI APDU 后端的动态链接依赖）
-  - `iptables` / `ip6tables`（仅用于网络通路只读诊断；本程序不会自动修改或清空防火墙规则）
+  - `qmicli` / `mbimcli`（按实际 modem 协议安装；用于网络和小区信息兜底读取）
+  - `libqmi` / `libmbim` / `libpcsclite`（仅支持 lpac 的架构按需安装；ARMv7 MVP 不安装）
+  - `iptables` / `ip6tables`（可选，只用于网络通路只读诊断；本程序不会自动修改或清空防火墙规则）
   - `ip` / `ifconfig` / `route`（用于网络状态诊断，其中 `ifconfig` 和 `route` 需确保系统已安装 `net-tools`）
   - `tar`（OTA 包解压必需）
-  - `unzip` / `busybox unzip` / `python3`（用于自动解压及下载的 `lpac`；`unzip` 也用于手动上传 zip 格式 OTA 包）
+  - `curl` 和 `ca-certificates`（安装脚本下载 Release 与 HTTPS 校验，作为显式安装依赖）
+  - `unzip`（默认安装，用于手动上传 zip 格式 OTA 包和 lpac；lpac 下载路径也可使用内置解压能力）
 - **eSIM 芯片管理**：eSIM 模式下的芯片/配置管理依赖开源的 `lpac` 辅助程序。
 
 ---
@@ -50,6 +51,7 @@
   - 一键安装脚本 `install_latest.sh` 会根据 `uname -m` 和 glibc 版本，优先匹配架构并拉取带 QMI、MBIM、AT APDU 后端的 `lpac` 至 `/opt/simadmin/lpac/lpac`。脚本通过 `lpac driver list` 校验 APDU 与 `curl` 驱动，缺少所需驱动或动态库时不会覆盖已有可用版本。如果需要阻止脚本下载，请在安装时设置环境变量 `SIMADMIN_INSTALL_LPAC=0`。
   - SimAdmin 本机后端默认自动选择 `/dev/cdc-wdm*` QMI 设备，并兼容 `/dev/wwan*qmi*`；仍可通过 `LPAC_APDU_QMI_DEVICE` 显式覆盖。共享运行时可为 SimAdminHub Host Agent 按设备显式选择 QMI、MBIM 或 AT 端点，多个模组不会共用默认控制口。
   - 单独手动应用 OTA 包**不会**自动安装或升级 `lpac`。
+  - ARMv7 MVP 暂不提供 ARMv7 `lpac` 兼容包；前端隐藏“工作模式”和 eSIM 管理入口，后端仍对直接 eSIM/lpac API 调用做架构拒绝，且安装脚本不会下载 ARM64 lpac。
   - 若系统检测到有 eSIM 支持却缺失 `lpac`，管理页面会提供「安装/修复 lpac」的便捷入口。其内部修复逻辑由后端内置 zip 解压引擎在内存中运行完成，不依赖外部环境命令。
 
 ## systemd 服务配置说明

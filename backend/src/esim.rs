@@ -71,10 +71,34 @@ impl EsimSupervisor {
     }
 
     pub async fn worker_running(&self) -> bool {
-        self.config_manager.get_work_mode() == WorkMode::Esim
+        self.config_manager.get_work_mode() == WorkMode::Esim && self.esim_supported().await
+    }
+
+    pub async fn esim_supported(&self) -> bool {
+        detect_machine_arch()
+            .await
+            .ok()
+            .and_then(|raw| normalize_lpac_arch(&raw))
+            .is_some()
+    }
+
+    /// ARMv7 MVP does not ship an lpac runtime. Keep this guard at the
+    /// supervisor boundary so cached and mutating eSIM APIs cannot bypass it.
+    pub async fn ensure_lpac_supported(&self) -> Result<(), EsimApiError> {
+        let raw_arch = detect_machine_arch()
+            .await
+            .map_err(|err| EsimApiError::Command(format!("Failed to detect device arch: {err}")))?;
+        normalize_lpac_arch(&raw_arch)
+            .map(|_| ())
+            .ok_or_else(|| EsimApiError::Unavailable(unsupported_lpac_message(&raw_arch)))
     }
 
     pub async fn switch_mode(&self, target: WorkMode) -> Result<WorkModeResponse, String> {
+        if target == WorkMode::Esim {
+            self.ensure_lpac_supported()
+                .await
+                .map_err(|err| err.message())?;
+        }
         self.config_manager.set_work_mode(target)?;
         let mode = self.config_manager.get_work_mode();
         Ok(WorkModeResponse {
@@ -82,6 +106,7 @@ impl EsimSupervisor {
             // Kept for API compatibility with v1.0.5 clients. There is no
             // worker after the simplification; true means eSIM APIs are enabled.
             worker_running: mode == WorkMode::Esim,
+            esim_supported: self.esim_supported().await,
         })
     }
 
@@ -94,26 +119,35 @@ impl EsimSupervisor {
         let raw_arch = detect_machine_arch()
             .await
             .unwrap_or_else(|err| format!("unknown ({err})"));
-        let arch = normalize_lpac_arch(&raw_arch).unwrap_or("").to_string();
-        let glibc_version = detect_glibc_version().await.unwrap_or_default();
-        let asset_name = if arch.is_empty() {
-            String::new()
-        } else {
-            recommended_lpac_asset_name(&arch, &glibc_version)
-        };
         let command_path = resolve_lpac_path(&self.config_manager.get_esim_config().lpac_path);
+        let Some(arch) = normalize_lpac_arch(&raw_arch) else {
+            let installed = command_path.is_file();
+            let message = unsupported_lpac_message(&raw_arch);
+            return Ok(EsimLpacStatusResponse {
+                installed,
+                usable: false,
+                path: command_path.to_string_lossy().to_string(),
+                arch: String::new(),
+                glibc_version: String::new(),
+                asset_name: String::new(),
+                message,
+                source: read_lpac_source(),
+            });
+        };
+        let glibc_version = detect_glibc_version().await.unwrap_or_default();
+        let asset_name = recommended_lpac_asset_name(arch, &glibc_version);
         let probe = probe_lpac_binary(&command_path).await;
-        let message = if arch.is_empty() && !probe.usable {
-            format!("unsupported device architecture: {raw_arch}")
-        } else {
+        let message = if !probe.usable && !probe.message.is_empty() {
             probe.message
+        } else {
+            "lpac is available".to_string()
         };
 
         Ok(EsimLpacStatusResponse {
             installed: probe.installed,
             usable: probe.usable,
             path: command_path.to_string_lossy().to_string(),
-            arch,
+            arch: arch.to_string(),
             glibc_version,
             asset_name,
             message,
@@ -133,9 +167,8 @@ impl EsimSupervisor {
         let raw_arch = detect_machine_arch()
             .await
             .map_err(|err| EsimApiError::Command(format!("Failed to detect device arch: {err}")))?;
-        let arch = normalize_lpac_arch(&raw_arch).ok_or_else(|| {
-            EsimApiError::Command(format!("unsupported device architecture: {raw_arch}"))
-        })?;
+        let arch = normalize_lpac_arch(&raw_arch)
+            .ok_or_else(|| EsimApiError::Unavailable(unsupported_lpac_message(&raw_arch)))?;
         let glibc_version = detect_glibc_version().await.unwrap_or_default();
         let requested_asset_url = request
             .asset_url
@@ -208,6 +241,8 @@ impl EsimSupervisor {
         if self.config_manager.get_work_mode() != WorkMode::Esim {
             return Err(EsimApiError::Disabled);
         }
+
+        self.ensure_lpac_supported().await?;
 
         let _guard = self.lpac_lock.lock().await;
         run_lpac_command(
@@ -447,6 +482,10 @@ fn normalize_lpac_arch(raw: &str) -> Option<&'static str> {
         "x86_64" | "amd64" => Some("x86_64"),
         _ => None,
     }
+}
+
+fn unsupported_lpac_message(raw_arch: &str) -> String {
+    format!("lpac/eSIM is not supported on this architecture ({raw_arch}); ARMv7 MVP excludes lpac")
 }
 
 async fn detect_glibc_version() -> Result<String, String> {
@@ -1724,6 +1763,13 @@ mod tests {
             official_lpac_asset_names("x86_64")[0],
             "lpac-linux-x86_64-with-qmi.zip"
         );
+    }
+
+    #[test]
+    fn keeps_armv7_lpac_explicitly_unsupported_for_mvp() {
+        assert!(normalize_lpac_arch("armv7l").is_none());
+        assert!(normalize_lpac_arch("armhf").is_none());
+        assert!(unsupported_lpac_message("armv7l").contains("ARMv7 MVP excludes lpac"));
     }
 
     #[test]

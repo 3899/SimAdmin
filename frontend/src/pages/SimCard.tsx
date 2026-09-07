@@ -165,7 +165,7 @@ function InfoField({ label, value, sensitive = false, showSensitive, extra }: {
 
 function SimBasicInfo({ readOnly = false }: { readOnly?: boolean }) {
   const api = useSimAdminApi()
-  const { mode, refreshWorkMode } = useWorkMode()
+  const { mode, esimSupported, refreshWorkMode } = useWorkMode()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showSensitive, setShowSensitive] = useState(false)
@@ -587,7 +587,8 @@ function SimBasicInfo({ readOnly = false }: { readOnly?: boolean }) {
       </Grid>
 
       {/* 工作模式卡片（底部轻量化呈现） */}
-      <Card sx={{ mt: 3, display: readOnly ? 'none' : 'block' }}>
+      {!readOnly && esimSupported && (
+        <Card sx={{ mt: 3 }}>
         <CardHeader
           avatar={<Tune color="primary" />}
           title="工作模式设置"
@@ -677,7 +678,8 @@ function SimBasicInfo({ readOnly = false }: { readOnly?: boolean }) {
             </Grid>
           </Grid>
         </CardContent>
-      </Card>
+        </Card>
+      )}
 
       <Dialog open={!!pendingMode} onClose={() => !modeSwitching && setPendingMode(null)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontSize: '1.05rem', fontWeight: 600 }}>确认切换工作模式</DialogTitle>
@@ -730,11 +732,11 @@ export interface SimCardPageProps {
 }
 
 export default function SimCardPage({ embeddedBasicOnly = false, readOnly = false }: SimCardPageProps) {
-  const { mode, loading } = useWorkMode()
+  const { mode, esimSupported, loading } = useWorkMode()
   const [searchParams, setSearchParams] = useSearchParams()
   let activeTab = searchParams.get('tab') || 'basic'
 
-  if (mode !== 'esim' && activeTab === 'esim') {
+  if ((!esimSupported || mode !== 'esim') && activeTab === 'esim') {
     activeTab = 'basic'
   }
 
@@ -769,13 +771,13 @@ export default function SimCardPage({ embeddedBasicOnly = false, readOnly = fals
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
         <Tabs value={activeTab} onChange={handleTabChange} variant="scrollable" scrollButtons="auto">
           <Tab label="基本信息" value="basic" />
-          {mode === 'esim' && <Tab label="eSIM 管理" value="esim" sx={{ textTransform: 'none' }} />}
+          {esimSupported && mode === 'esim' && <Tab label="eSIM 管理" value="esim" sx={{ textTransform: 'none' }} />}
         </Tabs>
       </Box>
 
       <Box sx={{ mt: 2 }}>
         {activeTab === 'basic' && <SimBasicInfo readOnly={readOnly} />}
-        {activeTab === 'esim' && mode === 'esim' && <EsimManagerPage />}
+        {activeTab === 'esim' && esimSupported && mode === 'esim' && <EsimManagerPage />}
       </Box>
     </Box>
   )

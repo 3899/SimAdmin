@@ -5,23 +5,38 @@ set -eu
 REPO="${REPO:-3899/SimAdmin}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/simadmin}"
 SERVICE_NAME="${SERVICE_NAME:-simadmin}"
+SYSTEMD_UNIT_DIR="${SIMADMIN_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
+MODEM_RECOVERY_BIN_DIR="${SIMADMIN_MODEM_RECOVERY_BIN_DIR:-/usr/local/bin}"
 VERSION="${VERSION:-latest}"
 GH_PROXY="${GH_PROXY:-https://gh-proxy.com/}"
 GH_PROXY_FALLBACKS="${GH_PROXY_FALLBACKS:-https://ghproxy.net/ https://githubproxy.cc/}"
 RAW_BASE="${RAW_BASE:-https://raw.githubusercontent.com/${REPO}}"
-SERVICE_URL="${SERVICE_URL:-${RAW_BASE}/main/scripts/simadmin.service}"
-MODEM_RECOVERY_SCRIPT_URL="${MODEM_RECOVERY_SCRIPT_URL:-${RAW_BASE}/main/scripts/simadmin-modem-recovery.sh}"
-MODEM_RECOVERY_SERVICE_URL="${MODEM_RECOVERY_SERVICE_URL:-${RAW_BASE}/main/scripts/simadmin-modem-recovery.service}"
+SERVICE_URL="${SERVICE_URL:-}"
+MODEM_RECOVERY_SCRIPT_URL="${MODEM_RECOVERY_SCRIPT_URL:-}"
+MODEM_RECOVERY_SERVICE_URL="${MODEM_RECOVERY_SERVICE_URL:-}"
 ASSET_URL="${ASSET_URL:-}"
 WFC="${WFC:-0}"
 VARIANT="${VARIANT:-}"
 ASSET_NAME="${ASSET_NAME:-}"
 SIMADMIN_TARGET_ARCH="${SIMADMIN_TARGET_ARCH:-}"
 SIMADMIN_INSTALL_SYSTEM_DEPS="${SIMADMIN_INSTALL_SYSTEM_DEPS:-1}"
+SIMADMIN_DEPS_MODE="${SIMADMIN_DEPS_MODE:-auto}"
+SIMADMIN_APT_UPDATE="${SIMADMIN_APT_UPDATE:-auto}"
+SIMADMIN_MODEM_PROTOCOL="${SIMADMIN_MODEM_PROTOCOL:-auto}"
 SIMADMIN_ENABLE_NETWORKMANAGER="${SIMADMIN_ENABLE_NETWORKMANAGER:-1}"
-SIMADMIN_REFRESH_MODEM_DEVICES="${SIMADMIN_REFRESH_MODEM_DEVICES:-1}"
+SIMADMIN_REFRESH_MODEM_DEVICES="${SIMADMIN_REFRESH_MODEM_DEVICES:-auto}"
 SIMADMIN_INSTALL_LPAC="${SIMADMIN_INSTALL_LPAC:-1}"
 SIMADMIN_LPAC_ONLY="${SIMADMIN_LPAC_ONLY:-0}"
+SIMADMIN_VERIFY_ASSET="${SIMADMIN_VERIFY_ASSET:-auto}"
+SIMADMIN_ASSET_SHA256="${SIMADMIN_ASSET_SHA256:-}"
+SIMADMIN_TMPDIR="${SIMADMIN_TMPDIR:-}"
+SIMADMIN_LOCK_DIR="${SIMADMIN_LOCK_DIR:-/run/lock/simadmin-install.lock}"
+SIMADMIN_HEALTH_URL="${SIMADMIN_HEALTH_URL:-http://127.0.0.1:3000/api/health}"
+SIMADMIN_HEALTH_RETRIES="${SIMADMIN_HEALTH_RETRIES:-15}"
+SIMADMIN_SKIP_HEALTHCHECK="${SIMADMIN_SKIP_HEALTHCHECK:-0}"
+SIMADMIN_SKIP_ELF_CHECK="${SIMADMIN_SKIP_ELF_CHECK:-0}"
+SIMADMIN_MIN_MODEMMANAGER_VERSION="${SIMADMIN_MIN_MODEMMANAGER_VERSION:-}"
+SIMADMIN_MIN_NETWORKMANAGER_VERSION="${SIMADMIN_MIN_NETWORKMANAGER_VERSION:-}"
 LPAC_REPO="${LPAC_REPO:-estkme-group/lpac}"
 LPAC_RELEASE_BASE_URL="${LPAC_RELEASE_BASE_URL:-https://github.com/${LPAC_REPO}/releases/latest/download}"
 LPAC_LATEST_RELEASE_URL="${LPAC_LATEST_RELEASE_URL:-https://github.com/${LPAC_REPO}/releases/latest}"
@@ -44,9 +59,7 @@ truthy() {
 normalize_asset_name() {
   case "$1" in
     wfc|simadmin-wfc|simadmin-wfc.tar.gz)
-      WFC=1
-      VARIANT="wfc"
-      printf '%s\n' ""
+      printf '%s\n' "wfc"
       ;;
     ""|default|standard|simadmin|simadmin.tar.gz)
       printf '%s\n' ""
@@ -60,12 +73,23 @@ normalize_asset_name() {
   esac
 }
 
+select_asset_name() {
+  selected_asset="$(normalize_asset_name "$1")"
+  if [ "$selected_asset" = "wfc" ]; then
+    WFC=1
+    VARIANT="wfc"
+    ASSET_NAME=""
+  else
+    ASSET_NAME="$selected_asset"
+  fi
+}
+
 if truthy "$WFC" || [ "$VARIANT" = "wfc" ]; then
   WFC=1
   VARIANT="wfc"
 fi
 if [ -n "${ASSET_NAME:-}" ]; then
-  ASSET_NAME="$(normalize_asset_name "$ASSET_NAME")"
+  select_asset_name "$ASSET_NAME"
 fi
 
 usage() {
@@ -78,7 +102,7 @@ usage() {
     'Examples:' \
     '  sh install_latest.sh                        # Install latest standard release' \
     '  sh install_latest.sh --wfc                  # Install latest Wi-Fi Calling release' \
-    '  sh install_latest.sh -v1.1.13 --wfc         # Install v1.1.13 Wi-Fi Calling release' \
+    '  sh install_latest.sh -v1.2.0 --wfc         # Install v1.2.0 Wi-Fi Calling release' \
     '  curl -fsSL .../install_latest.sh | WFC=1 sh # Install latest WFC release via env' \
     '' \
     'Options:' \
@@ -87,6 +111,10 @@ usage() {
     '  -a, --asset NAME       Specify release asset (e.g. simadmin-wfc.tar.gz or wfc)' \
     '  --install-dir PATH     Installation directory (default: /opt/simadmin)' \
     '  --service-name NAME    Main systemd service name (default: simadmin)' \
+    '  --deps-mode MODE       Dependency mode: auto, minimal, full, skip' \
+    '  --modem-protocol MODE  Modem protocol: auto, qmi, mbim, at, all' \
+    '  --refresh-modem        Force udev refresh and ModemManager restart' \
+    '  --no-refresh-modem     Do not refresh modem devices' \
     '  --no-lpac              Skip lpac installation' \
     '  --lpac-only            Install or update only the shared lpac runtime' \
     '  -h, --help             Show this help' \
@@ -97,6 +125,9 @@ usage() {
     '  ASSET_NAME=...         Specify release asset filename' \
     '  INSTALL_DIR=/opt/simadmin' \
     '  SERVICE_NAME=simadmin' \
+    '  SIMADMIN_DEPS_MODE=auto (auto, minimal, full, skip)' \
+    '  SIMADMIN_APT_UPDATE=auto (auto, always, never)' \
+    '  SIMADMIN_MODEM_PROTOCOL=auto (auto, qmi, mbim, at, all)' \
     '  SIMADMIN_INSTALL_LPAC=1 (set to 0 to skip lpac)' \
     '  GH_PROXY=https://gh-proxy.com/'
 }
@@ -123,18 +154,19 @@ parse_args() {
         VARIANT="wfc"
         ;;
       -a|--asset|--variant)
+        option_name="$1"
         shift
         if [ "$#" -eq 0 ]; then
-          echo "error: $1 requires a value" >&2
+          echo "error: ${option_name} requires a value" >&2
           exit 1
         fi
-        ASSET_NAME="$(normalize_asset_name "$1")"
+        select_asset_name "$1"
         ;;
       -a=*|--asset=*|--variant=*)
-        ASSET_NAME="$(normalize_asset_name "${1#*=}")"
+        select_asset_name "${1#*=}"
         ;;
       -a*)
-        ASSET_NAME="$(normalize_asset_name "${1#-a}")"
+        select_asset_name "${1#-a}"
         ;;
       --install-dir)
         shift
@@ -157,6 +189,34 @@ parse_args() {
         ;;
       --service-name=*)
         SERVICE_NAME="${1#*=}"
+        ;;
+      --deps-mode)
+        shift
+        if [ "$#" -eq 0 ]; then
+          echo "error: --deps-mode requires a value" >&2
+          exit 1
+        fi
+        SIMADMIN_DEPS_MODE="$1"
+        ;;
+      --deps-mode=*)
+        SIMADMIN_DEPS_MODE="${1#*=}"
+        ;;
+      --modem-protocol)
+        shift
+        if [ "$#" -eq 0 ]; then
+          echo "error: --modem-protocol requires a value" >&2
+          exit 1
+        fi
+        SIMADMIN_MODEM_PROTOCOL="$1"
+        ;;
+      --modem-protocol=*)
+        SIMADMIN_MODEM_PROTOCOL="${1#*=}"
+        ;;
+      --refresh-modem)
+        SIMADMIN_REFRESH_MODEM_DEVICES=1
+        ;;
+      --no-refresh-modem)
+        SIMADMIN_REFRESH_MODEM_DEVICES=0
         ;;
       --no-lpac|--skip-lpac)
         SIMADMIN_INSTALL_LPAC=0
@@ -195,57 +255,391 @@ require_cmd() {
   fi
 }
 
+assert_safe_absolute_dir() {
+  config_name="$1"
+  config_value="$2"
+  case "$config_value" in
+    ""|"/"|"/bin"|"/boot"|"/dev"|"/etc"|"/home"|"/opt"|"/proc"|"/root"|"/run"|"/sys"|"/tmp"|"/usr"|"/usr/local"|"/var"|"/data")
+      echo "error: unsafe ${config_name}: ${config_value}" >&2
+      exit 1
+      ;;
+    *"/../"*|*"/.."|*"//"*|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./@+-]*)
+      echo "error: invalid ${config_name}: ${config_value}" >&2
+      exit 1
+      ;;
+    /*) ;;
+    *)
+      echo "error: ${config_name} must be an absolute path: ${config_value}" >&2
+      exit 1
+      ;;
+  esac
+}
+
+assert_safe_service_name() {
+  case "$SERVICE_NAME" in
+    ""|*/*|*..*|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.@-]*)
+      echo "error: unsafe SERVICE_NAME: ${SERVICE_NAME}" >&2
+      exit 1
+      ;;
+  esac
+}
+
+validate_configuration() {
+  assert_safe_absolute_dir INSTALL_DIR "$INSTALL_DIR"
+  assert_safe_absolute_dir SYSTEMD_UNIT_DIR "$SYSTEMD_UNIT_DIR"
+  assert_safe_absolute_dir MODEM_RECOVERY_BIN_DIR "$MODEM_RECOVERY_BIN_DIR"
+  assert_safe_absolute_dir SIMADMIN_LOCK_DIR "$SIMADMIN_LOCK_DIR"
+  assert_safe_service_name
+  for managed_dir in "$INSTALL_DIR" "$SYSTEMD_UNIT_DIR" "$MODEM_RECOVERY_BIN_DIR"; do
+    if [ -L "$managed_dir" ]; then
+      echo "error: refusing to install through symbolic-link directory: ${managed_dir}" >&2
+      exit 1
+    fi
+  done
+
+  case "$SIMADMIN_DEPS_MODE" in auto|minimal|full|skip) ;; *)
+    echo "error: invalid SIMADMIN_DEPS_MODE: ${SIMADMIN_DEPS_MODE}" >&2
+    exit 1
+  esac
+  case "$SIMADMIN_APT_UPDATE" in auto|always|never) ;; *)
+    echo "error: invalid SIMADMIN_APT_UPDATE: ${SIMADMIN_APT_UPDATE}" >&2
+    exit 1
+  esac
+  case "$SIMADMIN_MODEM_PROTOCOL" in auto|qmi|mbim|at|all) ;; *)
+    echo "error: invalid SIMADMIN_MODEM_PROTOCOL: ${SIMADMIN_MODEM_PROTOCOL}" >&2
+    exit 1
+  esac
+  case "$SIMADMIN_REFRESH_MODEM_DEVICES" in auto|0|1|false|FALSE|no|NO|off|OFF|true|TRUE|yes|YES|on|ON) ;; *)
+    echo "error: invalid SIMADMIN_REFRESH_MODEM_DEVICES: ${SIMADMIN_REFRESH_MODEM_DEVICES}" >&2
+    exit 1
+  esac
+  case "$SIMADMIN_HEALTH_RETRIES" in ""|*[!0-9]*)
+    echo "error: SIMADMIN_HEALTH_RETRIES must be a non-negative integer" >&2
+    exit 1
+  esac
+}
+
+validate_running_architecture() {
+  machine_arch="$(normalize_simadmin_arch "$(uname -m)" || true)"
+  if [ -z "$machine_arch" ]; then
+    echo "error: unsupported machine architecture: $(uname -m)" >&2
+    exit 1
+  fi
+  if [ -n "$SIMADMIN_TARGET_ARCH" ]; then
+    requested_arch="$(normalize_simadmin_arch "$SIMADMIN_TARGET_ARCH" || true)"
+    if [ -z "$requested_arch" ] || [ "$requested_arch" != "$machine_arch" ]; then
+      echo "error: SIMADMIN_TARGET_ARCH=${SIMADMIN_TARGET_ARCH} does not match this machine ($(uname -m))" >&2
+      exit 1
+    fi
+  fi
+  RUNTIME_ARCH="$machine_arch"
+}
+
+cleanup_installer() {
+  if [ "${TRANSACTION_ACTIVE:-0}" -eq 1 ]; then
+    rollback_install || true
+  fi
+  cleanup_staged_transaction || true
+  if [ -n "${tmp_dir:-}" ] && [ -d "$tmp_dir" ]; then
+    rm -rf -- "$tmp_dir"
+  fi
+  owned_lock_pid="$(cat "${SIMADMIN_LOCK_DIR}/pid" 2>/dev/null || true)"
+  if [ "${install_lock_owned:-0}" -eq 1 ] && [ "$owned_lock_pid" = "$$" ] \
+    && [ -d "$SIMADMIN_LOCK_DIR" ]; then
+    rm -rf -- "$SIMADMIN_LOCK_DIR"
+  fi
+}
+
+installer_exit() {
+  exit_status="$1"
+  trap - EXIT INT TERM
+  cleanup_installer
+  exit "$exit_status"
+}
+
+acquire_install_lock() {
+  lock_parent="${SIMADMIN_LOCK_DIR%/*}"
+  [ -n "$lock_parent" ] || lock_parent="/"
+  mkdir -p "$lock_parent"
+  if mkdir "$SIMADMIN_LOCK_DIR" 2>/dev/null; then
+    install_lock_owned=1
+    printf '%s\n' "$$" > "${SIMADMIN_LOCK_DIR}/pid"
+    return 0
+  fi
+
+  lock_pid="$(cat "${SIMADMIN_LOCK_DIR}/pid" 2>/dev/null || true)"
+  case "$lock_pid" in
+    ""|*[!0-9]*) lock_pid="" ;;
+  esac
+  if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+    echo "error: another SimAdmin install or uninstall is running (pid ${lock_pid})" >&2
+    exit 1
+  fi
+
+  stale_lock="${SIMADMIN_LOCK_DIR}.stale.$$"
+  rm -rf -- "$stale_lock"
+  if ! mv "$SIMADMIN_LOCK_DIR" "$stale_lock" 2>/dev/null; then
+    echo "error: failed to take over stale install lock; retry the operation" >&2
+    exit 1
+  fi
+  moved_lock_pid="$(cat "${stale_lock}/pid" 2>/dev/null || true)"
+  case "$moved_lock_pid" in
+    ""|*[!0-9]*) moved_lock_pid="" ;;
+  esac
+  if [ "$moved_lock_pid" != "$lock_pid" ]; then
+    if [ ! -e "$SIMADMIN_LOCK_DIR" ]; then
+      mv "$stale_lock" "$SIMADMIN_LOCK_DIR" 2>/dev/null || true
+    fi
+    echo "error: install lock changed while it was being checked; retry the operation" >&2
+    exit 1
+  fi
+  echo "==> removing stale install lock"
+  rm -rf -- "$stale_lock"
+  if ! mkdir "$SIMADMIN_LOCK_DIR" 2>/dev/null; then
+    echo "error: another SimAdmin install or uninstall acquired the lock" >&2
+    exit 1
+  fi
+  install_lock_owned=1
+  printf '%s\n' "$$" > "${SIMADMIN_LOCK_DIR}/pid"
+}
+
+create_temp_dir() {
+  for temp_base in "${SIMADMIN_TMPDIR:-}" "${TMPDIR:-}" /tmp /var/tmp; do
+    [ -n "$temp_base" ] || continue
+    case "$temp_base" in /*) ;; *) continue ;; esac
+    if [ ! -d "$temp_base" ] && [ "$temp_base" = "/tmp" ]; then
+      mkdir -p /tmp
+      chmod 1777 /tmp
+    fi
+    [ -d "$temp_base" ] && [ -w "$temp_base" ] || continue
+    if created_temp="$(TMPDIR="$temp_base" mktemp -d "${temp_base%/}/simadmin.XXXXXXXXXX" 2>/dev/null)"; then
+      printf '%s\n' "$created_temp"
+      return 0
+    fi
+  done
+  echo "error: no writable temporary directory is available" >&2
+  return 1
+}
+
+minimum_package_version() {
+  case "$1" in
+    modemmanager) printf '%s\n' "$SIMADMIN_MIN_MODEMMANAGER_VERSION" ;;
+    network-manager) printf '%s\n' "$SIMADMIN_MIN_NETWORKMANAGER_VERSION" ;;
+    *) printf '%s\n' "" ;;
+  esac
+}
+
+installed_package_version() {
+  package_name="$1"
+  command -v dpkg-query >/dev/null 2>&1 || return 1
+  package_status="$(dpkg-query -W -f='${Status}\n' "$package_name" 2>/dev/null || true)"
+  [ "$package_status" = "install ok installed" ] || return 1
+  dpkg-query -W -f='${Version}\n' "$package_name" 2>/dev/null
+}
+
+package_requirement_satisfied() {
+  package_name="$1"
+  installed_version="$(installed_package_version "$package_name" || true)"
+  [ -n "$installed_version" ] || return 1
+  minimum_version="$(minimum_package_version "$package_name")"
+  if [ -n "$minimum_version" ]; then
+    command -v dpkg >/dev/null 2>&1 || return 1
+    dpkg --compare-versions "$installed_version" ge "$minimum_version"
+  fi
+}
+
+missing_package_list() {
+  requested_packages="$1"
+  missing_result=""
+  for package_name in $requested_packages; do
+    if package_requirement_satisfied "$package_name"; then
+      continue
+    fi
+    missing_result="${missing_result}${missing_result:+ }${package_name}"
+  done
+  printf '%s\n' "$missing_result"
+}
+
+ensure_package_list() {
+  dependency_label="$1"
+  requested_packages="$2"
+  [ -n "$requested_packages" ] || return 0
+  missing_packages="$(missing_package_list "$requested_packages")"
+
+  if [ -z "$missing_packages" ]; then
+    echo "==> ${dependency_label} already satisfy requirements"
+    if [ "$SIMADMIN_APT_UPDATE" = "always" ] && [ "${APT_METADATA_UPDATED:-0}" -ne 1 ]; then
+      command -v apt-get >/dev/null 2>&1 || {
+        echo "error: apt-get is required by SIMADMIN_APT_UPDATE=always" >&2
+        exit 1
+      }
+      echo "==> updating apt package metadata"
+      apt-get update
+      APT_METADATA_UPDATED=1
+    fi
+    return 0
+  fi
+
+  command -v apt-get >/dev/null 2>&1 || {
+    echo "error: apt-get is unavailable; missing packages: ${missing_packages}" >&2
+    exit 1
+  }
+  if [ "$SIMADMIN_APT_UPDATE" != "never" ] && [ "${APT_METADATA_UPDATED:-0}" -ne 1 ]; then
+    echo "==> updating apt package metadata"
+    apt-get update
+    APT_METADATA_UPDATED=1
+  fi
+
+  echo "==> installing missing ${dependency_label}: ${missing_packages}"
+  # Word splitting is intentional: Debian package names cannot contain spaces.
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $missing_packages
+  SYSTEM_DEPS_CHANGED=1
+
+  remaining_packages="$(missing_package_list "$requested_packages")"
+  if [ -n "$remaining_packages" ]; then
+    echo "error: dependencies are still missing or below their required versions: ${remaining_packages}" >&2
+    exit 1
+  fi
+}
+
+detect_modem_protocols() {
+  case "$SIMADMIN_MODEM_PROTOCOL" in
+    qmi|mbim|at) printf '%s\n' "$SIMADMIN_MODEM_PROTOCOL"; return 0 ;;
+    all) printf '%s\n' "qmi mbim"; return 0 ;;
+  esac
+
+  detected_protocols=""
+  for protocol_node in /dev/wwan*qmi* /dev/*qmi*; do
+    if [ -e "$protocol_node" ]; then
+      detected_protocols="qmi"
+      break
+    fi
+  done
+  for protocol_node in /dev/wwan*mbim* /dev/*mbim*; do
+    if [ -e "$protocol_node" ]; then
+      detected_protocols="${detected_protocols}${detected_protocols:+ }mbim"
+      break
+    fi
+  done
+
+  if command -v mmcli >/dev/null 2>&1; then
+    modem_description="$(mmcli -m any 2>/dev/null || true)"
+    case "$modem_description" in *qmi*) case " $detected_protocols " in *" qmi "*) ;; *) detected_protocols="${detected_protocols}${detected_protocols:+ }qmi" ;; esac ;; esac
+    case "$modem_description" in *mbim*) case " $detected_protocols " in *" mbim "*) ;; *) detected_protocols="${detected_protocols}${detected_protocols:+ }mbim" ;; esac ;; esac
+    if [ -z "$detected_protocols" ] && [ -n "$modem_description" ]; then
+      printf '%s\n' "at"
+      return 0
+    fi
+  fi
+
+  # No modem may be attached during first installation. Install both helpers so
+  # a later QMI or MBIM device works without rerunning the installer.
+  printf '%s\n' "${detected_protocols:-qmi mbim}"
+}
+
+required_package_list() {
+  packages=""
+  case "$SIMADMIN_DEPS_MODE" in
+    minimal)
+      packages="ca-certificates curl dbus modemmanager tar udev"
+      if truthy "$SIMADMIN_ENABLE_NETWORKMANAGER"; then
+        packages="$packages network-manager"
+      fi
+      ;;
+    auto|full)
+      packages="ca-certificates curl dbus iproute2 modemmanager tar udev unzip iputils-ping psmisc"
+      if truthy "$SIMADMIN_ENABLE_NETWORKMANAGER" || [ "$SIMADMIN_DEPS_MODE" = "full" ]; then
+        packages="$packages network-manager"
+      fi
+      protocols="$(detect_modem_protocols)"
+      case " $protocols " in *" qmi "*) packages="$packages libqmi-utils" ;; esac
+      case " $protocols " in *" mbim "*) packages="$packages libmbim-utils" ;; esac
+      if [ "$SIMADMIN_DEPS_MODE" = "full" ]; then
+        packages="$packages iptables"
+      fi
+      if truthy "$SIMADMIN_INSTALL_LPAC" && detect_lpac_arch >/dev/null 2>&1; then
+        packages="$packages libpcsclite1"
+      fi
+      ;;
+    skip) packages="" ;;
+  esac
+  printf '%s\n' "$packages"
+}
+
 install_system_dependencies() {
   if ! truthy "$SIMADMIN_INSTALL_SYSTEM_DEPS"; then
-    echo "==> skipping system dependency installation (SIMADMIN_INSTALL_SYSTEM_DEPS=${SIMADMIN_INSTALL_SYSTEM_DEPS})"
+    SIMADMIN_DEPS_MODE=skip
+  fi
+  if [ "$SIMADMIN_DEPS_MODE" = "skip" ]; then
+    echo "==> skipping system dependency installation"
     return 0
   fi
 
-  if ! command -v apt-get >/dev/null 2>&1; then
-    echo "warning: apt-get is unavailable; install ModemManager, NetworkManager, libqmi, libmbim and libpcsclite manually" >&2
+  required_packages="$(required_package_list)"
+  ensure_package_list "runtime dependencies" "$required_packages"
+}
+
+install_bootstrap_dependencies() {
+  if ! truthy "$SIMADMIN_INSTALL_SYSTEM_DEPS" || [ "$SIMADMIN_DEPS_MODE" = "skip" ]; then
+    require_cmd curl
+    require_cmd tar
     return 0
   fi
-
-  echo "==> installing Debian/Ubuntu runtime dependencies"
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    dbus \
-    iproute2 \
-    libmbim-utils \
-    libpcsclite1 \
-    libqmi-utils \
-    modemmanager \
-    network-manager \
-    tar \
-    udev \
-    unzip
+  ensure_package_list "installer dependencies" "ca-certificates curl tar"
 }
 
 remove_legacy_networkmanager_modem_unmanaged() {
   nm_conf="/etc/NetworkManager/conf.d/99-simadmin-unmanaged-modem.conf"
+  LEGACY_NM_CONFIG_REMOVED=0
   if [ -f "$nm_conf" ]; then
     echo "==> removing legacy NetworkManager wwan unmanaged configuration"
     rm -f "$nm_conf"
+    LEGACY_NM_CONFIG_REMOVED=1
   fi
 }
 
 start_runtime_services() {
-  echo "==> enabling ModemManager"
-  systemctl enable --now ModemManager.service >/dev/null
+  if ! systemctl is-enabled --quiet ModemManager.service 2>/dev/null; then
+    echo "==> enabling ModemManager"
+    systemctl enable ModemManager.service >/dev/null
+  fi
+  if ! systemctl is-active --quiet ModemManager.service; then
+    echo "==> starting ModemManager"
+    systemctl start ModemManager.service
+  fi
 
   if truthy "$SIMADMIN_ENABLE_NETWORKMANAGER"; then
-    echo "==> enabling NetworkManager"
-    systemctl enable --now NetworkManager.service >/dev/null
+    if ! systemctl is-enabled --quiet NetworkManager.service 2>/dev/null; then
+      echo "==> enabling NetworkManager"
+      systemctl enable NetworkManager.service >/dev/null
+    fi
+    if systemctl is-active --quiet NetworkManager.service; then
+      if [ "${LEGACY_NM_CONFIG_REMOVED:-0}" -eq 1 ]; then
+        echo "==> restarting NetworkManager after removing legacy configuration"
+        systemctl restart NetworkManager.service
+      fi
+    else
+      echo "==> starting NetworkManager"
+      systemctl start NetworkManager.service
+    fi
   else
-    echo "==> leaving NetworkManager inactive (SIMADMIN_ENABLE_NETWORKMANAGER=${SIMADMIN_ENABLE_NETWORKMANAGER})"
-    echo "    nmcli-dependent WLAN and cellular data features will remain unavailable"
+    echo "==> leaving NetworkManager state unchanged (SIMADMIN_ENABLE_NETWORKMANAGER=${SIMADMIN_ENABLE_NETWORKMANAGER})"
+    echo "    nmcli-dependent WLAN and cellular data features are not guaranteed by this installation"
   fi
 }
 
 refresh_modem_devices() {
-  if ! truthy "$SIMADMIN_REFRESH_MODEM_DEVICES"; then
+  should_refresh=0
+  if truthy "$SIMADMIN_REFRESH_MODEM_DEVICES"; then
+    should_refresh=1
+  elif [ "$SIMADMIN_REFRESH_MODEM_DEVICES" = "auto" ]; then
+    if [ "${FIRST_INSTALL:-0}" -eq 1 ] || [ "${SYSTEM_DEPS_CHANGED:-0}" -eq 1 ]; then
+      should_refresh=1
+    elif command -v mmcli >/dev/null 2>&1 && ! mmcli -L 2>/dev/null | grep -q '/Modem/'; then
+      should_refresh=1
+    fi
+  fi
+  if [ "$should_refresh" -ne 1 ]; then
     echo "==> skipping modem udev refresh (SIMADMIN_REFRESH_MODEM_DEVICES=${SIMADMIN_REFRESH_MODEM_DEVICES})"
     return 0
   fi
@@ -273,7 +667,7 @@ download_with_proxies() {
       for proxy in $GH_PROXY $GH_PROXY_FALLBACKS ""; do
         url="${proxy}${src_url}"
         echo "    ${url}"
-        if curl -fsSL "$url" -o "$dst_path"; then
+        if curl -fsSL --connect-timeout 15 --max-time 300 --retry 2 --retry-delay 2 "$url" -o "$dst_path"; then
           return 0
         fi
         echo "    download failed, trying next mirror" >&2
@@ -281,7 +675,7 @@ download_with_proxies() {
       ;;
     *)
       echo "    ${src_url}"
-      curl -fsSL "$src_url" -o "$dst_path"
+      curl -fsSL --connect-timeout 15 --max-time 300 --retry 2 --retry-delay 2 "$src_url" -o "$dst_path"
       return $?
       ;;
   esac
@@ -297,7 +691,7 @@ read_with_proxies() {
       for proxy in $GH_PROXY $GH_PROXY_FALLBACKS ""; do
         url="${proxy}${src_url}"
         echo "    ${url}" >&2
-        if curl -fsSL "$url"; then
+        if curl -fsSL --connect-timeout 15 --max-time 60 --retry 2 --retry-delay 2 "$url"; then
           return 0
         fi
         echo "    download failed, trying next mirror" >&2
@@ -305,12 +699,129 @@ read_with_proxies() {
       ;;
     *)
       echo "    ${src_url}" >&2
-      curl -fsSL "$src_url"
+      curl -fsSL --connect-timeout 15 --max-time 60 --retry 2 --retry-delay 2 "$src_url"
       return $?
       ;;
   esac
 
   return 1
+}
+
+release_api_url() {
+  digest_version="${DOWNLOADED_RELEASE_VERSION:-$VERSION}"
+  if [ "$digest_version" = "latest" ]; then
+    printf 'https://api.github.com/repos/%s/releases/latest\n' "$REPO"
+  else
+    printf 'https://api.github.com/repos/%s/releases/tags/%s\n' "$REPO" "$(version_to_tag "$digest_version")"
+  fi
+}
+
+release_asset_digest() {
+  digest_asset_name="$1"
+  awk -v expected="$digest_asset_name" '
+    /"name"[[:space:]]*:/ {
+      value = $0
+      sub(/^.*"name"[[:space:]]*:[[:space:]]*"/, "", value)
+      sub(/".*$/, "", value)
+      selected = (value == expected)
+    }
+    selected && /"digest"[[:space:]]*:/ {
+      value = $0
+      sub(/^.*"digest"[[:space:]]*:[[:space:]]*"sha256:/, "", value)
+      sub(/".*$/, "", value)
+      if (value ~ /^[0-9a-fA-F]+$/ && length(value) == 64) {
+        print tolower(value)
+        exit
+      }
+    }
+  '
+}
+
+sha256_file() {
+  checksum_path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$checksum_path" | awk '{print tolower($1)}'
+  elif command -v busybox >/dev/null 2>&1; then
+    busybox sha256sum "$checksum_path" | awk '{print tolower($1)}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$checksum_path" | sed 's/^.*= //' | tr '[:upper:]' '[:lower:]'
+  else
+    echo "error: sha256sum, busybox, or openssl is required for package verification" >&2
+    return 1
+  fi
+}
+
+verify_release_asset() {
+  verify_archive="$1"
+  verify_asset_name="$2"
+  expected_sha="$(printf '%s' "$SIMADMIN_ASSET_SHA256" | tr '[:upper:]' '[:lower:]')"
+
+  case "$SIMADMIN_VERIFY_ASSET" in
+    0|false|FALSE|no|NO|off|OFF)
+      echo "warning: release asset checksum verification is disabled" >&2
+      return 0
+      ;;
+    auto|1|true|TRUE|yes|YES|on|ON) ;;
+    *)
+      echo "error: invalid SIMADMIN_VERIFY_ASSET: ${SIMADMIN_VERIFY_ASSET}" >&2
+      return 1
+      ;;
+  esac
+
+  if [ -z "$expected_sha" ] && [ -z "$ASSET_URL" ]; then
+    echo "==> reading release asset digest"
+    release_json="$(read_with_proxies "$(release_api_url)")"
+    expected_sha="$(printf '%s\n' "$release_json" | release_asset_digest "$verify_asset_name")"
+  fi
+
+  if [ -z "$expected_sha" ]; then
+    if [ "$SIMADMIN_VERIFY_ASSET" = "auto" ] && [ -n "$ASSET_URL" ]; then
+      echo "warning: custom ASSET_URL has no SIMADMIN_ASSET_SHA256; authenticity was not verified" >&2
+      return 0
+    fi
+    echo "error: no trusted SHA-256 digest found for ${verify_asset_name}" >&2
+    return 1
+  fi
+  case "$expected_sha" in *[!0-9a-f]*)
+    echo "error: invalid SHA-256 digest for ${verify_asset_name}" >&2
+    return 1
+  esac
+  if [ "${#expected_sha}" -ne 64 ]; then
+    echo "error: invalid SHA-256 digest length for ${verify_asset_name}" >&2
+    return 1
+  fi
+
+  actual_sha="$(sha256_file "$verify_archive")"
+  if [ "$actual_sha" != "$expected_sha" ]; then
+    echo "error: SHA-256 mismatch for ${verify_asset_name}" >&2
+    echo "       expected: ${expected_sha}" >&2
+    echo "       actual:   ${actual_sha}" >&2
+    return 1
+  fi
+  echo "==> release asset SHA-256 verified"
+}
+
+resolve_source_ref() {
+  : "$1"
+  if [ "$VERSION" = "latest" ]; then
+    source_ref="main"
+  else
+    source_ref="$(version_to_tag "$VERSION")"
+  fi
+  case "$source_ref" in ""|*..*|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./-]*)
+    echo "error: invalid source ref: ${source_ref}" >&2
+    return 1
+  esac
+  printf '%s\n' "$source_ref"
+}
+
+resolve_source_urls() {
+  package_version="$1"
+  selected_source_ref="$(resolve_source_ref "$package_version")"
+  [ -n "$SERVICE_URL" ] || SERVICE_URL="${RAW_BASE}/${selected_source_ref}/scripts/simadmin.service"
+  [ -n "$MODEM_RECOVERY_SCRIPT_URL" ] || MODEM_RECOVERY_SCRIPT_URL="${RAW_BASE}/${selected_source_ref}/scripts/simadmin-modem-recovery.sh"
+  [ -n "$MODEM_RECOVERY_SERVICE_URL" ] || MODEM_RECOVERY_SERVICE_URL="${RAW_BASE}/${selected_source_ref}/scripts/simadmin-modem-recovery.service"
+  echo "==> service sources: ${selected_source_ref}"
 }
 
 version_to_tag() {
@@ -328,10 +839,13 @@ asset_url_from_tag() {
 
 normalize_simadmin_arch() {
   case "$1" in
-    aarch64|arm64)
+    aarch64|arm64|aarch64-unknown-linux-musl)
       printf '%s\n' "aarch64"
       ;;
-    x86_64|amd64)
+    armv7|armv7l|armhf|arm|armv7-unknown-linux-musleabihf)
+      printf '%s\n' "armv7"
+      ;;
+    x86_64|amd64|x86_64-unknown-linux-musl)
       printf '%s\n' "x86_64"
       ;;
     *)
@@ -390,9 +904,11 @@ resolve_asset_url() {
 }
 
 fallback_asset_url() {
+  FALLBACK_ASSET_URL=""
+  FALLBACK_RELEASE_VERSION=""
   if [ "$VERSION" = "latest" ] && [ -z "$ASSET_URL" ]; then
-    if version_text="$(repo_version)"; then
-      asset_url_from_tag "$(version_to_tag "$version_text")"
+    if FALLBACK_RELEASE_VERSION="$(repo_version)"; then
+      FALLBACK_ASSET_URL="$(asset_url_from_tag "$(version_to_tag "$FALLBACK_RELEASE_VERSION")")"
       return 0
     fi
   fi
@@ -407,12 +923,15 @@ download_release_asset() {
 
   echo "==> downloading release asset"
   if download_with_proxies "$primary_url" "$archive_path"; then
+    DOWNLOADED_RELEASE_VERSION="$VERSION"
     return 0
   fi
 
-  if fallback_url="$(fallback_asset_url)" && [ "$fallback_url" != "$primary_url" ]; then
+  if fallback_asset_url && [ "$FALLBACK_ASSET_URL" != "$primary_url" ]; then
+    fallback_url="$FALLBACK_ASSET_URL"
     echo "==> latest asset alias download failed, trying versioned asset"
     if download_with_proxies "$fallback_url" "$archive_path"; then
+      DOWNLOADED_RELEASE_VERSION="$FALLBACK_RELEASE_VERSION"
       return 0
     fi
   fi
@@ -425,24 +944,147 @@ download_release_asset() {
   exit 1
 }
 
-install_service_file() {
-  service_dst="/etc/systemd/system/${SERVICE_NAME}.service"
-  mkdir -p /etc/systemd/system
-  download_with_proxies "$SERVICE_URL" "$service_dst"
-  systemctl daemon-reload
-  systemctl enable "${SERVICE_NAME}.service" >/dev/null
+prepare_managed_service_files() {
+  downloaded_service="${tmp_dir}/simadmin.service.source"
+  downloaded_recovery_script="${tmp_dir}/simadmin-modem-recovery.sh.source"
+  downloaded_recovery_service="${tmp_dir}/simadmin-modem-recovery.service.source"
+  staged_service="${tmp_dir}/simadmin.service"
+  staged_recovery_script="${tmp_dir}/simadmin-modem-recovery.sh"
+  staged_recovery_service="${tmp_dir}/simadmin-modem-recovery.service"
+
+  echo "==> downloading systemd and recovery sources"
+  download_with_proxies "$SERVICE_URL" "$downloaded_service"
+  download_with_proxies "$MODEM_RECOVERY_SCRIPT_URL" "$downloaded_recovery_script"
+  download_with_proxies "$MODEM_RECOVERY_SERVICE_URL" "$downloaded_recovery_service"
+
+  grep -q '^\[Service\]' "$downloaded_service" || {
+    echo "error: invalid SimAdmin systemd service source" >&2
+    return 1
+  }
+  grep -q '^ExecStart=' "$downloaded_service" || {
+    echo "error: SimAdmin systemd service has no ExecStart" >&2
+    return 1
+  }
+  grep -q '^WorkingDirectory=' "$downloaded_service" || {
+    echo "error: SimAdmin systemd service has no WorkingDirectory" >&2
+    return 1
+  }
+  grep -q '^#!' "$downloaded_recovery_script" || {
+    echo "error: invalid modem recovery script source" >&2
+    return 1
+  }
+  grep -q '^\[Service\]' "$downloaded_recovery_service" || {
+    echo "error: invalid modem recovery systemd service source" >&2
+    return 1
+  }
+  grep -q '^ExecStart=' "$downloaded_recovery_service" || {
+    echo "error: modem recovery systemd service has no ExecStart" >&2
+    return 1
+  }
+
+  sed \
+    -e "s#^WorkingDirectory=.*#WorkingDirectory=${INSTALL_DIR}#" \
+    -e "s#^ExecStart=.*#ExecStart=${INSTALL_DIR}/simadmin#" \
+    "$downloaded_service" > "$staged_service"
+  cp "$downloaded_recovery_script" "$staged_recovery_script"
+  sed \
+    -e "s#^ExecStart=.*#ExecStart=${MODEM_RECOVERY_BIN_DIR}/simadmin-modem-recovery.sh#" \
+    "$downloaded_recovery_service" > "$staged_recovery_service"
+  chmod 0644 "$staged_service" "$staged_recovery_service"
+  chmod 0755 "$staged_recovery_script"
 }
 
-install_modem_recovery_service() {
-  script_dst="/usr/local/bin/simadmin-modem-recovery.sh"
-  service_dst="/etc/systemd/system/simadmin-modem-recovery.service"
+validate_release_archive() {
+  archive_to_validate="$1"
+  if ! tar -tzf "$archive_to_validate" >/dev/null 2>&1; then
+    echo "error: release asset is not a valid tar.gz archive" >&2
+    return 1
+  fi
 
-  mkdir -p /usr/local/bin /etc/systemd/system
-  download_with_proxies "$MODEM_RECOVERY_SCRIPT_URL" "$script_dst"
-  chmod 0755 "$script_dst"
-  download_with_proxies "$MODEM_RECOVERY_SERVICE_URL" "$service_dst"
-  systemctl daemon-reload
-  systemctl enable simadmin-modem-recovery.service >/dev/null
+  if ! tar -tzf "$archive_to_validate" | while IFS= read -r archive_member; do
+    while [ "${archive_member#./}" != "$archive_member" ]; do
+      archive_member="${archive_member#./}"
+    done
+    case "$archive_member" in
+      ""|/*|..|../*|*/../*|*/..) exit 1 ;;
+      simadmin|meta.json|www|www/*) ;;
+      *) exit 1 ;;
+    esac
+  done; then
+    echo "error: release archive contains an unsafe or unexpected path" >&2
+    return 1
+  fi
+
+  if tar -tvzf "$archive_to_validate" | awk 'substr($1, 1, 1) !~ /^[-d]$/ { found=1 } END { exit !found }'; then
+    echo "error: release archive contains links or special files" >&2
+    return 1
+  fi
+}
+
+verify_binary_architecture() {
+  binary_path="$1"
+  expected_binary_arch="$2"
+  if truthy "$SIMADMIN_SKIP_ELF_CHECK"; then
+    echo "warning: ELF architecture verification is disabled" >&2
+    return 0
+  fi
+  require_cmd od
+  # ELF e_machine is at bytes 18-19. Official Linux targets are little-endian.
+  set -- $(od -An -tx1 -N20 "$binary_path")
+  if [ "$#" -lt 20 ] || [ "$1 $2 $3 $4" != "7f 45 4c 46" ] || [ "$6" != "01" ]; then
+    echo "error: package binary is not a supported little-endian ELF file" >&2
+    return 1
+  fi
+  case "$expected_binary_arch" in
+    aarch64-unknown-linux-musl)
+      [ "$5" = "02" ] && [ "${19} ${20}" = "b7 00" ] || {
+        echo "error: package binary is not AArch64 ELF64" >&2
+        return 1
+      }
+      ;;
+    x86_64-unknown-linux-musl)
+      [ "$5" = "02" ] && [ "${19} ${20}" = "3e 00" ] || {
+        echo "error: package binary is not x86_64 ELF64" >&2
+        return 1
+      }
+      ;;
+    armv7-unknown-linux-musleabihf)
+      [ "$5" = "01" ] && [ "${19} ${20}" = "28 00" ] || {
+        echo "error: package binary is not ARMv7 ELF32" >&2
+        return 1
+      }
+      set -- $(od -An -tx1 -j36 -N4 "$binary_path")
+      [ "$#" -eq 4 ] && [ $((0x$2 & 4)) -eq 4 ] || {
+        echo "error: ARMv7 package does not declare the hard-float ABI" >&2
+        return 1
+      }
+      ;;
+    *)
+      echo "error: no ELF verifier for architecture ${expected_binary_arch}" >&2
+      return 1
+      ;;
+  esac
+}
+
+extract_release_package() {
+  archive_to_extract="$1"
+  package_dir="${tmp_dir}/pkg"
+  validate_release_archive "$archive_to_extract"
+  echo "==> extracting package"
+  mkdir -p "$package_dir"
+  tar --no-same-owner --no-same-permissions -xzf "$archive_to_extract" -C "$package_dir"
+  if find "$package_dir" -type l -print -quit | grep -q .; then
+    echo "error: release package must not contain symbolic links" >&2
+    return 1
+  fi
+  [ -f "${package_dir}/simadmin" ] || {
+    echo "error: invalid package, missing simadmin binary" >&2
+    return 1
+  }
+  [ -d "${package_dir}/www" ] || {
+    echo "error: invalid package, missing frontend www directory" >&2
+    return 1
+  }
 }
 
 normalize_lpac_arch() {
@@ -460,6 +1102,16 @@ normalize_lpac_arch() {
 }
 
 detect_lpac_arch() {
+  # ARMv7 is deliberately excluded from the MVP lpac runtime. Check the
+  # running kernel before honoring an override so an explicit ARM64 override
+  # cannot install an incompatible lpac binary on a 32-bit device.
+  machine_arch="$(uname -m)"
+  case "$machine_arch" in
+    armv7l|armhf|armv7|arm)
+      return 1
+      ;;
+  esac
+
   if [ -n "$LPAC_TARGET_ARCH" ]; then
     normalize_lpac_arch "$LPAC_TARGET_ARCH"
     return $?
@@ -1110,39 +1762,324 @@ install_lpac() {
   fi
 }
 
+expected_target_triple() {
+  case "$RUNTIME_ARCH" in
+    aarch64) printf '%s\n' "aarch64-unknown-linux-musl" ;;
+    armv7) printf '%s\n' "armv7-unknown-linux-musleabihf" ;;
+    x86_64) printf '%s\n' "x86_64-unknown-linux-musl" ;;
+    *) return 1 ;;
+  esac
+}
+
+target_edition() {
+  if truthy "$WFC" || [ "$VARIANT" = "wfc" ]; then
+    printf '%s\n' "wfc"
+    return 0
+  fi
+  case "${ASSET_NAME:-}" in
+    *wfc*) printf '%s\n' "wfc" ;;
+    *) printf '%s\n' "standard" ;;
+  esac
+}
+
+validate_package_metadata() {
+  expected_arch="$1"
+  expected_edition="$2"
+  package_meta="${package_dir}/meta.json"
+  PACKAGE_VERSION=""
+
+  if [ ! -f "$package_meta" ]; then
+    if [ "$expected_arch" = "armv7-unknown-linux-musleabihf" ]; then
+      echo "error: ARMv7 package has no meta.json; refusing unverified installation" >&2
+      return 1
+    fi
+    echo "warning: legacy package has no meta.json; architecture metadata is unavailable" >&2
+    return 0
+  fi
+
+  package_arch="$(json_string_field arch < "$package_meta")"
+  if [ -z "$package_arch" ]; then
+    echo "error: invalid package, meta.json is missing arch" >&2
+    return 1
+  fi
+  if [ "$package_arch" != "$expected_arch" ]; then
+    echo "error: package architecture mismatch: expected ${expected_arch}, got ${package_arch}" >&2
+    return 1
+  fi
+  package_edition="$(json_string_field edition < "$package_meta")"
+  if [ -n "$package_edition" ] && [ "$package_edition" != "$expected_edition" ]; then
+    echo "error: package edition mismatch: expected ${expected_edition}, got ${package_edition}" >&2
+    return 1
+  fi
+  PACKAGE_VERSION="$(json_string_field version < "$package_meta")"
+}
+
+check_install_disk_space() {
+  install_parent="${INSTALL_DIR%/*}"
+  [ -n "$install_parent" ] || install_parent="/"
+  existing_parent="$install_parent"
+  while [ ! -d "$existing_parent" ] && [ "$existing_parent" != "/" ]; do
+    existing_parent="${existing_parent%/*}"
+    [ -n "$existing_parent" ] || existing_parent="/"
+  done
+  required_kb="$(du -sk "$package_dir" | awk '{print $1 * 3 + 2048}')"
+  available_kb="$(df -Pk "$existing_parent" | awk 'NR == 2 {print $4}')"
+  case "$required_kb:$available_kb" in *[!0-9:]*) return 0 ;; esac
+  if [ "$available_kb" -lt "$required_kb" ]; then
+    echo "error: insufficient disk space: need about ${required_kb} KiB, available ${available_kb} KiB" >&2
+    return 1
+  fi
+}
+
+files_equal() {
+  left_file="$1"
+  right_file="$2"
+  [ -f "$left_file" ] && [ -f "$right_file" ] || return 1
+  [ ! -L "$left_file" ] && [ ! -L "$right_file" ] || return 1
+  [ "$(sha256_file "$left_file")" = "$(sha256_file "$right_file")" ]
+}
+
+directory_fingerprint() {
+  tree_root="$1"
+  fingerprint_manifest="${tmp_dir}/tree.$$.manifest"
+  (
+    cd "$tree_root"
+    find . -type d -print | LC_ALL=C sort | while IFS= read -r relative_dir; do
+      printf 'directory  %s\n' "${relative_dir#./}"
+    done
+    find . -type f -print | LC_ALL=C sort | while IFS= read -r relative_file; do
+      relative_path="${relative_file#./}"
+      relative_hash="$(sha256_file "$relative_path")"
+      printf '%s  %s\n' "$relative_hash" "$relative_path"
+    done
+  ) > "$fingerprint_manifest"
+  sha256_file "$fingerprint_manifest"
+}
+
+directories_equal() {
+  left_dir="$1"
+  right_dir="$2"
+  [ -d "$left_dir" ] && [ -d "$right_dir" ] || return 1
+  if find "$left_dir" "$right_dir" -type l -print -quit | grep -q .; then
+    return 1
+  fi
+  [ "$(directory_fingerprint "$left_dir")" = "$(directory_fingerprint "$right_dir")" ]
+}
+
+prepare_transaction_files() {
+  selected_edition="$1"
+  mkdir -p "$INSTALL_DIR" "$SYSTEMD_UNIT_DIR" "$MODEM_RECOVERY_BIN_DIR"
+
+  STAGED_BIN="${INSTALL_DIR}/.simadmin.new.$$"
+  STAGED_WWW="${INSTALL_DIR}/.www.new.$$"
+  STAGED_META="${INSTALL_DIR}/.meta.json.new.$$"
+  STAGED_MAIN_UNIT="${SYSTEMD_UNIT_DIR}/.${SERVICE_NAME}.service.new.$$"
+  STAGED_RECOVERY_SCRIPT="${MODEM_RECOVERY_BIN_DIR}/.simadmin-modem-recovery.sh.new.$$"
+  STAGED_RECOVERY_UNIT="${SYSTEMD_UNIT_DIR}/.simadmin-modem-recovery.service.new.$$"
+
+  cleanup_staged_transaction
+  install -m 0755 "${package_dir}/simadmin" "$STAGED_BIN"
+  mkdir -p "$STAGED_WWW"
+  cp -R "${package_dir}/www/." "$STAGED_WWW/"
+  chmod -R a+rX "$STAGED_WWW"
+  if [ -f "${package_dir}/meta.json" ]; then
+    install -m 0644 "${package_dir}/meta.json" "$STAGED_META"
+    if ! grep -q '"edition"' "$STAGED_META"; then
+      sed -i "s/}/, \"edition\": \"${selected_edition}\"}/" "$STAGED_META"
+    fi
+  else
+    cat > "$STAGED_META" <<EOF
+{
+  "version": "${VERSION}",
+  "edition": "${selected_edition}"
+}
+EOF
+    chmod 0644 "$STAGED_META"
+  fi
+  install -m 0644 "$staged_service" "$STAGED_MAIN_UNIT"
+  install -m 0755 "$staged_recovery_script" "$STAGED_RECOVERY_SCRIPT"
+  install -m 0644 "$staged_recovery_service" "$STAGED_RECOVERY_UNIT"
+
+  APP_CHANGED=1
+  if files_equal "$STAGED_BIN" "${INSTALL_DIR}/simadmin" \
+    && directories_equal "$STAGED_WWW" "${INSTALL_DIR}/www" \
+    && files_equal "$STAGED_META" "${INSTALL_DIR}/meta.json"; then
+    APP_CHANGED=0
+  fi
+  MAIN_UNIT_CHANGED=1
+  if files_equal "$STAGED_MAIN_UNIT" "${SYSTEMD_UNIT_DIR}/${SERVICE_NAME}.service"; then
+    MAIN_UNIT_CHANGED=0
+  fi
+  RECOVERY_SCRIPT_CHANGED=1
+  if files_equal "$STAGED_RECOVERY_SCRIPT" "${MODEM_RECOVERY_BIN_DIR}/simadmin-modem-recovery.sh"; then
+    RECOVERY_SCRIPT_CHANGED=0
+  fi
+  RECOVERY_UNIT_CHANGED=1
+  if files_equal "$STAGED_RECOVERY_UNIT" "${SYSTEMD_UNIT_DIR}/simadmin-modem-recovery.service"; then
+    RECOVERY_UNIT_CHANGED=0
+  fi
+  return 0
+}
+
+cleanup_staged_transaction() {
+  [ -n "${STAGED_BIN:-}" ] && rm -f -- "$STAGED_BIN"
+  [ -n "${STAGED_WWW:-}" ] && rm -rf -- "$STAGED_WWW"
+  [ -n "${STAGED_META:-}" ] && rm -f -- "$STAGED_META"
+  [ -n "${STAGED_MAIN_UNIT:-}" ] && rm -f -- "$STAGED_MAIN_UNIT"
+  [ -n "${STAGED_RECOVERY_SCRIPT:-}" ] && rm -f -- "$STAGED_RECOVERY_SCRIPT"
+  [ -n "${STAGED_RECOVERY_UNIT:-}" ] && rm -f -- "$STAGED_RECOVERY_UNIT"
+  return 0
+}
+
+backup_existing_path() {
+  destination="$1"
+  backup="$2"
+  rm -rf -- "$backup"
+  if [ -e "$destination" ] || [ -L "$destination" ]; then
+    mv "$destination" "$backup"
+    return 0
+  fi
+  return 1
+}
+
+rollback_install() {
+  echo "==> rolling back SimAdmin installation" >&2
+  systemctl stop "${SERVICE_NAME}.service" >/dev/null 2>&1 || true
+
+  if [ "${TOUCHED_BIN:-0}" -eq 1 ]; then rm -f -- "${INSTALL_DIR}/simadmin"; [ "${HAD_BIN:-0}" -eq 1 ] && mv "$BACKUP_BIN" "${INSTALL_DIR}/simadmin"; fi
+  if [ "${TOUCHED_WWW:-0}" -eq 1 ]; then rm -rf -- "${INSTALL_DIR}/www"; [ "${HAD_WWW:-0}" -eq 1 ] && mv "$BACKUP_WWW" "${INSTALL_DIR}/www"; fi
+  if [ "${TOUCHED_META:-0}" -eq 1 ]; then rm -f -- "${INSTALL_DIR}/meta.json"; [ "${HAD_META:-0}" -eq 1 ] && mv "$BACKUP_META" "${INSTALL_DIR}/meta.json"; fi
+  if [ "${TOUCHED_MAIN_UNIT:-0}" -eq 1 ]; then rm -f -- "${SYSTEMD_UNIT_DIR}/${SERVICE_NAME}.service"; [ "${HAD_MAIN_UNIT:-0}" -eq 1 ] && mv "$BACKUP_MAIN_UNIT" "${SYSTEMD_UNIT_DIR}/${SERVICE_NAME}.service"; fi
+  if [ "${TOUCHED_RECOVERY_SCRIPT:-0}" -eq 1 ]; then rm -f -- "${MODEM_RECOVERY_BIN_DIR}/simadmin-modem-recovery.sh"; [ "${HAD_RECOVERY_SCRIPT:-0}" -eq 1 ] && mv "$BACKUP_RECOVERY_SCRIPT" "${MODEM_RECOVERY_BIN_DIR}/simadmin-modem-recovery.sh"; fi
+  if [ "${TOUCHED_RECOVERY_UNIT:-0}" -eq 1 ]; then rm -f -- "${SYSTEMD_UNIT_DIR}/simadmin-modem-recovery.service"; [ "${HAD_RECOVERY_UNIT:-0}" -eq 1 ] && mv "$BACKUP_RECOVERY_UNIT" "${SYSTEMD_UNIT_DIR}/simadmin-modem-recovery.service"; fi
+
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  if [ "${PREVIOUS_MAIN_ENABLED:-0}" -eq 1 ]; then systemctl enable "${SERVICE_NAME}.service" >/dev/null 2>&1 || true; else systemctl disable "${SERVICE_NAME}.service" >/dev/null 2>&1 || true; fi
+  if [ "${PREVIOUS_RECOVERY_ENABLED:-0}" -eq 1 ]; then systemctl enable simadmin-modem-recovery.service >/dev/null 2>&1 || true; else systemctl disable simadmin-modem-recovery.service >/dev/null 2>&1 || true; fi
+  if [ "${PREVIOUS_MAIN_ACTIVE:-0}" -eq 1 ]; then systemctl start "${SERVICE_NAME}.service" >/dev/null 2>&1 || true; fi
+  TRANSACTION_ACTIVE=0
+}
+
+commit_install() {
+  TRANSACTION_ACTIVE=0
+  for committed_backup in "${BACKUP_BIN:-}" "${BACKUP_WWW:-}" "${BACKUP_META:-}" "${BACKUP_MAIN_UNIT:-}" "${BACKUP_RECOVERY_SCRIPT:-}" "${BACKUP_RECOVERY_UNIT:-}"; do
+    if [ -n "$committed_backup" ]; then
+      rm -rf -- "$committed_backup" || echo "warning: failed to remove transaction backup ${committed_backup}" >&2
+    fi
+  done
+  cleanup_staged_transaction
+}
+
+activate_staged_install() {
+  BACKUP_BIN="${INSTALL_DIR}/.simadmin.previous.$$"
+  BACKUP_WWW="${INSTALL_DIR}/.www.previous.$$"
+  BACKUP_META="${INSTALL_DIR}/.meta.json.previous.$$"
+  BACKUP_MAIN_UNIT="${SYSTEMD_UNIT_DIR}/.${SERVICE_NAME}.service.previous.$$"
+  BACKUP_RECOVERY_SCRIPT="${MODEM_RECOVERY_BIN_DIR}/.simadmin-modem-recovery.sh.previous.$$"
+  BACKUP_RECOVERY_UNIT="${SYSTEMD_UNIT_DIR}/.simadmin-modem-recovery.service.previous.$$"
+  HAD_BIN=0; HAD_WWW=0; HAD_META=0; HAD_MAIN_UNIT=0; HAD_RECOVERY_SCRIPT=0; HAD_RECOVERY_UNIT=0
+  TOUCHED_BIN=0; TOUCHED_WWW=0; TOUCHED_META=0; TOUCHED_MAIN_UNIT=0; TOUCHED_RECOVERY_SCRIPT=0; TOUCHED_RECOVERY_UNIT=0
+  PREVIOUS_MAIN_ACTIVE=0; PREVIOUS_MAIN_ENABLED=0; PREVIOUS_RECOVERY_ENABLED=0
+  systemctl is-active --quiet "${SERVICE_NAME}.service" && PREVIOUS_MAIN_ACTIVE=1 || true
+  systemctl is-enabled --quiet "${SERVICE_NAME}.service" 2>/dev/null && PREVIOUS_MAIN_ENABLED=1 || true
+  systemctl is-enabled --quiet simadmin-modem-recovery.service 2>/dev/null && PREVIOUS_RECOVERY_ENABLED=1 || true
+  TRANSACTION_ACTIVE=1
+
+  if [ "$APP_CHANGED" -eq 1 ] || [ "$MAIN_UNIT_CHANGED" -eq 1 ]; then
+    echo "==> stopping existing SimAdmin service"
+    systemctl stop "${SERVICE_NAME}.service" >/dev/null 2>&1 || true
+  fi
+  if [ "$APP_CHANGED" -eq 1 ]; then
+    echo "==> activating application files"
+    TOUCHED_BIN=1; backup_existing_path "${INSTALL_DIR}/simadmin" "$BACKUP_BIN" && HAD_BIN=1 || true; mv "$STAGED_BIN" "${INSTALL_DIR}/simadmin"
+    TOUCHED_WWW=1; backup_existing_path "${INSTALL_DIR}/www" "$BACKUP_WWW" && HAD_WWW=1 || true; mv "$STAGED_WWW" "${INSTALL_DIR}/www"
+    TOUCHED_META=1; backup_existing_path "${INSTALL_DIR}/meta.json" "$BACKUP_META" && HAD_META=1 || true; mv "$STAGED_META" "${INSTALL_DIR}/meta.json"
+  else
+    echo "==> application files are unchanged; skipping replacement"
+  fi
+  if [ "$MAIN_UNIT_CHANGED" -eq 1 ]; then
+    TOUCHED_MAIN_UNIT=1; backup_existing_path "${SYSTEMD_UNIT_DIR}/${SERVICE_NAME}.service" "$BACKUP_MAIN_UNIT" && HAD_MAIN_UNIT=1 || true; mv "$STAGED_MAIN_UNIT" "${SYSTEMD_UNIT_DIR}/${SERVICE_NAME}.service"
+  fi
+  if [ "$RECOVERY_SCRIPT_CHANGED" -eq 1 ]; then
+    TOUCHED_RECOVERY_SCRIPT=1; backup_existing_path "${MODEM_RECOVERY_BIN_DIR}/simadmin-modem-recovery.sh" "$BACKUP_RECOVERY_SCRIPT" && HAD_RECOVERY_SCRIPT=1 || true; mv "$STAGED_RECOVERY_SCRIPT" "${MODEM_RECOVERY_BIN_DIR}/simadmin-modem-recovery.sh"
+  fi
+  if [ "$RECOVERY_UNIT_CHANGED" -eq 1 ]; then
+    TOUCHED_RECOVERY_UNIT=1; backup_existing_path "${SYSTEMD_UNIT_DIR}/simadmin-modem-recovery.service" "$BACKUP_RECOVERY_UNIT" && HAD_RECOVERY_UNIT=1 || true; mv "$STAGED_RECOVERY_UNIT" "${SYSTEMD_UNIT_DIR}/simadmin-modem-recovery.service"
+  fi
+
+  if [ "$MAIN_UNIT_CHANGED" -eq 1 ] || [ "$RECOVERY_UNIT_CHANGED" -eq 1 ]; then
+    systemctl daemon-reload
+  fi
+  systemctl enable "${SERVICE_NAME}.service" >/dev/null
+  systemctl enable simadmin-modem-recovery.service >/dev/null
+  if [ "$APP_CHANGED" -eq 1 ] || [ "$MAIN_UNIT_CHANGED" -eq 1 ]; then
+    systemctl restart "${SERVICE_NAME}.service"
+  elif ! systemctl is-active --quiet "${SERVICE_NAME}.service"; then
+    systemctl start "${SERVICE_NAME}.service"
+  fi
+}
+
+wait_for_simadmin_health() {
+  if truthy "$SIMADMIN_SKIP_HEALTHCHECK"; then
+    echo "warning: post-install HTTP health check is disabled" >&2
+    systemctl is-active --quiet "${SERVICE_NAME}.service"
+    return $?
+  fi
+  health_attempt=0
+  health_limit="$SIMADMIN_HEALTH_RETRIES"
+  [ "$health_limit" -gt 0 ] || health_limit=1
+  while [ "$health_attempt" -lt "$health_limit" ]; do
+    if systemctl is-active --quiet "${SERVICE_NAME}.service" \
+      && curl -fsS --connect-timeout 2 --max-time 3 "$SIMADMIN_HEALTH_URL" >/dev/null 2>&1; then
+      echo "==> SimAdmin health check passed"
+      return 0
+    fi
+    health_attempt=$((health_attempt + 1))
+    [ "$health_attempt" -lt "$health_limit" ] && sleep 1
+  done
+  echo "error: SimAdmin did not become healthy at ${SIMADMIN_HEALTH_URL}" >&2
+  systemctl status "${SERVICE_NAME}.service" --no-pager >&2 || true
+  return 1
+}
+
 
 
 main() {
   parse_args "$@"
   require_root
   require_cmd mktemp
+  validate_configuration
+  validate_running_architecture
+  acquire_install_lock
+  trap 'installer_exit $?' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  tmp_dir="$(create_temp_dir)"
 
   if truthy "$SIMADMIN_LPAC_ONLY"; then
-    require_cmd curl
-    tmp_dir="$(mktemp -d)"
-    trap 'rm -rf "$tmp_dir"' EXIT INT TERM
+    if ! detect_lpac_arch >/dev/null 2>&1; then
+      echo "warning: unsupported device arch for lpac: $(uname -m), skipping lpac install" >&2
+      return 0
+    fi
+    install_bootstrap_dependencies
+    if truthy "$SIMADMIN_INSTALL_SYSTEM_DEPS" && [ "$SIMADMIN_DEPS_MODE" != "skip" ]; then
+      ensure_package_list "lpac dependencies" "libpcsclite1"
+    fi
     install_lpac
     return 0
   fi
 
   require_cmd systemctl
-
   echo "==> installing SimAdmin"
   echo "    version: ${VERSION}"
   echo "    install dir: ${INSTALL_DIR}"
   echo "    service name: ${SERVICE_NAME}"
 
-  install_system_dependencies
+  if [ -x "${INSTALL_DIR}/simadmin" ]; then FIRST_INSTALL=0; else FIRST_INSTALL=1; fi
+  install_bootstrap_dependencies
   require_cmd curl
-  remove_legacy_networkmanager_modem_unmanaged
-  start_runtime_services
-  refresh_modem_devices
-
-  tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "$tmp_dir"' EXIT INT TERM
 
   asset_url="$(resolve_asset_url)"
-
   case "$asset_url" in
     *.tar.gz)
       require_cmd tar
@@ -1150,94 +2087,44 @@ main() {
       ;;
     *)
       echo "error: unsupported OTA asset format, expected .tar.gz: $asset_url" >&2
-      exit 1
+      return 1
       ;;
   esac
 
   download_release_asset "$archive_path" "$asset_url"
+  archive_asset_name="$(resolve_simadmin_asset_name)"
+  verify_release_asset "$archive_path" "$archive_asset_name"
+  extract_release_package "$archive_path"
+  expected_arch="$(expected_target_triple)"
+  selected_edition="$(target_edition)"
+  validate_package_metadata "$expected_arch" "$selected_edition"
+  verify_binary_architecture "${package_dir}/simadmin" "$expected_arch"
+  check_install_disk_space
 
-  echo "==> extracting package"
-  mkdir -p "${tmp_dir}/pkg"
-  tar -xzf "$archive_path" -C "${tmp_dir}/pkg"
+  # Managed unit and recovery files remain in the source repository. Latest
+  # installs use main; versioned installs use the corresponding release tag.
+  resolve_source_urls "$PACKAGE_VERSION"
+  prepare_managed_service_files
 
-  if [ ! -f "${tmp_dir}/pkg/simadmin" ]; then
-    echo "error: invalid package, missing simadmin binary" >&2
-    exit 1
-  fi
-
-  if [ ! -d "${tmp_dir}/pkg/www" ]; then
-    echo "error: invalid package, missing frontend www directory" >&2
-    exit 1
-  fi
-
-  case "$(detect_simadmin_arch)" in
-    aarch64|arm64) expected_arch="aarch64-unknown-linux-musl" ;;
-    amd64|x86_64) expected_arch="x86_64-unknown-linux-musl" ;;
-    *) expected_arch="$(detect_simadmin_arch)" ;;
-  esac
-  if [ -f "${tmp_dir}/pkg/meta.json" ]; then
-    package_arch="$(json_string_field arch < "${tmp_dir}/pkg/meta.json")"
-    if [ -z "$package_arch" ]; then
-      echo "error: invalid package, meta.json is missing arch" >&2
-      exit 1
-    fi
-    if [ "$package_arch" != "$expected_arch" ]; then
-      echo "error: package architecture mismatch: expected $expected_arch, got $package_arch" >&2
-      exit 1
-    fi
-  else
-    echo "warning: package has no meta.json; architecture could not be verified" >&2
-  fi
-
-  echo "==> stopping existing service"
-  systemctl stop "${SERVICE_NAME}.service" >/dev/null 2>&1 || true
-
-  echo "==> installing files to ${INSTALL_DIR}"
-  mkdir -p "${INSTALL_DIR}"
-  install -m 0755 "${tmp_dir}/pkg/simadmin" "${INSTALL_DIR}/simadmin"
-  rm -rf "${INSTALL_DIR}/www"
-  cp -R "${tmp_dir}/pkg/www" "${INSTALL_DIR}/www"
-  chmod -R a+rX "${INSTALL_DIR}/www"
-
-  target_edition="standard"
-  if truthy "$WFC" || [ "$VARIANT" = "wfc" ]; then
-    target_edition="wfc"
-  else
-    case "${ASSET_NAME:-}" in
-      *wfc*) target_edition="wfc" ;;
-    esac
-  fi
-
-  if [ -f "${tmp_dir}/pkg/meta.json" ]; then
-    install -m 0644 "${tmp_dir}/pkg/meta.json" "${INSTALL_DIR}/meta.json"
-    if ! grep -q '"edition"' "${INSTALL_DIR}/meta.json"; then
-      sed -i "s/}/, \"edition\": \"${target_edition}\"}/" "${INSTALL_DIR}/meta.json" || true
-    fi
-  else
-    cat > "${INSTALL_DIR}/meta.json" << EOF
-{
-  "version": "${VERSION}",
-  "edition": "${target_edition}"
-}
-EOF
-    chmod 0644 "${INSTALL_DIR}/meta.json"
-  fi
-
+  # No service or modem state is changed before all remote inputs are ready.
+  install_system_dependencies
+  prepare_transaction_files "$selected_edition"
   install_lpac
-
-  echo "==> installing systemd unit"
-  install_service_file
-  echo "==> installing modem recovery service"
-  install_modem_recovery_service
-
-  echo "==> starting service"
-  systemctl restart "${SERVICE_NAME}.service"
+  remove_legacy_networkmanager_modem_unmanaged
+  start_runtime_services
+  refresh_modem_devices
+  activate_staged_install
+  if ! wait_for_simadmin_health; then
+    rollback_install
+    return 1
+  fi
+  commit_install
 
   echo "==> done"
   echo "    service: ${SERVICE_NAME}.service"
   echo "    modem recovery: simadmin-modem-recovery.service"
   echo "    install dir: ${INSTALL_DIR}"
-  systemctl status "${SERVICE_NAME}.service" --no-pager
+  systemctl status "${SERVICE_NAME}.service" --no-pager || true
 }
 
 if [ "${SIMADMIN_INSTALL_LIBRARY_ONLY:-0}" != "1" ]; then

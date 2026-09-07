@@ -38,6 +38,8 @@ export type WorkMode = 'sim' | 'esim'
 export interface WorkModeResponse {
   mode: WorkMode
   worker_running: boolean
+  /** ARMv7 builds hide the eSIM/work-mode module entirely. */
+  esim_supported?: boolean
 }
 
 export interface WorkModeRequest {

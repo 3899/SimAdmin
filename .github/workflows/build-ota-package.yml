@@ -71,8 +71,16 @@ jobs:
         include:
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
+            cross: false
+            arch_suffix: aarch64
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-latest
+            cross: false
+            arch_suffix: x86_64
+          - target: armv7-unknown-linux-musleabihf
+            runner: ubuntu-latest
+            cross: true
+            arch_suffix: armv7
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout repository
@@ -96,11 +104,24 @@ jobs:
       - name: Install native build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools
-          if [ "${{ inputs.use_upx }}" = "true" ]; then
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            echo "ARMv7 backend will be built with cross-rs Docker toolchain"
+          else
+            sudo apt-get install -y musl-tools
+          fi
+          if [ "${{ inputs.use_upx }}" = "true" ] && [ "${{ matrix.target }}" != "armv7-unknown-linux-musleabihf" ]; then
             sudo apt-get install -y upx-ucl
           fi
-          musl-gcc --version
+          if [ "${{ matrix.cross }}" != "true" ]; then
+            musl-gcc --version
+          fi
+
+      - name: Verify ARMv7 helper scripts
+        run: bash scripts/test-armv7.sh
+
+      - name: Install cross
+        if: matrix.cross == true
+        run: cargo install cross --locked
 
       - name: Cache Rust dependencies
         uses: actions/cache@v4
@@ -118,24 +139,44 @@ jobs:
           SQLITE3_STATIC: '1'
           LIBSQLITE3_SYS_USE_PKG_CONFIG: '0'
         run: |
-          case "$TARGET" in
-            aarch64-unknown-linux-musl)
-              export CC_aarch64_unknown_linux_musl=musl-gcc
-              export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
-              ;;
-            x86_64-unknown-linux-musl)
-              export CC_x86_64_unknown_linux_musl=musl-gcc
-              export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
-              ;;
-          esac
-          cargo build --locked --release --target "$TARGET" -p simadmin
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --locked --release --target "$TARGET" -p simadmin
+          else
+            case "$TARGET" in
+              aarch64-unknown-linux-musl)
+                export CC_aarch64_unknown_linux_musl=musl-gcc
+                export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
+                ;;
+              x86_64-unknown-linux-musl)
+                export CC_x86_64_unknown_linux_musl=musl-gcc
+                export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
+                ;;
+            esac
+            cargo build --locked --release --target "$TARGET" -p simadmin
+          fi
           file "target/$TARGET/release/simadmin"
+          if [ "$TARGET" = "armv7-unknown-linux-musleabihf" ]; then
+            readelf -h "target/$TARGET/release/simadmin" | grep -E 'Class:.*ELF32|Machine:.*ARM'
+          fi
+
+      - name: ARMv7 QEMU startup smoke test
+        if: matrix.target == 'armv7-unknown-linux-musleabihf'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user
+          qemu-arm "target/$TARGET/release/simadmin" --version
 
       - name: Compress backend with UPX
-        if: inputs.use_upx == true
+        if: inputs.use_upx == true && matrix.target != 'armv7-unknown-linux-musleabihf'
         env:
           TARGET: ${{ matrix.target }}
         run: upx --best --lzma "target/$TARGET/release/simadmin"
+
+      - name: Skip unverified ARMv7 UPX compression
+        if: inputs.use_upx == true && matrix.target == 'armv7-unknown-linux-musleabihf'
+        run: echo "ARMv7 UPX compression is disabled until it is verified on UFI210"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -160,17 +201,22 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           ./scripts/pack-ota.sh --target="$TARGET"
-          case "$TARGET" in
-            aarch64-unknown-linux-musl)
-              ARCH_SUFFIX="aarch64"
-              ;;
-            x86_64-unknown-linux-musl)
-              ARCH_SUFFIX="x86_64"
-              ;;
-          esac
+          ARCH_SUFFIX="${{ matrix.arch_suffix }}"
           SOURCE="release/simadmin_${VERSION}_${TARGET}.tar.gz"
           DEST="release/simadmin-${ARCH_SUFFIX}.tar.gz"
           mv "$SOURCE" "$DEST"
+
+          python3 - "$DEST" "$TARGET" <<'PY'
+          import json
+          import sys
+          import tarfile
+
+          archive, target = sys.argv[1:]
+          with tarfile.open(archive, 'r:gz') as package:
+              meta = json.load(package.extractfile('meta.json'))
+          if meta.get('arch') != target:
+              raise SystemExit(f"meta.json.arch mismatch: expected {target}, got {meta.get('arch')!r}")
+          PY
 
           sha256sum release/*.tar.gz
 
@@ -265,6 +311,7 @@ jobs:
               f'- **发布类型**: {release_type}\n'
               f'- **资产包**: \n'
               f'\t- **aarch64 (ARM64)**: `simadmin-aarch64.tar.gz`\n'
+              f'\t- **armv7 (armhf)**: `simadmin-armv7.tar.gz`\n'
               f'\t- **x86_64 (AMD64)**: `simadmin-x86_64.tar.gz`\n\n'
               f'### 更新说明\n\n'
               f'{changelog_text}\n\n\n'
@@ -282,6 +329,7 @@ jobs:
           name: SimAdmin_v${{ needs.prepare.outputs.version }}
           files: |
             release/simadmin-aarch64.tar.gz
+            release/simadmin-armv7.tar.gz
             release/simadmin-x86_64.tar.gz
           body_path: release/RELEASE_BODY.md
           overwrite_files: true
@@ -322,6 +370,7 @@ jobs:
                           sums[fn] = h
 
           aarch64_hash = sums.get('simadmin-aarch64.tar.gz', 'N/A')
+          armv7_hash = sums.get('simadmin-armv7.tar.gz', 'N/A')
           x86_64_hash = sums.get('simadmin-x86_64.tar.gz', 'N/A')
 
           release_url = f'https://github.com/{repository}/releases/tag/v{version}'
@@ -337,6 +386,7 @@ jobs:
               f'| 架构 / 平台 | 文件名 | SHA-256 校验和 |\n'
               f'| :--- | :--- | :--- |\n'
               f'| **aarch64 / arm64** | `simadmin-aarch64.tar.gz` | `{aarch64_hash}` |\n'
+              f'| **armv7 / armhf** | `simadmin-armv7.tar.gz` | `{armv7_hash}` |\n'
               f'| **x86_64 / amd64** | `simadmin-x86_64.tar.gz` | `{x86_64_hash}` |\n\n'
               f'---\n'
               f'🎉 Release 发布完成: [{repository}_v{version}]({release_url})\n'

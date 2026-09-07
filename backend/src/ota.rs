@@ -67,16 +67,29 @@ pub fn get_current_commit() -> String {
 
 /// 动态获取/解析当前系统的目标架构三元组
 pub fn resolve_current_target_triple() -> String {
+    // The running binary is the source of truth. Installed metadata can be
+    // stale after moving an image between architectures (for example, an old
+    // ARM64 meta.json on a newly booted ARMv7 device), and must not influence
+    // OTA asset selection or package validation.
+    if let Some(runtime_target) = target_triple_for_host_arch(std::env::consts::ARCH) {
+        return runtime_target.to_string();
+    }
+
     if let Some(installed) = read_installed_meta() {
         let arch = installed.arch.trim().to_string();
         if !arch.is_empty() {
             return arch;
         }
     }
-    match std::env::consts::ARCH {
-        "aarch64" => "aarch64-unknown-linux-musl".to_string(),
-        "x86_64" => "x86_64-unknown-linux-musl".to_string(),
-        _ => CURRENT_TARGET_TRIPLE.to_string(),
+    CURRENT_TARGET_TRIPLE.to_string()
+}
+
+fn target_triple_for_host_arch(arch: &str) -> Option<&'static str> {
+    match arch {
+        "aarch64" => Some("aarch64-unknown-linux-musl"),
+        "arm" => Some("armv7-unknown-linux-musleabihf"),
+        "x86_64" => Some("x86_64-unknown-linux-musl"),
+        _ => None,
     }
 }
 
@@ -240,14 +253,34 @@ pub fn is_asset_matching_target_arch(name: &str, target: &str) -> bool {
 
     let lower = name.to_ascii_lowercase();
     let target = target.to_ascii_lowercase();
-    let target_is_arm = target.contains("aarch64") || target.contains("arm64");
+    let target_is_arm64 = target.contains("aarch64") || target.contains("arm64");
+    let target_is_soft_float = (target.contains("musleabi") && !target.contains("musleabihf"))
+        || (target.contains("gnueabi") && !target.contains("gnueabihf"));
+    let target_is_armv7 = !target_is_soft_float
+        && (target.contains("armv7") || target.contains("armhf") || target == "arm");
     let target_is_amd = target.contains("x86_64") || target.contains("amd64");
 
     // 显式拒绝架构冲突的产物包
-    if target_is_arm && (lower.contains("amd64") || lower.contains("x86_64")) {
+    if target_is_arm64
+        && (lower.contains("amd64")
+            || lower.contains("x86_64")
+            || lower.contains("armv7")
+            || lower.contains("armhf"))
+    {
+        return false;
+    }
+    if target_is_armv7
+        && (lower.contains("amd64")
+            || lower.contains("x86_64")
+            || lower.contains("aarch64")
+            || lower.contains("arm64"))
+    {
         return false;
     }
     if target_is_amd && (lower.contains("arm64") || lower.contains("aarch64")) {
+        return false;
+    }
+    if target_is_amd && (lower.contains("armv7") || lower.contains("armhf")) {
         return false;
     }
 
@@ -257,8 +290,10 @@ pub fn is_asset_matching_target_arch(name: &str, target: &str) -> bool {
         return false;
     }
 
-    let arch_keywords: &[&str] = if target_is_arm {
+    let arch_keywords: &[&str] = if target_is_arm64 {
         &["arm64", "aarch64"]
+    } else if target_is_armv7 {
+        &["armv7", "armv7l", "armhf"]
     } else if target_is_amd {
         &["amd64", "x86_64"]
     } else {
@@ -274,7 +309,7 @@ pub fn is_asset_matching_target_arch(name: &str, target: &str) -> bool {
         lower.as_str(),
         "simadmin.tar.gz" | "simadmin.tgz" | "simadmin.zip"
     );
-    if target_is_arm && is_legacy_generic {
+    if target_is_arm64 && is_legacy_generic {
         return true;
     }
 
@@ -667,11 +702,7 @@ fn validate_ota_package(meta: &OtaMeta) -> Result<OtaValidation, String> {
 
     // OTA 二进制必须与当前运行实例的目标架构一致。
     let expected_triple = resolve_current_target_triple();
-    let arch_match = meta.arch == expected_triple
-        || (expected_triple.contains("aarch64")
-            && (meta.arch.contains("arm64") || meta.arch.contains("aarch64")))
-        || (expected_triple.contains("x86_64")
-            && (meta.arch.contains("amd64") || meta.arch.contains("x86_64")));
+    let arch_match = is_meta_arch_matching_target(&meta.arch, &expected_triple);
 
     // 比较版本
     let is_newer = compare_versions(&meta.version, CURRENT_VERSION);
@@ -707,6 +738,30 @@ fn validate_ota_package(meta: &OtaMeta) -> Result<OtaValidation, String> {
         arch_match,
         error,
     })
+}
+
+fn is_meta_arch_matching_target(meta_arch: &str, expected_triple: &str) -> bool {
+    let meta_arch = meta_arch.trim().to_ascii_lowercase();
+    let expected = expected_triple.trim().to_ascii_lowercase();
+    if meta_arch == expected {
+        return true;
+    }
+
+    // Never accept a fully-qualified package for a different libc or ABI.
+    if meta_arch.contains("-linux-") {
+        return false;
+    }
+
+    // Keep legacy unqualified aliases for existing ARM64/AMD64 packages. ARMv7
+    // is intentionally strict so a soft-float or ambiguous `armhf` package
+    // cannot pass validation.
+    if expected.contains("aarch64") || expected.contains("arm64") {
+        return matches!(meta_arch.as_str(), "aarch64" | "arm64");
+    }
+    if expected.contains("x86_64") || expected.contains("amd64") {
+        return matches!(meta_arch.as_str(), "x86_64" | "amd64");
+    }
+    false
 }
 
 /// 计算文件 MD5
@@ -983,6 +1038,19 @@ mod tests {
     }
 
     #[test]
+    fn maps_rust_arm_host_arch_to_debian_armv7_target() {
+        assert_eq!(
+            target_triple_for_host_arch("arm"),
+            Some("armv7-unknown-linux-musleabihf")
+        );
+        assert_eq!(
+            target_triple_for_host_arch("aarch64"),
+            Some("aarch64-unknown-linux-musl")
+        );
+        assert_eq!(target_triple_for_host_arch("armv7l"), None);
+    }
+
+    #[test]
     fn selects_all_release_assets_for_requested_architecture() {
         let release = OtaLatestReleaseResponse {
             assets: vec![
@@ -1137,6 +1205,68 @@ mod tests {
     }
 
     #[test]
+    fn selects_armv7_assets_without_accepting_other_arm_variants() {
+        let release = OtaLatestReleaseResponse {
+            assets: vec![
+                OtaReleaseAsset {
+                    name: "simadmin-armv7.tar.gz".to_string(),
+                    ..Default::default()
+                },
+                OtaReleaseAsset {
+                    name: "simadmin-armhf.tar.gz".to_string(),
+                    ..Default::default()
+                },
+                OtaReleaseAsset {
+                    name: "simadmin-aarch64.tar.gz".to_string(),
+                    ..Default::default()
+                },
+                OtaReleaseAsset {
+                    name: "simadmin-x86_64.tar.gz".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let assets = supported_release_assets_for_arch(&release, "armv7-unknown-linux-musleabihf");
+        let names: Vec<&str> = assets.iter().map(|asset| asset.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["simadmin-armv7.tar.gz", "simadmin-armhf.tar.gz"]
+        );
+        assert!(!is_asset_matching_target_arch(
+            "simadmin-aarch64.tar.gz",
+            "armv7-unknown-linux-musleabihf"
+        ));
+        assert!(!is_asset_matching_target_arch(
+            "simadmin-armv7-unknown-linux-musleabi.tar.gz",
+            "armv7-unknown-linux-musleabihf"
+        ));
+        assert!(!is_asset_matching_target_arch(
+            "simadmin-armv7.tar.gz",
+            "armv7-unknown-linux-musleabi"
+        ));
+    }
+
+    #[test]
+    fn legacy_generic_asset_is_not_selected_for_armv7() {
+        let release = OtaLatestReleaseResponse {
+            assets: vec![OtaReleaseAsset {
+                name: "simadmin.tar.gz".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert!(supported_release_asset_for_target(
+            &release,
+            "armv7-unknown-linux-musleabihf",
+            None,
+        )
+        .is_none());
+    }
+
+    #[test]
     fn generic_legacy_asset_is_arm64_only() {
         let release = OtaLatestReleaseResponse {
             assets: vec![OtaReleaseAsset {
@@ -1170,6 +1300,42 @@ mod tests {
             supported_release_asset_for_target(&release, "x86_64-unknown-linux-musl", None)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn requires_full_armv7_target_in_ota_metadata() {
+        let target = "armv7-unknown-linux-musleabihf";
+        assert!(is_meta_arch_matching_target(target, target));
+        assert!(!is_meta_arch_matching_target("armv7", target));
+        assert!(!is_meta_arch_matching_target("armhf", target));
+        assert!(!is_meta_arch_matching_target(
+            "armv7-unknown-linux-musleabi",
+            target
+        ));
+        assert!(!is_meta_arch_matching_target(
+            "armv7-unknown-linux-gnueabihf",
+            target
+        ));
+    }
+
+    #[test]
+    fn rejects_fully_qualified_wrong_abi_in_ota_metadata() {
+        assert!(!is_meta_arch_matching_target(
+            "aarch64-unknown-linux-gnu",
+            "aarch64-unknown-linux-musl"
+        ));
+        assert!(!is_meta_arch_matching_target(
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-musl"
+        ));
+        assert!(is_meta_arch_matching_target(
+            "arm64",
+            "aarch64-unknown-linux-musl"
+        ));
+        assert!(is_meta_arch_matching_target(
+            "amd64",
+            "x86_64-unknown-linux-musl"
+        ));
     }
 
     #[test]

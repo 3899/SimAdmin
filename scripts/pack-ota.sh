@@ -14,11 +14,14 @@ for arg in "$@"; do
         --target=aarch64|--target=arm64|--target=aarch64-unknown-linux-musl)
             TARGET="aarch64-unknown-linux-musl"
             ;;
+        --target=armv7|--target=armv7l|--target=armhf|--target=armv7-unknown-linux-musleabihf)
+            TARGET="armv7-unknown-linux-musleabihf"
+            ;;
         --target=x86_64|--target=amd64|--target=x86_64-unknown-linux-musl)
             TARGET="x86_64-unknown-linux-musl"
             ;;
         --help|-h)
-            echo "用法: ./scripts/pack-ota.sh [--target=aarch64|x86_64]"
+            echo "用法: ./scripts/pack-ota.sh [--target=aarch64|armv7|x86_64]"
             exit 0
             ;;
         *)
@@ -30,13 +33,54 @@ done
 
 case "$TARGET" in
     aarch64|arm64) TARGET="aarch64-unknown-linux-musl" ;;
+    armv7|armv7l|armhf) TARGET="armv7-unknown-linux-musleabihf" ;;
     x86_64|amd64) TARGET="x86_64-unknown-linux-musl" ;;
-    aarch64-unknown-linux-musl|x86_64-unknown-linux-musl) ;;
+    aarch64-unknown-linux-musl|armv7-unknown-linux-musleabihf|x86_64-unknown-linux-musl) ;;
     *)
         echo "❌ 错误: 不支持的构建目标: $TARGET" >&2
         exit 1
         ;;
 esac
+
+verify_binary_arch() {
+    if ! command -v file >/dev/null 2>&1; then
+        echo "❌ 错误: 未找到 file，无法验证 OTA 二进制架构" >&2
+        exit 1
+    fi
+
+    local file_info
+    file_info=$(file -b "$BINARY_PATH")
+    case "$TARGET" in
+        armv7-unknown-linux-musleabihf)
+            if ! printf '%s\n' "$file_info" | grep -Eiq 'ELF 32-bit.*ARM'; then
+                echo "❌ 错误: 二进制不是 ARMv7 ELF32: $file_info" >&2
+                exit 1
+            fi
+            if ! command -v readelf >/dev/null 2>&1; then
+                echo "❌ 错误: 未找到 readelf，无法确认 ARMv7 ELF 头" >&2
+                exit 1
+            fi
+            if ! readelf -h "$BINARY_PATH" | grep -Eq 'Class:[[:space:]]+ELF32' \
+                || ! readelf -h "$BINARY_PATH" | grep -Eq 'Machine:[[:space:]]+ARM'; then
+                echo "❌ 错误: ARMv7 ELF 头校验失败" >&2
+                exit 1
+            fi
+            ;;
+        aarch64-unknown-linux-musl)
+            if ! printf '%s\n' "$file_info" | grep -Eiq 'ELF 64-bit.*(ARM aarch64|AArch64)'; then
+                echo "❌ 错误: 二进制不是 AArch64 ELF64: $file_info" >&2
+                exit 1
+            fi
+            ;;
+        x86_64-unknown-linux-musl)
+            if ! printf '%s\n' "$file_info" | grep -Eiq 'ELF 64-bit.*(x86-64|x86_64)'; then
+                echo "❌ 错误: 二进制不是 x86_64 ELF64: $file_info" >&2
+                exit 1
+            fi
+            ;;
+    esac
+    echo "✅ 二进制架构校验通过: $file_info"
+}
 
 echo "=========================================="
 echo "  打包 OTA 更新包"
@@ -80,6 +124,8 @@ if [ ! -d "$FRONTEND_DIR" ]; then
     echo "请先运行: ./scripts/build.sh"
     exit 1
 fi
+
+verify_binary_arch
 
 # 创建临时目录
 OTA_TMP=$(mktemp -d)

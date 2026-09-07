@@ -7,6 +7,7 @@ import type { WorkMode } from '../api/types'
 interface WorkModeContextValue {
   mode: WorkMode
   workerRunning: boolean
+  esimSupported: boolean
   loading: boolean
   refreshWorkMode: () => Promise<void>
 }
@@ -25,6 +26,9 @@ export function WorkModeProvider({ children }: { children: ReactNode }) {
   const api = useSimAdminApi()
   const [mode, setMode] = useState<WorkMode>('sim')
   const [workerRunning, setWorkerRunning] = useState(false)
+  // Start hidden until the device capability is known, avoiding an ARMv7
+  // eSIM/work-mode flash while the first request is in flight.
+  const [esimSupported, setEsimSupported] = useState(false)
   const [loading, setLoading] = useState(true)
 
   const refreshWorkMode = useCallback(async () => {
@@ -32,9 +36,14 @@ export function WorkModeProvider({ children }: { children: ReactNode }) {
       const response = await api.getWorkMode()
       setMode(response.data?.mode ?? 'sim')
       setWorkerRunning(response.data?.worker_running ?? false)
+      // Treat the field as opt-in for compatibility with older backends.
+      setEsimSupported(response.data?.esim_supported !== false)
     } catch {
       setMode('sim')
       setWorkerRunning(false)
+      // Capability is opt-in. If the device endpoint is unavailable, keep
+      // the eSIM/work-mode entry hidden instead of exposing a dead module.
+      setEsimSupported(false)
     } finally {
       setLoading(false)
     }
@@ -45,8 +54,8 @@ export function WorkModeProvider({ children }: { children: ReactNode }) {
   }, [refreshWorkMode])
 
   const value = useMemo(
-    () => ({ mode, workerRunning, loading, refreshWorkMode }),
-    [mode, workerRunning, loading, refreshWorkMode],
+    () => ({ mode, workerRunning, esimSupported, loading, refreshWorkMode }),
+    [mode, workerRunning, esimSupported, loading, refreshWorkMode],
   )
 
   return (

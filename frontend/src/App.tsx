@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { QueryClientProvider } from '@tanstack/react-query'
 import { Box, CircularProgress } from '@mui/material'
 import { ThemeProvider } from './contexts/ThemeContext'
-import { WorkModeProvider } from './contexts/WorkModeContext'
+import { WorkModeProvider, useWorkMode } from './contexts/WorkModeContext'
 import { queryClient } from './lib/queryClient'
 import MainLayout from './components/Layout/MainLayout'
 import { api, type AuthStatusResponse } from './api/current'
@@ -117,6 +117,11 @@ function ProtectedShell() {
   )
 }
 
+function EsimRouteRedirect() {
+  const { esimSupported } = useWorkMode()
+  return <Navigate to={esimSupported ? '/sim?tab=esim' : '/sim'} replace />
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -127,7 +132,7 @@ function App() {
             <Route path="/" element={<ProtectedShell />}>
               <Route index element={<Suspense fallback={<PageLoading />}><Dashboard /></Suspense>} />
               <Route path="sim" element={<Suspense fallback={<PageLoading />}><SimCard /></Suspense>} />
-              <Route path="esim" element={<Navigate to="/sim?tab=esim" replace />} />
+              <Route path="esim" element={<EsimRouteRedirect />} />
               <Route path="network" element={<Suspense fallback={<PageLoading />}><Network /></Suspense>} />
               <Route path="device-network" element={<Suspense fallback={<PageLoading />}><DeviceNetwork /></Suspense>} />
               {/* 旧路由重定向到网络状态页面 */}
