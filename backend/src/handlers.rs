@@ -3881,19 +3881,8 @@ pub async fn run_safe_os_reboot_sequence(
 
     info!("Starting safe OS reboot sequence");
 
-    if let Some(message) =
-        run_reboot_prep_command("disable modem radio", "mmcli", &["-m", "0", "-d"], false)
-    {
-        system_events
-            .emit_code(
-                system_event_codes::SYSTEM_SERVICE_REBOOT_PREP_FAILED,
-                system_event_severity::WARNING,
-                system_event_status::FAILED,
-                "disable modem radio",
-                message,
-            )
-            .await;
-    }
+    // 尽力尝试让调制解调器优雅脱网并下电，使用 any 适配动态 Modem 序号，且设为允许容错（避免因已脱网或序号漂移产生非预期警告）
+    let _ = run_reboot_prep_command("disable modem radio", "mmcli", &["-m", "any", "-d"], true);
     if let Some(message) = run_reboot_prep_command(
         "stop ModemManager IPC service",
         "systemctl",
