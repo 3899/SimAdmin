@@ -168,7 +168,10 @@ echo "   MD5: $FRONTEND_MD5"
 EDITION="${EDITION:-${VARIANT:-standard}}"
 for arg in "$@"; do
     case "$arg" in
-        --wfc|wfc) EDITION="wfc" ;;
+        --full|full|--all|all|--volte-vowifi|volte-vowifi|--volte_vowifi|volte_vowifi) EDITION="full" ;;
+        --wfc|wfc|--vowifi|vowifi) EDITION="vowifi" ;;
+        --volte|volte) EDITION="volte" ;;
+        --standard|standard) EDITION="standard" ;;
         --edition=*|--variant=*) EDITION="${arg#*=}" ;;
     esac
 done

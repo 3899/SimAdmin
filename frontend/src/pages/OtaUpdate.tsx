@@ -165,20 +165,99 @@ function extractReleaseCommit(release?: OtaLatestReleaseResponse | null): string
 
 interface ClassifiedAsset {
   asset: OtaReleaseAsset
-  edition: 'standard' | 'wfc'
+  edition: OtaEdition
   editionLabel: string
   isCurrentMatch: boolean
   arch: string
   sizeStr: string
 }
 
-function isWfcStatus(status: OtaStatusResponse | null) {
-  const edition = (status?.current_edition || status?.installed_meta?.edition || '').toLowerCase()
-  return edition.includes('wfc') || status?.installed_meta?.wificalling === true
+type OtaEdition = 'standard' | 'volte' | 'vowifi' | 'full'
+
+interface EditionMeta {
+  key: OtaEdition
+  label: string
+  color: 'primary' | 'success' | 'secondary' | 'warning'
+  themeColor: string
+  bgAlpha: string
+  shadow: string
+  description: string
 }
 
-function isWfcMeta(meta: OtaUploadResponse['meta']) {
-  return meta.wificalling === true || (meta.edition || '').toLowerCase().includes('wfc')
+function resolveOtaEdition(editionStr?: string | null, wfcFlag?: boolean | null): OtaEdition {
+  const lower = (editionStr || '').trim().toLowerCase()
+  if (
+    lower.includes('full') ||
+    lower.includes('all') ||
+    lower.includes('volte-vowifi') ||
+    lower.includes('volte_vowifi') ||
+    (lower.includes('volte') && (lower.includes('vowifi') || lower.includes('wfc')))
+  ) {
+    return 'full'
+  }
+  if (wfcFlag || lower.includes('vowifi') || lower.includes('wfc') || lower.includes('wificalling')) {
+    return 'vowifi'
+  }
+  if (lower.includes('volte')) {
+    return 'volte'
+  }
+  return 'standard'
+}
+
+function getEditionMeta(edition: OtaEdition): EditionMeta {
+  switch (edition) {
+    case 'full':
+      return {
+        key: 'full',
+        label: '完整版',
+        color: 'warning',
+        themeColor: 'warning.main',
+        bgAlpha: 'rgba(237, 108, 2, 0.05)',
+        shadow: '0 6px 20px -6px rgba(237, 108, 2, 0.28)',
+        description: '全功能旗舰，同时集成原生 VoLTE 与 VoWiFi (WiFi Calling) 双 IMS 协议栈、SIP/IPsec 隧道引擎与全部高级特性。',
+      }
+    case 'volte':
+      return {
+        key: 'volte',
+        label: 'VoLTE 版',
+        color: 'success',
+        themeColor: 'success.main',
+        bgAlpha: 'rgba(42, 174, 103, 0.05)',
+        shadow: '0 6px 20px -6px rgba(42, 174, 103, 0.28)',
+        description: '包含标准版全部功能，内置原生 IMS 客户端、SIP/IPsec 协议栈、TS 24.011 短信引擎与内核 Netlink 原生配网。',
+      }
+    case 'vowifi':
+      return {
+        key: 'vowifi',
+        label: 'VoWiFi 版',
+        color: 'secondary',
+        themeColor: 'secondary.main',
+        bgAlpha: 'rgba(124, 58, 237, 0.04)',
+        shadow: '0 6px 20px -6px rgba(124, 58, 237, 0.25)',
+        description: '包含标准版全部功能，并内置 WiFi Calling / VoWiFi 协议栈、IPsec IKEv2 隧道驱动、EAP-AKA 鉴权与全球多个运营商配置文件。',
+      }
+    default:
+      return {
+        key: 'standard',
+        label: '标准版',
+        color: 'primary',
+        themeColor: 'primary.main',
+        bgAlpha: 'rgba(18, 150, 219, 0.04)',
+        shadow: '0 6px 20px -6px rgba(18, 150, 219, 0.25)',
+        description: '包含完整的设备管理、短信智能收发、集中管理 Hub 协同通信以及自动化规则中心。',
+      }
+  }
+}
+
+function getStatusEdition(status: OtaStatusResponse | null): OtaEdition {
+  return resolveOtaEdition(
+    status?.current_edition || status?.installed_meta?.edition,
+    status?.installed_meta?.wificalling
+  )
+}
+
+function getUploadMetaEdition(meta: OtaUploadResponse['meta']): OtaEdition {
+  return resolveOtaEdition(meta?.edition, meta?.wificalling)
 }
 
 async function fetchPublicReleaseAssets(tagName: string): Promise<OtaReleaseAsset[]> {
@@ -248,7 +327,8 @@ function buildLegacyAssetProxyPrefix(assetUrl: string, proxyPrefix: string) {
 }
 
 function CurrentEnvironmentStrip({ status }: { status: OtaStatusResponse | null }) {
-  const isWfc = isWfcStatus(status)
+  const currentEdition = getStatusEdition(status)
+  const currentEditionMeta = getEditionMeta(currentEdition)
   const currentVersion = status?.current_version || status?.installed_meta?.version || ''
   const currentArch = status?.current_arch || status?.installed_meta?.arch || '检测中...'
   const currentCommit = (status?.current_commit || status?.installed_meta?.commit || 'unknown').slice(0, 10)
@@ -284,8 +364,8 @@ function CurrentEnvironmentStrip({ status }: { status: OtaStatusResponse | null 
                   {normalizeVersion(currentVersion) ? `v${normalizeVersion(currentVersion)}` : '检测中...'}
                 </Typography>
                 <Chip
-                  label={isWfc ? 'WiFi Calling' : '标准版'}
-                  color={isWfc ? 'secondary' : 'primary'}
+                  label={currentEditionMeta.label}
+                  color={currentEditionMeta.color}
                   size="small"
                   sx={{ height: 20, fontSize: '0.72rem', fontWeight: 400 }}
                 />
@@ -944,9 +1024,9 @@ export default function OtaUpdate() {
     return formatArchLabel(raw)
   }, [status])
 
-  const isCurrentWfc = isWfcStatus(status)
+  const currentEdition = getStatusEdition(status)
 
-  // 解析并筛选出与当前设备硬件架构相匹配的所有产物包（标准版与 WiFi Calling 版）
+  // 解析并筛选出与当前设备硬件架构相匹配的所有产物包（标准版、VoLTE 版与 VoWiFi 版）
   const compatibleAssets: ClassifiedAsset[] = useMemo(() => {
     if (!latestRelease) return []
 
@@ -990,18 +1070,31 @@ export default function OtaUpdate() {
 
     return filtered.map(asset => {
       const lower = asset.name.toLowerCase()
-      const isWfc = lower.includes('wfc') || lower.includes('wificalling')
-      const edition: 'standard' | 'wfc' = isWfc ? 'wfc' : 'standard'
+      let edition: OtaEdition = 'standard'
+      if (
+        lower.includes('full') ||
+        lower.includes('all') ||
+        lower.includes('volte-vowifi') ||
+        lower.includes('volte_vowifi') ||
+        (lower.includes('volte') && (lower.includes('vowifi') || lower.includes('wfc')))
+      ) {
+        edition = 'full'
+      } else if (lower.includes('volte')) {
+        edition = 'volte'
+      } else if (lower.includes('vowifi') || lower.includes('wfc') || lower.includes('wificalling')) {
+        edition = 'vowifi'
+      }
+      const meta = getEditionMeta(edition)
       return {
         asset,
         edition,
-        editionLabel: isWfc ? 'WiFi Calling 版' : '标准版',
-        isCurrentMatch: isWfc ? isCurrentWfc : !isCurrentWfc,
+        editionLabel: meta.label,
+        isCurrentMatch: edition === currentEdition,
         arch: inferArch(asset.name),
         sizeStr: formatBytes(asset.size),
       }
     })
-  }, [latestRelease, targetArchType, isCurrentWfc])
+  }, [latestRelease, targetArchType, currentEdition])
 
   // 默认选择与当前版本相同的产物包（标准版默认选标准版，WFC 版默认选 WFC 版）
   useEffect(() => {
@@ -1136,8 +1229,9 @@ export default function OtaUpdate() {
 
       const prepared = res.data
       if (res.status === 'ok' && prepared) {
-        const selectedIsWfc = selectedAssetItem?.edition === 'wfc'
-        if (isWfcMeta(prepared.meta) !== selectedIsWfc) {
+        const selectedEdition = selectedAssetItem?.edition
+        const preparedEdition = getUploadMetaEdition(prepared.meta)
+        if (selectedEdition && preparedEdition !== selectedEdition) {
           await api.cancelOta().catch(() => undefined)
           await loadStatus()
           throw new Error(`后台未能下载所选的 ${selectedAssetItem?.editionLabel || 'OTA'}，已取消错误的暂存包，请切换下载节点后重试`)
@@ -1525,11 +1619,11 @@ export default function OtaUpdate() {
                     {/* 状态提醒 */}
                     {onlineState === 'latest' && (
                       <Alert severity="success">
-                        当前版本 <strong>{status?.current_version || 'N/A'}</strong> 已经是最新发布的稳定版。您仍可在下方重新下载或在标准版与 WiFi Calling 版之间切换。
+                        当前版本 <strong>{status?.current_version || 'N/A'}</strong> 已经是最新发布的稳定版。您仍可在下方重新下载或在标准版、VoLTE 版、VoWiFi 版与完整版之间切换。
                       </Alert>
                     )}
 
-                    {/* 产物包选型区域（标准版 vs WFC 版） */}
+                    {/* 产物包选型区域（标准版 vs VoLTE 版 vs VoWiFi 版 vs 完整版） */}
                     <Box>
                       <Box display="flex" justifyContent="space-between" alignItems="center" mb={1.5} flexWrap="wrap" gap={1}>
                         <Typography variant="subtitle2" fontWeight={700} sx={{ textTransform: 'uppercase', letterSpacing: '0.04em', color: 'text.secondary' }}>
@@ -1540,7 +1634,7 @@ export default function OtaUpdate() {
                       <Grid container spacing={2}>
                         {compatibleAssets.map((item) => {
                           const isSelected = selectedAssetName === item.asset.name
-                          const isWfc = item.edition === 'wfc'
+                          const editionMeta = getEditionMeta(item.edition)
 
                           return (
                             <Grid
@@ -1562,12 +1656,10 @@ export default function OtaUpdate() {
                                   transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
                                   ...(isSelected
                                     ? {
-                                      borderColor: isWfc ? 'secondary.main' : 'primary.main',
+                                      borderColor: editionMeta.themeColor,
                                       borderWidth: 2,
-                                      bgcolor: isWfc ? 'rgba(124, 58, 237, 0.04)' : 'rgba(18, 150, 219, 0.04)',
-                                      boxShadow: isWfc
-                                        ? '0 6px 20px -6px rgba(124, 58, 237, 0.25)'
-                                        : '0 6px 20px -6px rgba(18, 150, 219, 0.25)',
+                                      bgcolor: editionMeta.bgAlpha,
+                                      boxShadow: editionMeta.shadow,
                                     }
                                     : {
                                       '&:hover': {
@@ -1580,13 +1672,13 @@ export default function OtaUpdate() {
                                 <Box display="flex" justifyContent="space-between" alignItems="flex-start">
                                   <Box minWidth={0} sx={{ pr: 1 }}>
                                     <Box display="flex" alignItems="center" gap={1} flexWrap="wrap">
-                                      <Typography variant="subtitle2" fontWeight={700} color={isWfc ? 'secondary.main' : 'text.primary'}>
+                                      <Typography variant="subtitle2" fontWeight={700} color={editionMeta.themeColor}>
                                         {item.editionLabel}
                                       </Typography>
                                       {item.isCurrentMatch && (
                                         <Chip
                                           label="当前对应版本"
-                                          color={isWfc ? 'secondary' : 'primary'}
+                                          color={editionMeta.color}
                                           size="small"
                                           sx={{ height: 18, fontSize: '0.68rem', fontWeight: 600 }}
                                         />
@@ -1601,7 +1693,7 @@ export default function OtaUpdate() {
                                     name="ota-release-asset"
                                     checked={isSelected}
                                     onChange={() => setSelectedAssetName(item.asset.name)}
-                                    color={isWfc ? 'secondary' : 'primary'}
+                                    color={editionMeta.color}
                                     size="small"
                                     inputProps={{ 'aria-label': item.editionLabel }}
                                     sx={{ p: 0.5 }}
@@ -1613,9 +1705,7 @@ export default function OtaUpdate() {
                                   color="text.secondary"
                                   sx={{ display: 'block', flexGrow: 1, my: 1, lineHeight: 1.45 }}
                                 >
-                                  {isWfc
-                                    ? '包含标准版全部功能，并内置 WiFi Calling 协议栈、IPsec IKEv2 隧道驱动、EAP-AKA 鉴权与全球多个运营商配置文件。'
-                                    : '包含完整的设备管理、短信智能收发、集中管理 Hub 协同通信以及自动化规则中心。'}
+                                  {editionMeta.description}
                                 </Typography>
 
                                 <Box display="flex" alignItems="center" gap={1.5} pt={1} sx={{ borderTop: '1px dashed', borderColor: 'divider' }}>
@@ -1627,8 +1717,8 @@ export default function OtaUpdate() {
                                     100% 架构匹配
                                   </Typography>
                                   <Typography variant="caption" color="text.secondary">•</Typography>
-                                  <Typography variant="caption" color={isWfc ? 'secondary.main' : 'primary.main'} fontWeight={600}>
-                                    {item.isCurrentMatch ? '推荐升级' : '一键扩展'}
+                                  <Typography variant="caption" color={editionMeta.themeColor} fontWeight={600}>
+                                    {item.isCurrentMatch ? '推荐升级' : '一键切换'}
                                   </Typography>
                                 </Box>
                               </Paper>

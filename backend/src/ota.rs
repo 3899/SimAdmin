@@ -108,9 +108,24 @@ fn resolve_ota_edition(meta: Option<&OtaMeta>) -> String {
     };
 
     let edition = meta.edition.as_deref().unwrap_or_default().trim();
-    if meta.wificalling == Some(true) || edition.to_ascii_lowercase().contains("wfc") {
-        "wfc".to_string()
-    } else if edition.is_empty() {
+    let lower = edition.to_ascii_lowercase();
+
+    if lower.contains("full")
+        || lower.contains("all")
+        || lower.contains("volte-vowifi")
+        || lower.contains("volte_vowifi")
+        || (lower.contains("volte") && (lower.contains("vowifi") || lower.contains("wfc")))
+    {
+        "full".to_string()
+    } else if meta.wificalling == Some(true)
+        || lower.contains("vowifi")
+        || lower.contains("wfc")
+        || lower.contains("wificalling")
+    {
+        "vowifi".to_string()
+    } else if lower.contains("volte") {
+        "volte".to_string()
+    } else if edition.is_empty() || lower == "standard" {
         "standard".to_string()
     } else {
         edition.to_string()
@@ -323,13 +338,35 @@ fn ota_asset_score(name: &str, target: &str, target_edition: Option<&str>) -> Op
 
     let lower = name.to_ascii_lowercase();
     let edition = target_edition.unwrap_or("standard");
-    let is_wfc =
-        edition.eq_ignore_ascii_case("wfc") || edition.to_ascii_lowercase().contains("wfc");
+    let is_full = edition.eq_ignore_ascii_case("full")
+        || edition.eq_ignore_ascii_case("all")
+        || edition.to_ascii_lowercase().contains("full")
+        || edition.to_ascii_lowercase().contains("volte-vowifi")
+        || edition.to_ascii_lowercase().contains("volte_vowifi");
+    let is_vowifi = !is_full
+        && (edition.eq_ignore_ascii_case("vowifi")
+            || edition.eq_ignore_ascii_case("wfc")
+            || edition.to_ascii_lowercase().contains("vowifi")
+            || edition.to_ascii_lowercase().contains("wfc"));
+    let is_volte = !is_full
+        && (edition.eq_ignore_ascii_case("volte")
+            || edition.to_ascii_lowercase().contains("volte"));
 
-    let edition_match = if is_wfc {
-        lower.contains("wfc")
+    let asset_is_full = lower.contains("full")
+        || lower.contains("volte-vowifi")
+        || lower.contains("volte_vowifi")
+        || (lower.contains("volte") && (lower.contains("vowifi") || lower.contains("wfc")));
+    let asset_is_vowifi = !asset_is_full && (lower.contains("vowifi") || lower.contains("wfc"));
+    let asset_is_volte = !asset_is_full && lower.contains("volte");
+
+    let edition_match = if is_full {
+        asset_is_full
+    } else if is_vowifi {
+        asset_is_vowifi
+    } else if is_volte {
+        asset_is_volte
     } else {
-        !lower.contains("wfc")
+        !asset_is_full && !asset_is_vowifi && !asset_is_volte
     };
 
     if !edition_match {
@@ -1157,9 +1194,25 @@ mod tests {
     }
 
     #[test]
-    fn resolves_wfc_edition_from_both_supported_metadata_fields() {
+    fn resolves_vowifi_and_volte_and_full_edition_from_metadata() {
         let explicit_edition = OtaMeta {
             edition: Some("WFC-enhanced".to_string()),
+            ..Default::default()
+        };
+        let explicit_vowifi = OtaMeta {
+            edition: Some("VoWiFi".to_string()),
+            ..Default::default()
+        };
+        let explicit_volte = OtaMeta {
+            edition: Some("VoLTE".to_string()),
+            ..Default::default()
+        };
+        let explicit_full = OtaMeta {
+            edition: Some("Full".to_string()),
+            ..Default::default()
+        };
+        let explicit_volte_vowifi = OtaMeta {
+            edition: Some("volte-vowifi".to_string()),
             ..Default::default()
         };
         let legacy_flag = OtaMeta {
@@ -1167,9 +1220,58 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(resolve_ota_edition(Some(&explicit_edition)), "wfc");
-        assert_eq!(resolve_ota_edition(Some(&legacy_flag)), "wfc");
+        assert_eq!(resolve_ota_edition(Some(&explicit_edition)), "vowifi");
+        assert_eq!(resolve_ota_edition(Some(&explicit_vowifi)), "vowifi");
+        assert_eq!(resolve_ota_edition(Some(&explicit_volte)), "volte");
+        assert_eq!(resolve_ota_edition(Some(&explicit_full)), "full");
+        assert_eq!(resolve_ota_edition(Some(&explicit_volte_vowifi)), "full");
+        assert_eq!(resolve_ota_edition(Some(&legacy_flag)), "vowifi");
         assert_eq!(resolve_ota_edition(None), "standard");
+    }
+
+    #[test]
+    fn selects_full_edition_release_asset() {
+        let release = OtaLatestReleaseResponse {
+            assets: vec![
+                OtaReleaseAsset {
+                    name: "simadmin-aarch64.tar.gz".to_string(),
+                    ..Default::default()
+                },
+                OtaReleaseAsset {
+                    name: "simadmin-volte-aarch64.tar.gz".to_string(),
+                    ..Default::default()
+                },
+                OtaReleaseAsset {
+                    name: "simadmin-vowifi-aarch64.tar.gz".to_string(),
+                    ..Default::default()
+                },
+                OtaReleaseAsset {
+                    name: "simadmin-full-aarch64.tar.gz".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let selected = supported_release_asset_for_target(
+            &release,
+            "aarch64-unknown-linux-musl",
+            Some("full"),
+        );
+        assert_eq!(
+            selected.map(|a| a.name.as_str()),
+            Some("simadmin-full-aarch64.tar.gz")
+        );
+
+        let selected_volte = supported_release_asset_for_target(
+            &release,
+            "aarch64-unknown-linux-musl",
+            Some("volte"),
+        );
+        assert_eq!(
+            selected_volte.map(|a| a.name.as_str()),
+            Some("simadmin-volte-aarch64.tar.gz")
+        );
     }
 
     #[test]
