@@ -94,30 +94,6 @@ static BASEBAND_RESTART_RUNNING: AtomicBool = AtomicBool::new(false);
 static BASEBAND_RESTART_REGISTRATION: std::sync::Mutex<Option<String>> =
     std::sync::Mutex::new(None);
 
-#[cfg(unix)]
-const MODEM_RECOVERY_SCRIPT_PATH: &str = "/usr/local/bin/simadmin-modem-recovery.sh";
-#[cfg(unix)]
-const MODEM_RECOVERY_SCRIPT: &str = include_str!("../../scripts/system/simadmin-modem-recovery.sh");
-
-/// 检查并确保宿主机上的开机看门狗脚本已同步最新冷静期保护逻辑，防止早搏重启 ModemManager
-#[cfg(unix)]
-pub fn ensure_modem_recovery_script_updated() {
-    let target = Path::new(MODEM_RECOVERY_SCRIPT_PATH);
-    if target.exists() {
-        let current = fs::read_to_string(target).unwrap_or_default();
-        if current != MODEM_RECOVERY_SCRIPT {
-            if let Err(e) = fs::write(target, MODEM_RECOVERY_SCRIPT) {
-                warn!(error = %e, "Failed to update modem recovery script");
-            } else {
-                info!("Updated /usr/local/bin/simadmin-modem-recovery.sh with cold-boot grace period");
-            }
-        }
-    }
-}
-
-#[cfg(not(unix))]
-pub fn ensure_modem_recovery_script_updated() {}
-
 #[derive(Debug, Clone, Default)]
 struct SimpleConnectSettings {
     apn: Option<String>,
