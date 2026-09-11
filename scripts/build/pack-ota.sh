@@ -6,7 +6,7 @@
 set -e
 
 # 切换到项目根目录
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 TARGET="${TARGET:-aarch64-unknown-linux-musl}"
 for arg in "$@"; do
@@ -21,7 +21,7 @@ for arg in "$@"; do
             TARGET="x86_64-unknown-linux-musl"
             ;;
         --help|-h)
-            echo "用法: ./scripts/pack-ota.sh [--target=aarch64|armv7|x86_64]"
+            echo "用法: ./scripts/build/pack-ota.sh [--target=aarch64|armv7|x86_64]"
             exit 0
             ;;
         *)

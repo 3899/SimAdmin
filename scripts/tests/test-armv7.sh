@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 fail() {
@@ -112,7 +112,7 @@ run_install_smoke() {
     fi
 }
 
-for script in scripts/build.sh scripts/pack-ota.sh scripts/deploy.sh install_latest.sh; do
+for script in scripts/build/build.sh scripts/build/pack-ota.sh scripts/build/deploy.sh install_latest.sh; do
     bash -n "$script"
 done
 

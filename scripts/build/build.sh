@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # 切换到项目根目录
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 TARGET="${TARGET:-aarch64-unknown-linux-musl}"
 

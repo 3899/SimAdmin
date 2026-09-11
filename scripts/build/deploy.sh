@@ -5,7 +5,7 @@
 set -e
 
 # 切换到项目根目录
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 # 默认配置
 TARGET_PATH="/opt/simadmin"
@@ -33,7 +33,7 @@ for arg in "$@"; do
             BUILD_TARGET="${arg#*=}"
             ;;
         --help|-h)
-            echo "用法: ./scripts/deploy.sh [选项]"
+            echo "用法: ./scripts/build/deploy.sh [选项]"
             echo ""
             echo "选项:"
             echo "  --backend-only   只部署后端"

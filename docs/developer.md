@@ -7,7 +7,7 @@
 ├── backend/          # Rust + Axum 后端，ModemManager、SQLite、OTA、通知、系统接口
 ├── frontend/         # React + Vite + MUI 前端
 ├── bruno-api/        # Bruno API 调试集合
-├── scripts/          # 构建、部署、systemd、modem 恢复脚本
+├── scripts/          # 构建(build)、系统服务(system)、测试(tests)、评测工具(tool)
 ├── install_latest.sh # 设备侧一键安装 / 升级脚本
 ├── uninstall.sh      # 设备侧一键卸载脚本
 ├── VERSION           # 项目版本号
@@ -59,24 +59,24 @@ cargo run -- --host :: --port 3000
 ### 构建完整 OTA 包
 
 ```bash
-./scripts/build.sh
+./scripts/build/build.sh
 ```
 
 #### 常用选项
 
 ```bash
-./scripts/build.sh --backend-only
-./scripts/build.sh --frontend-only
-./scripts/build.sh --no-upx
-./scripts/build.sh --no-ota
-./scripts/build.sh --target=x86_64
-./scripts/build.sh --target=armv7 --no-upx
+./scripts/build/build.sh --backend-only
+./scripts/build/build.sh --frontend-only
+./scripts/build/build.sh --no-upx
+./scripts/build/build.sh --no-ota
+./scripts/build/build.sh --target=x86_64
+./scripts/build/build.sh --target=armv7 --no-upx
 ```
 
 *Windows 下建议在 WSL2 Ubuntu 中执行完整 OTA 构建。原生 PowerShell 不能直接运行 Bash 脚本；Git Bash 容易受 Node/npm/pnpm PATH 影响，完整 OTA 仍需要目标架构对应的 Linux musl 工具链：*
 
 ```bash
-./scripts/build.sh --no-upx
+./scripts/build/build.sh --no-upx
 ```
 
 ARMv7 本地后端交叉编译需要 `armv7-unknown-linux-musleabihf` Rust target 和
@@ -92,7 +92,7 @@ cross build --locked --release --target armv7-unknown-linux-musleabihf -p simadm
 在没有 ARMv7 工具链的主机上，可以先运行与工具链无关的边界检查：
 
 ```bash
-bash ./scripts/test-armv7.sh
+bash ./scripts/tests/test-armv7.sh
 ```
 
 该检查覆盖架构别名、ARMv7 OTA 产物命名、Shell 语法，以及 ARMv7 强制跳过
@@ -100,7 +100,7 @@ bash ./scripts/test-armv7.sh
 真机验收。
 
 生成 OTA 包前仍需先构建前端，然后执行
-`./scripts/pack-ota.sh --target=armv7`；打包脚本会拒绝非 ARM ELF32 后端。
+`./scripts/build/pack-ota.sh --target=armv7`；打包脚本会拒绝非 ARM ELF32 后端。
 
 #### 构建脚本动作说明
 
@@ -125,18 +125,18 @@ pwsh -File .\build\build-simadmin.ps1 -Target armv7
 ### 通过 ADB 部署
 
 ```bash
-./scripts/deploy.sh
+./scripts/build/deploy.sh
 ```
 
 #### 常用选项
 
 ```bash
-./scripts/deploy.sh --backend-only
-./scripts/deploy.sh --frontend-only
-./scripts/deploy.sh --no-restart
-./scripts/deploy.sh --target=/opt/simadmin
-./scripts/deploy.sh --build-target=x86_64
-./scripts/deploy.sh --build-target=armv7
+./scripts/build/deploy.sh --backend-only
+./scripts/build/deploy.sh --frontend-only
+./scripts/build/deploy.sh --no-restart
+./scripts/build/deploy.sh --target=/opt/simadmin
+./scripts/build/deploy.sh --build-target=x86_64
+./scripts/build/deploy.sh --build-target=armv7
 ```
 
 ---

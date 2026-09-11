@@ -117,7 +117,7 @@ jobs:
           fi
 
       - name: Verify ARMv7 helper scripts
-        run: bash scripts/test-armv7.sh
+        run: bash scripts/tests/test-armv7.sh
 
       - name: Install cross
         if: matrix.cross == true
@@ -200,7 +200,7 @@ jobs:
           TARGET: ${{ matrix.target }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          ./scripts/pack-ota.sh --target="$TARGET"
+          ./scripts/build/pack-ota.sh --target="$TARGET"
           ARCH_SUFFIX="${{ matrix.arch_suffix }}"
           SOURCE="release/simadmin_${VERSION}_${TARGET}.tar.gz"
           DEST="release/simadmin-${ARCH_SUFFIX}.tar.gz"

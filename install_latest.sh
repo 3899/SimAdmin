@@ -818,9 +818,9 @@ resolve_source_ref() {
 resolve_source_urls() {
   package_version="$1"
   selected_source_ref="$(resolve_source_ref "$package_version")"
-  [ -n "$SERVICE_URL" ] || SERVICE_URL="${RAW_BASE}/${selected_source_ref}/scripts/simadmin.service"
-  [ -n "$MODEM_RECOVERY_SCRIPT_URL" ] || MODEM_RECOVERY_SCRIPT_URL="${RAW_BASE}/${selected_source_ref}/scripts/simadmin-modem-recovery.sh"
-  [ -n "$MODEM_RECOVERY_SERVICE_URL" ] || MODEM_RECOVERY_SERVICE_URL="${RAW_BASE}/${selected_source_ref}/scripts/simadmin-modem-recovery.service"
+  [ -n "$SERVICE_URL" ] || SERVICE_URL="${RAW_BASE}/${selected_source_ref}/scripts/system/simadmin.service"
+  [ -n "$MODEM_RECOVERY_SCRIPT_URL" ] || MODEM_RECOVERY_SCRIPT_URL="${RAW_BASE}/${selected_source_ref}/scripts/system/simadmin-modem-recovery.sh"
+  [ -n "$MODEM_RECOVERY_SERVICE_URL" ] || MODEM_RECOVERY_SERVICE_URL="${RAW_BASE}/${selected_source_ref}/scripts/system/simadmin-modem-recovery.service"
   echo "==> service sources: ${selected_source_ref}"
 }
 

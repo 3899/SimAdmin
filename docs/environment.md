@@ -58,7 +58,7 @@
 
 ### 主服务守护单元 (`simadmin.service`)
 
-默认配置位于 `scripts/simadmin.service`：
+默认配置位于 `scripts/system/simadmin.service`：
 
 - `WorkingDirectory=/opt/simadmin`
 - `ExecStart=/opt/simadmin/simadmin`

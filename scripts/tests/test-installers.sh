@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 fail() {
@@ -658,7 +658,7 @@ test_uninstaller() {
     [ ! -e "$fixture_root/stale.lock" ] || fail "stale shared lock was not recovered"
 }
 
-for script in install_latest.sh uninstall.sh scripts/test-armv7.sh scripts/test-installers.sh; do
+for script in install_latest.sh uninstall.sh scripts/tests/test-armv7.sh scripts/tests/test-installers.sh; do
     bash -n "$script"
 done
 
