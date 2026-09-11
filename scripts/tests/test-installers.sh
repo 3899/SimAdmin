@@ -213,10 +213,17 @@ test_architectures_and_cli() {
 
     output="$(SIMADMIN_INSTALL_LIBRARY_ONLY=1 bash -c '
         . ./install_latest.sh
+        parse_args --asset vowifi
+        SIMADMIN_TARGET_ARCH=amd64 resolve_simadmin_asset_name
+    ')"
+    assert_eq "simadmin-vowifi-x86_64.tar.gz" "$output" "--asset vowifi selection"
+
+    output="$(SIMADMIN_INSTALL_LIBRARY_ONLY=1 bash -c '
+        . ./install_latest.sh
         parse_args --asset wfc
         SIMADMIN_TARGET_ARCH=amd64 resolve_simadmin_asset_name
     ')"
-    assert_eq "simadmin-wfc-x86_64.tar.gz" "$output" "--asset wfc selection"
+    assert_eq "simadmin-vowifi-x86_64.tar.gz" "$output" "--asset wfc selection"
 
     set +e
     output="$(SIMADMIN_INSTALL_LIBRARY_ONLY=1 bash -c '. ./install_latest.sh; parse_args --asset' 2>&1)"

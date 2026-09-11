@@ -126,8 +126,10 @@ assert_eq "armv7" "$(normalize_simadmin_arch armv7-unknown-linux-musleabihf)" "R
 assert_eq "simadmin-armv7.tar.gz" "$(SIMADMIN_TARGET_ARCH=armv7 resolve_simadmin_asset_name)" "standard ARMv7 asset"
 
 WFC=1
+VARIANT=vowifi
+assert_eq "simadmin-vowifi-armv7.tar.gz" "$(SIMADMIN_TARGET_ARCH=armv7 resolve_simadmin_asset_name)" "VoWiFi ARMv7 asset"
 VARIANT=wfc
-assert_eq "simadmin-wfc-armv7.tar.gz" "$(SIMADMIN_TARGET_ARCH=armv7 resolve_simadmin_asset_name)" "WFC ARMv7 asset"
+assert_eq "simadmin-vowifi-armv7.tar.gz" "$(SIMADMIN_TARGET_ARCH=armv7 resolve_simadmin_asset_name)" "legacy wfc alias resolves to VoWiFi ARMv7 asset"
 
 # An ARMv7 device must never accept an explicit ARM64 lpac override.
 uname() {

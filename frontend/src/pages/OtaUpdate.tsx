@@ -292,7 +292,7 @@ function deriveSiblingReleaseAsset(
   if (!source) return null
 
   const lower = source.name.toLowerCase()
-  const isWfc = lower.includes('wfc')
+  const isVowifiOrWfc = lower.includes('vowifi') || lower.includes('wfc')
   const arch = resolveTargetArch(source.name)
   if (arch === 'unknown') return null
 
@@ -305,7 +305,7 @@ function deriveSiblingReleaseAsset(
         : null
   if (!siblingArchName) return null
 
-  const siblingName = `simadmin-${isWfc ? '' : 'wfc-'}${siblingArchName}.tar.gz`
+  const siblingName = `simadmin-${isVowifiOrWfc ? '' : 'vowifi-'}${siblingArchName}.tar.gz`
   const lastSlash = source.browser_download_url.lastIndexOf('/')
   const baseUrl = lastSlash > 0
     ? source.browser_download_url.slice(0, lastSlash)
@@ -1745,7 +1745,7 @@ export default function OtaUpdate() {
                       <Box>
                         <Typography variant="subtitle2" fontWeight={700}>
                           准备安装包：
-                          <Box component="span" sx={{ color: selectedAssetItem?.edition === 'wfc' ? 'secondary.main' : 'primary.main', ml: 0.5 }}>
+                          <Box component="span" sx={{ color: (selectedAssetItem?.edition === 'vowifi' || selectedAssetItem?.edition === 'wfc') ? 'secondary.main' : 'primary.main', ml: 0.5 }}>
                             {selectedAsset?.name || '未选择'}
                           </Box>
                         </Typography>
@@ -1756,7 +1756,7 @@ export default function OtaUpdate() {
 
                       <Button
                         variant="contained"
-                        color={selectedAssetItem?.edition === 'wfc' ? 'secondary' : 'primary'}
+                        color={(selectedAssetItem?.edition === 'vowifi' || selectedAssetItem?.edition === 'wfc') ? 'secondary' : 'primary'}
                         startIcon={onlineState === 'downloading' ? <CircularProgress size={18} color="inherit" /> : <Download />}
                         onClick={() => void handlePrepareOnlineUpdate()}
                         disabled={onlineState === 'downloading' || !selectedAsset}

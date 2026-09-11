@@ -68,7 +68,7 @@ normalize_asset_name() {
       printf '%s\n' "full"
       ;;
     wfc|simadmin-wfc|simadmin-wfc.tar.gz)
-      printf '%s\n' "wfc"
+      printf '%s\n' "vowifi"
       ;;
     ""|default|standard|simadmin|simadmin.tar.gz)
       printf '%s\n' ""
@@ -91,7 +91,7 @@ select_asset_name() {
       ;;
     wfc)
       WFC=1
-      VARIANT="wfc"
+      VARIANT="vowifi"
       ASSET_NAME=""
       ;;
     "")
@@ -106,7 +106,7 @@ select_asset_name() {
 
 if truthy "$WFC" || [ "$VARIANT" = "wfc" ]; then
   WFC=1
-  VARIANT="wfc"
+  VARIANT="vowifi"
 fi
 if [ -n "${ASSET_NAME:-}" ]; then
   select_asset_name "$ASSET_NAME"
@@ -919,26 +919,15 @@ resolve_simadmin_asset_name() {
     volte)
       printf 'simadmin-volte-%s%s.tar.gz\n' "$simadmin_arch" "$tag_suffix"
       ;;
-    vowifi)
+    vowifi|wfc)
       printf 'simadmin-vowifi-%s%s.tar.gz\n' "$simadmin_arch" "$tag_suffix"
       ;;
     full)
       printf 'simadmin-full-%s%s.tar.gz\n' "$simadmin_arch" "$tag_suffix"
       ;;
-    wfc)
-      if [ -n "$tag_suffix" ]; then
-        printf 'simadmin-vowifi-%s%s.tar.gz\n' "$simadmin_arch" "$tag_suffix"
-      else
-        printf 'simadmin-wfc-%s.tar.gz\n' "$simadmin_arch"
-      fi
-      ;;
     *)
       if truthy "$WFC"; then
-        if [ -n "$tag_suffix" ]; then
-          printf 'simadmin-vowifi-%s%s.tar.gz\n' "$simadmin_arch" "$tag_suffix"
-        else
-          printf 'simadmin-wfc-%s.tar.gz\n' "$simadmin_arch"
-        fi
+        printf 'simadmin-vowifi-%s%s.tar.gz\n' "$simadmin_arch" "$tag_suffix"
       else
         printf 'simadmin-%s%s.tar.gz\n' "$simadmin_arch" "$tag_suffix"
       fi
@@ -1073,6 +1062,22 @@ download_release_asset() {
     if download_with_proxies "$fallback_url" "$archive_path"; then
       DOWNLOADED_RELEASE_VERSION="${FALLBACK_RELEASE_VERSION:-$VERSION}"
       return 0
+    fi
+  fi
+
+  if [ "${VARIANT:-}" = "vowifi" ] || [ "${VARIANT:-}" = "wfc" ] || truthy "$WFC"; then
+    tag="${TARGET_TAG:-}"
+    if [ -n "$tag" ]; then
+      legacy_wfc_url="https://github.com/${REPO}/releases/download/${tag}/simadmin-wfc-${simadmin_arch}.tar.gz"
+    else
+      legacy_wfc_url="https://github.com/${REPO}/releases/latest/download/simadmin-wfc-${simadmin_arch}.tar.gz"
+    fi
+    if [ "$legacy_wfc_url" != "$primary_url" ] && [ "$legacy_wfc_url" != "$fallback_url" ]; then
+      echo "==> primary asset download failed, trying legacy WFC asset: $legacy_wfc_url"
+      if download_with_proxies "$legacy_wfc_url" "$archive_path"; then
+        DOWNLOADED_RELEASE_VERSION="${FALLBACK_RELEASE_VERSION:-$VERSION}"
+        return 0
+      fi
     fi
   fi
 
