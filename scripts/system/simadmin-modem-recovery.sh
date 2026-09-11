@@ -1,95 +1,159 @@
-#!/bin/bash
+#!/bin/sh
 
 set -u
 
-TAG="SimAdmin-ModemRecovery"
-MODEM_CACHE_DIR="/var/lib/ModemManager"
+TAG="${SIMADMIN_RECOVERY_TAG:-SimAdmin-ModemRecovery}"
+MMCLI_BIN="${MMCLI_BIN:-mmcli}"
+QMICLI_BIN="${QMICLI_BIN:-qmicli}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+TIMEOUT_BIN="${TIMEOUT_BIN:-timeout}"
+SLEEP_BIN="${SLEEP_BIN:-sleep}"
+LOGGER_BIN="${LOGGER_BIN:-logger}"
+QMI_DEVICE="${QMI_DEVICE:-}"
+STATE_DIR="${STATE_DIR:-/run/simadmin}"
+
+STARTUP_TIMEOUT_SECONDS="${STARTUP_TIMEOUT_SECONDS:-120}"
+CHECK_INTERVAL_SECONDS="${CHECK_INTERVAL_SECONDS:-5}"
+STALE_CONFIRMATIONS="${STALE_CONFIRMATIONS:-6}"
+INITIAL_PROBE_GRACE_SECONDS="${INITIAL_PROBE_GRACE_SECONDS:-45}"
+POST_RESTART_TIMEOUT_SECONDS="${POST_RESTART_TIMEOUT_SECONDS:-90}"
+QMI_TIMEOUT_SECONDS="${QMI_TIMEOUT_SECONDS:-15}"
+
+STATUS_FILE="${STATE_DIR}/modem-recovery-status"
+IN_PROGRESS_FILE="${STATE_DIR}/modem-recovery-in-progress"
 
 log() {
-  logger -t "$TAG" "$*"
+  message="$*"
+  printf '%s\n' "$message"
+  "$LOGGER_BIN" -t "$TAG" -- "$message" >/dev/null 2>&1 || true
 }
 
-cleanup_modemmanager_cache() {
-  if [ -d "$MODEM_CACHE_DIR" ]; then
-    find "$MODEM_CACHE_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} \;
-    log "ModemManager runtime cache cleaned: ${MODEM_CACHE_DIR}"
-  else
-    log "ModemManager runtime cache directory not found: ${MODEM_CACHE_DIR}"
+set_status() {
+  mkdir -p "$STATE_DIR"
+  printf '%s\n' "$1" > "$STATUS_FILE"
+}
+
+cleanup() {
+  rm -f "$IN_PROGRESS_FILE"
+}
+
+mm_snapshot() {
+  "$MMCLI_BIN" -m any 2>&1 || true
+}
+
+mm_has_sim() {
+  printf '%s\n' "$1" | grep -Eq \
+    'primary sim path:[[:space:]]*/org/freedesktop/ModemManager1/SIM/'
+}
+
+mm_is_stale_sim_missing() {
+  snapshot="$1"
+  if printf '%s\n' "$snapshot" | grep -Eqi \
+    'failed reason:[[:space:]]*.*sim-missing'; then
+    return 0
   fi
-}
 
-modem_present() {
-  mmcli -m 0 >/dev/null 2>&1
-}
-
-restart_modem_remoteproc() {
-  for r in /sys/class/remoteproc/remoteproc*; do
-    [ -e "$r/name" ] || continue
-    if grep -qi "mss\|modem" "$r/name" 2>/dev/null; then
-      echo stop > "$r/state"
-      sleep 3
-      echo start > "$r/state"
-      log "DSP remoteproc restarted: ${r}"
+  if [ "${elapsed:-0}" -ge "${INITIAL_PROBE_GRACE_SECONDS:-45}" ]; then
+    if printf '%s\n' "$snapshot" | grep -Eqi \
+      'No modems were found|couldn.t find modem'; then
       return 0
     fi
-  done
+  fi
 
-  log "No modem DSP remoteproc node found"
   return 1
 }
 
-log "Boot selftest started; waiting 60 seconds for system and modem initialization..."
-sleep 60
-
-NEEDS_RESCUE=0
-REASON=""
-
-MMCLI_OUT="$(mmcli -m 0 2>&1 || true)"
-if echo "$MMCLI_OUT" | grep -qi "No modems were found"; then
-  NEEDS_RESCUE=1
-  REASON="modem not found"
-else
-  STATE="$(printf '%s\n' "$MMCLI_OUT" | awk -F': ' '/state/ { print $2; exit }' | tr -d "'")"
-  if [ "$STATE" = "failed" ]; then
-    NEEDS_RESCUE=1
-    REASON="modem state is failed"
+resolve_qmi_device() {
+  if [ -n "$QMI_DEVICE" ] && [ -e "$QMI_DEVICE" ]; then
+    printf '%s\n' "$QMI_DEVICE"
+    return 0
   fi
-fi
 
-if [ "$NEEDS_RESCUE" -eq 0 ]; then
-  if journalctl -u ModemManager --since "1 minute ago" --no-pager 2>/dev/null | grep -qi "UimUninitialized"; then
-    NEEDS_RESCUE=1
-    REASON="UimUninitialized detected in ModemManager log"
+  for candidate in /dev/wwan*qmi0 /dev/cdc-wdm*; do
+    if [ -e "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+uim_is_ready() {
+  qmi_device="$(resolve_qmi_device)" || return 1
+  output="$($TIMEOUT_BIN "$QMI_TIMEOUT_SECONDS" "$QMICLI_BIN" \
+    -d "$qmi_device" --device-open-proxy --uim-get-card-status 2>&1 || true)"
+  printf '%s\n' "$output" | grep -Eq \
+    "Card state:[[:space:]]*'present'" || return 1
+  printf '%s\n' "$output" | grep -Eq \
+    "Application type:[[:space:]]*'usim" || return 1
+  printf '%s\n' "$output" | grep -Eq \
+    "Application state:[[:space:]]*'ready'"
+}
+
+wait_for_mm_sim() {
+  timeout_seconds="$1"
+  elapsed=0
+  while [ "$elapsed" -lt "$timeout_seconds" ]; do
+    snapshot="$(mm_snapshot)"
+    if mm_has_sim "$snapshot"; then
+      return 0
+    fi
+    "$SLEEP_BIN" "$CHECK_INTERVAL_SECONDS"
+    elapsed=$((elapsed + CHECK_INTERVAL_SECONDS))
+  done
+  return 1
+}
+
+trap cleanup EXIT INT TERM
+mkdir -p "$STATE_DIR"
+set_status "observing"
+log "Cold-start modem observation started"
+
+elapsed=0
+stale_count=0
+while [ "$elapsed" -lt "$STARTUP_TIMEOUT_SECONDS" ]; do
+  snapshot="$(mm_snapshot)"
+  if mm_has_sim "$snapshot"; then
+    set_status "healthy"
+    log "ModemManager SIM object is available; recovery is not needed"
+    exit 0
   fi
-fi
 
-if [ "$NEEDS_RESCUE" -eq 0 ]; then
-  log "Boot selftest passed; modem state is healthy."
+  if uim_is_ready && mm_is_stale_sim_missing "$snapshot"; then
+    stale_count=$((stale_count + 1))
+    log "QMI reports USIM ready while ModemManager is stale (${stale_count}/${STALE_CONFIRMATIONS})"
+    if [ "$stale_count" -ge "$STALE_CONFIRMATIONS" ]; then
+      break
+    fi
+  else
+    stale_count=0
+  fi
+
+  "$SLEEP_BIN" "$CHECK_INTERVAL_SECONDS"
+  elapsed=$((elapsed + CHECK_INTERVAL_SECONDS))
+done
+
+if [ "$stale_count" -lt "$STALE_CONFIRMATIONS" ]; then
+  set_status "no-safe-action"
+  log "No safe automatic recovery condition was confirmed; leaving modem untouched"
   exit 0
 fi
 
-log "Boot selftest failed (${REASON}); starting modem rescue..."
-
-systemctl stop ModemManager >/dev/null 2>&1 || true
-killall qmi-proxy >/dev/null 2>&1 || true
-cleanup_modemmanager_cache
-
-udevadm trigger >/dev/null 2>&1 || true
-sleep 3
-
-systemctl start ModemManager >/dev/null 2>&1 || true
-log "First-stage rescue completed; waiting 15 seconds before recheck..."
-sleep 15
-
-if modem_present; then
-  log "Rescue succeeded; modem is available."
-  exit 0
+touch "$IN_PROGRESS_FILE"
+set_status "restarting-modemmanager"
+log "Confirmed QMI USIM ready with persistent ModemManager sim-missing; restarting ModemManager once"
+if ! "$SYSTEMCTL_BIN" restart ModemManager.service; then
+  set_status "restart-command-failed"
+  log "ModemManager restart command failed; no further automatic action will be taken"
+  exit 1
 fi
 
-log "First-stage rescue failed; restarting modem DSP remoteproc..."
-restart_modem_remoteproc || true
+if ! wait_for_mm_sim "$POST_RESTART_TIMEOUT_SECONDS"; then
+  set_status "recovery-failed"
+  log "ModemManager did not recover after one restart; MPSS and the operating system will not be restarted automatically"
+  exit 1
+fi
 
-sleep 10
-systemctl restart ModemManager >/dev/null 2>&1 || true
-log "Second-stage rescue completed; modem recovery exiting."
+set_status "recovered"
+log "ModemManager SIM object recovered successfully"
 exit 0

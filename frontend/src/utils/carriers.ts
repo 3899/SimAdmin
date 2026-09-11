@@ -44,6 +44,15 @@ export const CHINA_CARRIERS: CarrierInfo[] = [
     technology: 'GSM 900 / GSM 1800 / TD-SCDMA 1880 / TD-SCDMA 2010',
   },
   {
+    mccMnc: '46004',
+    mcc: '460',
+    mnc: '04',
+    operatorCn: '中国移动',
+    operatorEn: 'China Mobile',
+    brand: '中国移动',
+    status: '营运中',
+  },
+  {
     mccMnc: '46003',
     mcc: '460',
     mnc: '03',
@@ -83,9 +92,27 @@ export const CHINA_CARRIERS: CarrierInfo[] = [
     technology: 'GSM 900 / GSM 1800 / TD-SCDMA 1880 / TD-SCDMA 2010',
   },
   {
+    mccMnc: '46008',
+    mcc: '460',
+    mnc: '08',
+    operatorCn: '中国移动',
+    operatorEn: 'China Mobile',
+    brand: '中国移动',
+    status: '营运中',
+  },
+  {
     mccMnc: '46009',
     mcc: '460',
     mnc: '09',
+    operatorCn: '中国联通',
+    operatorEn: 'China Unicom',
+    brand: '中国联通',
+    status: '营运中',
+  },
+  {
+    mccMnc: '46010',
+    mcc: '460',
+    mnc: '10',
     operatorCn: '中国联通',
     operatorEn: 'China Unicom',
     brand: '中国联通',
@@ -100,6 +127,15 @@ export const CHINA_CARRIERS: CarrierInfo[] = [
     brand: '中国电信',
     status: '营运中',
     technology: 'CDMA2000 800 / CDMA2000 2100 / TD-LTE 2300/2600 / FDD-LTE 1800/2100 / EV-DO / eHRPD',
+  },
+  {
+    mccMnc: '46012',
+    mcc: '460',
+    mnc: '12',
+    operatorCn: '中国电信',
+    operatorEn: 'China Telecom',
+    brand: '中国电信',
+    status: '营运中',
   },
   {
     mccMnc: '46015',
@@ -191,21 +227,26 @@ export function getCarrierColor(mcc: string | number | undefined, mnc: string | 
   // 中国大陆运营商 (MCC 460)
   if (mccStr === '460') {
     switch (mncStr) {
-      // 中国移动: 00, 02, 07, 08 - 绿色
+      // 中国移动: 00, 02, 04, 07, 08, 16, 20 - 绿色
       case '00':
       case '02':
+      case '04':
       case '07':
       case '08':
+      case '16':
+      case '20':
         return 'success'
-      // 中国联通: 01, 06, 09 - 红色
+      // 中国联通: 01, 06, 09, 10 - 红色
       case '01':
       case '06':
       case '09':
+      case '10':
         return 'error'
-      // 中国电信: 03, 05, 11 - 蓝色
+      // 中国电信: 03, 05, 11, 12 - 蓝色
       case '03':
       case '05':
       case '11':
+      case '12':
         return 'primary'
       // 中国广电: 15 - 紫色
       case '15':
@@ -231,21 +272,26 @@ export function getCarrierLogo(mcc: string | number | undefined, mnc: string | n
   // 中国大陆运营商 (MCC 460)
   if (mccStr === '460') {
     switch (mncStr) {
-      // 中国移动: 00, 02, 07, 08
+      // 中国移动: 00, 02, 04, 07, 08, 16, 20
       case '00':
       case '02':
+      case '04':
       case '07':
       case '08':
+      case '16':
+      case '20':
         return '/provider/china-mobile.svg'
-      // 中国联通: 01, 06, 09
+      // 中国联通: 01, 06, 09, 10
       case '01':
       case '06':
       case '09':
+      case '10':
         return '/provider/china-unicom.svg'
-      // 中国电信: 03, 05, 11
+      // 中国电信: 03, 05, 11, 12
       case '03':
       case '05':
       case '11':
+      case '12':
         return '/provider/china-telecom.svg'
       // 中国广电: 15
       case '15':
@@ -255,4 +301,3 @@ export function getCarrierLogo(mcc: string | number | undefined, mnc: string | n
   
   return null
 }
-

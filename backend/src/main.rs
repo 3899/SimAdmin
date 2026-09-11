@@ -316,6 +316,7 @@ async fn main() -> Result<()> {
 
     // 确保 ModemManager 已提权以支持 AT 指令读取短信中心
     ensure_modemmanager_debug_override();
+    modem_manager::ensure_modem_recovery_script_updated();
 
     // Connect to system D-Bus
     let dbus_conn = Arc::new(Connection::system().await?);
