@@ -1743,6 +1743,18 @@ impl Database {
         Ok(None)
     }
 
+    pub fn get_latest_smsc(&self) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn
+            .query_row(
+                "SELECT sms_center FROM smsc_cache WHERE sms_center != '' ORDER BY updated_at DESC LIMIT 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        Ok(result)
+    }
+
     // ==================== Own number cache ====================
 
     pub fn upsert_own_number_cache(
@@ -2482,5 +2494,33 @@ mod tests {
 
         let latest = db.latest_esim_euicc_cache().unwrap().unwrap();
         assert_eq!(latest.cache_key, "eid:EID001");
+    }
+
+    #[test]
+    fn smsc_cache_returns_latest_smsc() {
+        let db = test_db();
+        assert_eq!(db.get_latest_smsc().unwrap(), None);
+
+        db.upsert_smsc_cache(
+            "iccid:89860000000000000001",
+            "89860000000000000001",
+            "460000",
+            "46000",
+            "+8613800100500",
+            "test",
+        )
+        .unwrap();
+        assert_eq!(db.get_latest_smsc().unwrap().as_deref(), Some("+8613800100500"));
+
+        db.upsert_smsc_cache(
+            "iccid:89860000000000000002",
+            "89860000000000000002",
+            "460001",
+            "46001",
+            "+8613800200500",
+            "test",
+        )
+        .unwrap();
+        assert_eq!(db.get_latest_smsc().unwrap().as_deref(), Some("+8613800200500"));
     }
 }

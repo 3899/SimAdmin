@@ -816,6 +816,20 @@ pub fn cached_smsc_for_identity(db: &Database, identity: &SimIdentity) -> String
         .unwrap_or_default()
 }
 
+pub fn cached_smsc_or_latest(db: &Database, identity: Option<&SimIdentity>) -> String {
+    if let Some(identity) = identity {
+        let cached = cached_smsc_for_identity(db, identity);
+        if !cached.is_empty() {
+            return cached;
+        }
+    }
+    db.get_latest_smsc()
+        .ok()
+        .flatten()
+        .map(|value| normalize_smsc(&value))
+        .unwrap_or_default()
+}
+
 pub fn cache_own_numbers_for_identity(
     db: &Database,
     identity: &SimIdentity,
@@ -2538,6 +2552,48 @@ LTE Timing Advance: 'unavailable'"#;
             smsc_identity_keys(&identity_without_iccid),
             vec!["imsi:001010".to_string(), "operator:00101".to_string()]
         );
+    }
+
+    #[test]
+    fn cached_smsc_or_latest_falls_back_to_latest_history() {
+        let db = crate::db::Database::new(std::path::PathBuf::from(":memory:")).unwrap();
+        let identity = SimIdentity {
+            iccid: "TEST_ICCID_CURRENT".to_string(),
+            imsi: "460000".to_string(),
+            operator_id: "46000".to_string(),
+        };
+
+        // Initially no cache
+        assert_eq!(cached_smsc_or_latest(&db, Some(&identity)), "");
+
+        // Suppose another SIM had an SMSC recorded in the smsc_cache table
+        db.upsert_smsc_cache(
+            "iccid:TEST_ICCID_OLD",
+            "TEST_ICCID_OLD",
+            "460000",
+            "46000",
+            "+8613800100500",
+            "test",
+        )
+        .unwrap();
+
+        // Current SIM does not match, but should fall back to latest historical SMSC
+        assert_eq!(cached_smsc_or_latest(&db, Some(&identity)), "+8613800100500");
+
+        // When identity is None, should also fall back to latest
+        assert_eq!(cached_smsc_or_latest(&db, None), "+8613800100500");
+
+        // When current SIM has its own SMSC, it takes precedence
+        db.upsert_smsc_cache(
+            "iccid:TEST_ICCID_CURRENT",
+            "TEST_ICCID_CURRENT",
+            "460000",
+            "46000",
+            "+8613800200500",
+            "test",
+        )
+        .unwrap();
+        assert_eq!(cached_smsc_or_latest(&db, Some(&identity)), "+8613800200500");
     }
 
     #[test]
