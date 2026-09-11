@@ -370,6 +370,31 @@ test_proxy_download_order() {
         ')"
     assert_eq "https://downloads.example/simadmin.tar.gz" "$output" \
         "non-GitHub URL unexpectedly used a proxy"
+
+    : > "$attempt_log"
+    output="$(ATTEMPT_LOG="$attempt_log" \
+        GH_PROXY=https://proxy-one.example/ \
+        GH_PROXY_FALLBACKS='https://proxy-two.example/' \
+        SIMADMIN_INSTALL_LIBRARY_ONLY=1 bash -c '
+            . ./install_latest.sh
+            curl() {
+                request_url=""
+                while [ "$#" -gt 0 ]; do
+                    case "$1" in https://*) request_url="$1" ;; esac
+                    shift
+                done
+                printf "%s\n" "$request_url" >> "$ATTEMPT_LOG"
+                if [ "$request_url" = "https://proxy-two.example/https://github.com/3899/SimAdmin/releases/latest" ]; then
+                    printf "https://proxy-two.example/https://github.com/3899/SimAdmin/releases/tag/v2.5.0\n"
+                    return 0
+                fi
+                return 1
+            }
+            resolve_latest_tag
+        ')"
+    assert_eq "v2.5.0" "$output" "resolve_latest_tag output"
+    expected=$'https://proxy-one.example/https://github.com/3899/SimAdmin/releases/latest\nhttps://proxy-two.example/https://github.com/3899/SimAdmin/releases/latest'
+    assert_eq "$expected" "$(cat "$attempt_log")" "resolve_latest_tag proxy attempts"
 }
 
 test_incremental_dependencies() {

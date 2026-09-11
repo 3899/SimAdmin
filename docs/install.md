@@ -15,28 +15,49 @@ curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.s
 curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh
 ```
 
-### 指定版本与产物包
+### 四版本矩阵与产物包选型
 
-默认下载并安装标准包 `simadmin-aarch64.tar.gz` / `simadmin-armv7.tar.gz` / `simadmin-x86_64.tar.gz`，支持的 WFC 产物包 `simadmin-wfc-aarch64.tar.gz` / `simadmin-wfc-armv7.tar.gz` / `simadmin-wfc-x86_64.tar.gz`：
+SimAdmin 提供四种功能形态的产物包，安装脚本支持根据设备架构与版本参数自动解析并下载：
+
+| 版本形态 | CLI 参数 / 环境变量 | 产物命名规则 (以 aarch64 为例) | 功能定位 |
+|:---|:---|:---|:---|
+| **标准版** | *(默认)* | `simadmin-aarch64-v{ver}.tar.gz` | 基础核心功能、设备管理、短信智能收发、集中管理 Hub 协同通信 |
+| **VoLTE 版** | `--volte` / `VARIANT=volte` | `simadmin-volte-aarch64-v{ver}.tar.gz` | 标准版全部功能 + 原生 IMS 客户端、SIP/IPsec 协议栈、TS 24.011 短信引擎 |
+| **VoWiFi 版** | `--vowifi` (或 `--wfc`) / `VARIANT=vowifi` | `simadmin-vowifi-aarch64-v{ver}.tar.gz` | 标准版全部功能 + WiFi Calling / VoWiFi 协议栈、IPsec IKEv2、EAP-AKA 鉴权 |
+| **完整版** | `--full` / `VARIANT=full` | `simadmin-full-aarch64-v{ver}.tar.gz` | **全功能旗舰**，同时集成 VoLTE 与 VoWiFi 双 IMS 引擎及全部通信协议栈 |
+
+#### 快速安装示例
 
 ```bash
-# 安装最新版本的 WFC 产物包
-curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- --wfc
+# 安装最新标准版
+curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh
 
-# 同时指定版本与 WFC 产物包
-curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- -v1.1.8 --wfc
+# 安装最新 VoLTE 版
+curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- --volte
 
-# 通过环境变量指定版本与 WFC 产物包
-curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | VERSION=v1.1.8 WFC=1 sh
+# 安装最新 VoWiFi 版 (兼容旧版 --wfc)
+curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- --vowifi
+
+# 安装最新 完整版 (全特性)
+curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- --full
+
+# 同时指定版本与版本形态
+curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- -v1.2.0 --volte
+
+# 通过环境变量指定
+curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | VERSION=v1.2.0 VARIANT=full sh
 ```
 
 ### 安装脚本参数说明
 
 | 参数 | 说明 |
 |------|------|
-| `-v, --version VERSION` | 指定安装目标版本（例如 `v1.1.8` 或 `1.1.8`），默认 `latest` |
-| `--wfc` | 指定下载安装 WFC 产物包 |
-| `-a, --asset NAME` | 自定义 Release 产物文件名 |
+| `-v, --version VERSION` | 指定安装目标版本（例如 `v1.2.0` 或 `1.2.0`），默认通过代理动态嗅探 `latest` 真实 Tag |
+| `--volte` | 安装 VoLTE 版产物包 |
+| `--vowifi` | 安装 VoWiFi 版产物包 |
+| `--full` | 安装完整版（全功能旗舰）产物包 |
+| `--wfc` | 安装 WiFi Calling 版（VoWiFi 版的兼容别名） |
+| `-a, --asset NAME` | 自定义 Release 产物文件名或别名（如 `volte`、`vowifi`、`full`、`wfc`） |
 | `--install-dir PATH` | 指定安装目录，默认 `/opt/simadmin` |
 | `--service-name NAME` | 指定 systemd 主服务名，默认 `simadmin` |
 | `--deps-mode MODE` | 依赖策略：`auto`、`minimal`、`full`、`skip`，默认 `auto` |
@@ -51,13 +72,15 @@ curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.s
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh \
-  | REPO=3899/SimAdmin INSTALL_DIR=/opt/simadmin SERVICE_NAME=simadmin VERSION=latest WFC=1 sh
+  | REPO=3899/SimAdmin INSTALL_DIR=/opt/simadmin SERVICE_NAME=simadmin VERSION=latest VARIANT=full sh
 ```
 
 常用安装策略环境变量：
 
 | 环境变量 | 默认值 | 说明 |
 |------|------|------|
+| `VARIANT` | 空 | 指定版本形态：`volte`、`vowifi`、`full`、`wfc` |
+| `WFC` | `0` | 设为 `1` 等价于 `VARIANT=vowifi`，用于兼容旧版 |
 | `SIMADMIN_DEPS_MODE` | `auto` | 依赖策略，含义见下文 |
 | `SIMADMIN_APT_UPDATE` | `auto` | `auto` 仅缺包时更新索引；`always` 每次运行更新一次；`never` 不更新索引 |
 | `SIMADMIN_MODEM_PROTOCOL` | `auto` | 自动检测 QMI/MBIM；也可显式指定 `qmi`、`mbim`、`at` 或 `all` |

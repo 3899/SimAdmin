@@ -350,6 +350,7 @@ main() {
 
   stop_disable_service "${SERVICE_NAME}.service"
   stop_disable_service "${MODEM_RECOVERY_SERVICE_NAME}.service"
+  stop_disable_service "simadmin-secondary-qmi.service"
 
   systemd_changed=0
   if remove_systemd_unit "${SERVICE_NAME}.service"; then
@@ -358,8 +359,15 @@ main() {
   if remove_systemd_unit "${MODEM_RECOVERY_SERVICE_NAME}.service"; then
     systemd_changed=1
   fi
+  if remove_systemd_unit "simadmin-secondary-qmi.service"; then
+    systemd_changed=1
+  fi
 
   remove_path "$MODEM_RECOVERY_SCRIPT" || true
+  remove_path "/etc/udev/rules.d/99-simadmin-secondary-qmi.rules" || true
+  remove_path "/etc/udev/rules.d/simadmin-secondary-qmi.rules" || true
+  remove_path "/run/udev/rules.d/99-simadmin-secondary-qmi.rules" || true
+  remove_path "/run/udev/rules.d/simadmin-secondary-qmi.rules" || true
 
   nm_changed=0
   if remove_path "$NM_CONF"; then

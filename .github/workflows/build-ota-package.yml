@@ -203,7 +203,9 @@ jobs:
           ./scripts/build/pack-ota.sh --target="$TARGET"
           ARCH_SUFFIX="${{ matrix.arch_suffix }}"
           SOURCE="release/simadmin_${VERSION}_${TARGET}.tar.gz"
+          VERSIONED="release/simadmin-${ARCH_SUFFIX}-v${VERSION}.tar.gz"
           DEST="release/simadmin-${ARCH_SUFFIX}.tar.gz"
+          cp "$SOURCE" "$VERSIONED"
           mv "$SOURCE" "$DEST"
 
           python3 - "$DEST" "$TARGET" <<'PY'
@@ -275,12 +277,12 @@ jobs:
               with open(changelog_path, 'r', encoding='utf-8') as f:
                   content = f.read()
               
-              pattern = rf'### 📌 v{re.escape(version)}\s*\n(.*?)(?=\n### 📌 v|\Z)'
+              pattern = rf'#{2,3} 📌 v{re.escape(version)}\s*\n(.*?)(?=\n#{2,3} 📌 v|\Z)'
               match = re.search(pattern, content, re.DOTALL)
               if match:
                   changelog_text = match.group(1).strip()
               
-              versions = re.findall(r'### 📌 v(\d+\.\d+\.\d+)', content)
+              versions = re.findall(r'#{2,3} 📌 v(\d+\.\d+\.\d+)', content)
               if version in versions:
                   idx = versions.index(version)
                   if idx + 1 < len(versions):

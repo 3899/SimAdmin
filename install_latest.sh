@@ -58,6 +58,15 @@ truthy() {
 
 normalize_asset_name() {
   case "$1" in
+    volte|simadmin-volte|simadmin-volte.tar.gz)
+      printf '%s\n' "volte"
+      ;;
+    vowifi|simadmin-vowifi|simadmin-vowifi.tar.gz)
+      printf '%s\n' "vowifi"
+      ;;
+    full|all|simadmin-full|simadmin-full.tar.gz)
+      printf '%s\n' "full"
+      ;;
     wfc|simadmin-wfc|simadmin-wfc.tar.gz)
       printf '%s\n' "wfc"
       ;;
@@ -75,13 +84,24 @@ normalize_asset_name() {
 
 select_asset_name() {
   selected_asset="$(normalize_asset_name "$1")"
-  if [ "$selected_asset" = "wfc" ]; then
-    WFC=1
-    VARIANT="wfc"
-    ASSET_NAME=""
-  else
-    ASSET_NAME="$selected_asset"
-  fi
+  case "$selected_asset" in
+    volte|vowifi|full)
+      VARIANT="$selected_asset"
+      ASSET_NAME=""
+      ;;
+    wfc)
+      WFC=1
+      VARIANT="wfc"
+      ASSET_NAME=""
+      ;;
+    "")
+      VARIANT=""
+      ASSET_NAME=""
+      ;;
+    *)
+      ASSET_NAME="$selected_asset"
+      ;;
+  esac
 }
 
 if truthy "$WFC" || [ "$VARIANT" = "wfc" ]; then
@@ -101,14 +121,20 @@ usage() {
     '' \
     'Examples:' \
     '  sh install_latest.sh                        # Install latest standard release' \
+    '  sh install_latest.sh --volte                # Install latest VoLTE release' \
+    '  sh install_latest.sh --vowifi               # Install latest VoWiFi release' \
+    '  sh install_latest.sh --full                 # Install latest Full release' \
     '  sh install_latest.sh --wfc                  # Install latest Wi-Fi Calling release' \
-    '  sh install_latest.sh -v1.2.0 --wfc         # Install v1.2.0 Wi-Fi Calling release' \
+    '  sh install_latest.sh -v1.2.0 --volte        # Install v1.2.0 VoLTE release' \
     '  curl -fsSL .../install_latest.sh | WFC=1 sh # Install latest WFC release via env' \
     '' \
     'Options:' \
     '  -v, --version VERSION  Target version to install (default: latest)' \
-    '  --wfc                  Install Wi-Fi Calling release asset' \
-    '  -a, --asset NAME       Specify release asset (e.g. simadmin-wfc.tar.gz or wfc)' \
+    '  --volte                Install VoLTE release asset' \
+    '  --vowifi               Install VoWiFi release asset' \
+    '  --full                 Install Full release asset' \
+    '  --wfc                  Install Wi-Fi Calling release asset (alias for VoWiFi)' \
+    '  -a, --asset NAME       Specify release asset (e.g. volte, vowifi, full, wfc)' \
     '  --install-dir PATH     Installation directory (default: /opt/simadmin)' \
     '  --service-name NAME    Main systemd service name (default: simadmin)' \
     '  --deps-mode MODE       Dependency mode: auto, minimal, full, skip' \
@@ -121,7 +147,8 @@ usage() {
     '' \
     'Environment Variables:' \
     '  VERSION=latest         Specify version' \
-    '  WFC=1 / VARIANT=wfc    Install Wi-Fi Calling release' \
+    '  VARIANT=volte|vowifi|full|wfc  Specify release variant' \
+    '  WFC=1                  Install Wi-Fi Calling / VoWiFi release' \
     '  ASSET_NAME=...         Specify release asset filename' \
     '  INSTALL_DIR=/opt/simadmin' \
     '  SERVICE_NAME=simadmin' \
@@ -148,6 +175,15 @@ parse_args() {
         ;;
       -v*)
         VERSION="${1#-v}"
+        ;;
+      --volte)
+        VARIANT="volte"
+        ;;
+      --vowifi)
+        VARIANT="vowifi"
+        ;;
+      --full|--all)
+        VARIANT="full"
         ;;
       --wfc)
         WFC=1
@@ -833,7 +869,7 @@ version_to_tag() {
 
 asset_url_from_tag() {
   tag="$1"
-  simadmin_asset_name="$(resolve_simadmin_asset_name)"
+  simadmin_asset_name="$(resolve_simadmin_asset_name "$tag")"
   printf 'https://github.com/%s/releases/download/%s/%s\n' "$REPO" "$tag" "$simadmin_asset_name"
 }
 
@@ -874,12 +910,40 @@ resolve_simadmin_asset_name() {
     return 1
   }
 
-  if truthy "$WFC" || [ "$VARIANT" = "wfc" ]; then
-    printf 'simadmin-wfc-%s.tar.gz\n' "$simadmin_arch"
-    return 0
+  tag_suffix=""
+  if [ -n "${1:-}" ]; then
+    tag_suffix="-$1"
   fi
 
-  printf 'simadmin-%s.tar.gz\n' "$simadmin_arch"
+  case "${VARIANT:-}" in
+    volte)
+      printf 'simadmin-volte-%s%s.tar.gz\n' "$simadmin_arch" "$tag_suffix"
+      ;;
+    vowifi)
+      printf 'simadmin-vowifi-%s%s.tar.gz\n' "$simadmin_arch" "$tag_suffix"
+      ;;
+    full)
+      printf 'simadmin-full-%s%s.tar.gz\n' "$simadmin_arch" "$tag_suffix"
+      ;;
+    wfc)
+      if [ -n "$tag_suffix" ]; then
+        printf 'simadmin-vowifi-%s%s.tar.gz\n' "$simadmin_arch" "$tag_suffix"
+      else
+        printf 'simadmin-wfc-%s.tar.gz\n' "$simadmin_arch"
+      fi
+      ;;
+    *)
+      if truthy "$WFC"; then
+        if [ -n "$tag_suffix" ]; then
+          printf 'simadmin-vowifi-%s%s.tar.gz\n' "$simadmin_arch" "$tag_suffix"
+        else
+          printf 'simadmin-wfc-%s.tar.gz\n' "$simadmin_arch"
+        fi
+      else
+        printf 'simadmin-%s%s.tar.gz\n' "$simadmin_arch" "$tag_suffix"
+      fi
+      ;;
+  esac
 }
 
 repo_version() {
@@ -890,27 +954,102 @@ repo_version() {
   printf '%s\n' "$version_text"
 }
 
+resolve_latest_tag() {
+  target_url="https://github.com/${REPO}/releases/latest"
+  for proxy in $GH_PROXY $GH_PROXY_FALLBACKS ""; do
+    url="${proxy}${target_url}"
+    final_url="$(curl -fsSL --connect-timeout 15 --max-time 30 -o /dev/null -w '%{url_effective}' "$url" 2>/dev/null || true)"
+    case "$final_url" in
+      */tag/*)
+        tag="${final_url##*/tag/}"
+        tag="${tag%%\?*}"
+        tag="${tag%%/*}"
+        tag="$(printf '%s\n' "$tag" | tr -d '[:space:]')"
+        if [ -n "$tag" ]; then
+          printf '%s\n' "$tag"
+          return 0
+        fi
+        ;;
+      */releases/*)
+        tag="${final_url##*/}"
+        tag="${tag%%\?*}"
+        tag="$(printf '%s\n' "$tag" | tr -d '[:space:]')"
+        if [ -n "$tag" ] && [ "$tag" != "latest" ]; then
+          printf '%s\n' "$tag"
+          return 0
+        fi
+        ;;
+    esac
+  done
+
+  if fallback_ver="$(repo_version)"; then
+    version_to_tag "$fallback_ver"
+    return 0
+  fi
+
+  return 1
+}
+
 resolve_asset_url() {
   if [ -n "$ASSET_URL" ]; then
     printf '%s\n' "$ASSET_URL"
     return 0
   fi
 
-  if [ "$VERSION" = "latest" ]; then
-    printf 'https://github.com/%s/releases/latest/download/%s\n' "$REPO" "$(resolve_simadmin_asset_name)"
+  tag="${TARGET_TAG:-}"
+  if [ -z "$tag" ]; then
+    if [ "$VERSION" = "latest" ]; then
+      tag="$(resolve_latest_tag || true)"
+    else
+      tag="$(version_to_tag "$VERSION")"
+    fi
+    TARGET_TAG="$tag"
+  fi
+
+  if [ -n "$tag" ]; then
+    PRIMARY_RELEASE_VERSION="${tag#v}"
+    asset_url_from_tag "$tag"
   else
-    asset_url_from_tag "$(version_to_tag "$VERSION")"
+    printf 'https://github.com/%s/releases/latest/download/%s\n' "$REPO" "$(resolve_simadmin_asset_name "")"
   fi
 }
 
 fallback_asset_url() {
   FALLBACK_ASSET_URL=""
   FALLBACK_RELEASE_VERSION=""
-  if [ "$VERSION" = "latest" ] && [ -z "$ASSET_URL" ]; then
-    if FALLBACK_RELEASE_VERSION="$(repo_version)"; then
-      FALLBACK_ASSET_URL="$(asset_url_from_tag "$(version_to_tag "$FALLBACK_RELEASE_VERSION")")"
+
+  if [ -n "$ASSET_URL" ]; then
+    return 1
+  fi
+
+  tag="${TARGET_TAG:-}"
+  if [ -z "$tag" ]; then
+    if [ "$VERSION" = "latest" ]; then
+      if FALLBACK_RELEASE_VERSION="$(repo_version)"; then
+        tag="$(version_to_tag "$FALLBACK_RELEASE_VERSION")"
+      fi
+    else
+      tag="$(version_to_tag "$VERSION")"
+      FALLBACK_RELEASE_VERSION="${tag#v}"
+    fi
+  else
+    FALLBACK_RELEASE_VERSION="${tag#v}"
+  fi
+
+  if [ -n "$tag" ]; then
+    unversioned_name="$(resolve_simadmin_asset_name "")"
+    candidate="https://github.com/${REPO}/releases/download/${tag}/${unversioned_name}"
+    if [ "$candidate" != "${PRIMARY_DOWNLOAD_URL:-}" ]; then
+      FALLBACK_ASSET_URL="$candidate"
       return 0
     fi
+  fi
+
+  unversioned_name="$(resolve_simadmin_asset_name "")"
+  candidate="https://github.com/${REPO}/releases/latest/download/${unversioned_name}"
+  if [ "$candidate" != "${PRIMARY_DOWNLOAD_URL:-}" ]; then
+    FALLBACK_ASSET_URL="$candidate"
+    return 0
   fi
 
   return 1
@@ -920,18 +1059,19 @@ download_release_asset() {
   archive_path="$1"
   primary_url="$2"
   fallback_url=""
+  PRIMARY_DOWNLOAD_URL="$primary_url"
 
   echo "==> downloading release asset"
   if download_with_proxies "$primary_url" "$archive_path"; then
-    DOWNLOADED_RELEASE_VERSION="$VERSION"
+    DOWNLOADED_RELEASE_VERSION="${PRIMARY_RELEASE_VERSION:-$VERSION}"
     return 0
   fi
 
   if fallback_asset_url && [ "$FALLBACK_ASSET_URL" != "$primary_url" ]; then
     fallback_url="$FALLBACK_ASSET_URL"
-    echo "==> latest asset alias download failed, trying versioned asset"
+    echo "==> primary asset download failed, trying fallback asset: $fallback_url"
     if download_with_proxies "$fallback_url" "$archive_path"; then
-      DOWNLOADED_RELEASE_VERSION="$FALLBACK_RELEASE_VERSION"
+      DOWNLOADED_RELEASE_VERSION="${FALLBACK_RELEASE_VERSION:-$VERSION}"
       return 0
     fi
   fi
