@@ -91,6 +91,8 @@ export function useDashboardData(refreshInterval: number, refreshKey: number) {
   const speedHistoryRef = useRef<Record<string, InterfaceSpeedHistory>>({})
   const loadingRef = useRef(false)
   const lastSlowRefreshRef = useRef(0)
+  const latestStatsRef = useRef<SystemStatsResponse | null>(null)
+  const latestDataActiveRef = useRef<boolean>(false)
 
   const updateSpeedHistory = useCallback((stats: SystemStatsResponse | null) => {
     if (!stats?.network_speed?.interfaces) return
@@ -122,104 +124,141 @@ export function useDashboardData(refreshInterval: number, refreshKey: number) {
   const loadData = useCallback(async (background = false) => {
     if (loadingRef.current) return
     loadingRef.current = true
-    const progressiveTimer = !background
-      ? window.setTimeout(() => setInitialLoading(false), 800)
+
+    // 首屏快速解除 loading：最多等待 150ms 或首批数据到达即解除，绝不阻断界面呈现
+    const earlyTimer = !background
+      ? window.setTimeout(() => setInitialLoading(false), 150)
       : undefined
+
     const refreshSlowData = !background
       || Date.now() - lastSlowRefreshRef.current >= SLOW_DATA_REFRESH_INTERVAL
     if (refreshSlowData) lastSlowRefreshRef.current = Date.now()
     if (!background) setError(null)
     const failures: string[] = []
 
-    const requestOrNull = async <T,>(promise: Promise<T>, label: string): Promise<T | null> => {
+    const executeTask = async <T,>(
+      promise: Promise<T>,
+      label: string,
+      onSuccess: (data: T) => void,
+    ) => {
       try {
-        return await promise
+        const res = await promise
+        if (res) onSuccess(res)
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         failures.push(`${label}: ${message}`)
-        return null
       }
     }
 
     try {
-      // 快速请求：决定 initialLoading，通常 <200ms 即可全部返回
-      const fastPromise = Promise.all([
-        refreshSlowData ? requestOrNull(api.getDeviceInfo(), 'device') : Promise.resolve(null),
-        refreshSlowData ? requestOrNull(api.getSimInfo(), 'sim') : Promise.resolve(null),
-        refreshSlowData ? requestOrNull(api.getNetworkInfo(), 'network') : Promise.resolve(null),
-        requestOrNull(api.getDataStatus(), 'data'),
-        requestOrNull(api.getAirplaneMode(), 'airplane-mode'),
-        refreshSlowData ? requestOrNull(api.getNetworkConnectionAddresses(), 'connection-addresses') : Promise.resolve(null),
-        requestOrNull(api.getRoamingStatus(), 'roaming'),
-        requestOrNull(api.getCellsInfo(), 'cells'),
+      // 1. 系统指标（极快，通常 10-30ms）
+      const statsTask = executeTask(api.getSystemStats(), 'stats', (res) => {
+        if (res?.data) {
+          latestStatsRef.current = res.data
+          setSystemStats(res.data)
+          updateSpeedHistory(res.data)
+          setQosInfo(qosFromWwanInterface(res.data, latestDataActiveRef.current))
+        }
+      })
+
+      // 2. 基础控制状态（极快）
+      const dataTask = executeTask(api.getDataStatus(), 'data', (res) => {
+        if (res?.data) {
+          latestDataActiveRef.current = res.data.active
+          setDataStatus(res.data.active)
+          if (latestStatsRef.current) {
+            setQosInfo(qosFromWwanInterface(latestStatsRef.current, res.data.active))
+          }
+        }
+      })
+
+      const airplaneTask = executeTask(api.getAirplaneMode(), 'airplane-mode', (res) => {
+        if (res?.data) setAirplaneMode(res.data)
+      })
+
+      const roamingTask = executeTask(api.getRoamingStatus(), 'roaming', (res) => {
+        if (res?.data) setRoaming(res.data)
+      })
+
+      // 3. 基带与 SIM 相关（依赖 ModemManager）
+      const deviceTask = refreshSlowData
+        ? executeTask(api.getDeviceInfo(), 'device', (res) => {
+            if (res?.data) setDeviceInfo(res.data)
+          })
+        : Promise.resolve()
+
+      const simTask = refreshSlowData
+        ? executeTask(api.getSimInfo(), 'sim', (res) => {
+            if (res?.data) setSimInfo(res.data)
+          })
+        : Promise.resolve()
+
+      const networkTask = refreshSlowData
+        ? executeTask(api.getNetworkInfo(), 'network', (res) => {
+            if (res?.data) setNetworkInfo(res.data)
+          })
+        : Promise.resolve()
+
+      const addressesTask = refreshSlowData
+        ? executeTask(api.getNetworkConnectionAddresses(), 'connection-addresses', (res) => {
+            if (res?.data) setConnectionAddresses(res.data)
+          })
+        : Promise.resolve()
+
+      const cellsTask = executeTask(api.getCellsInfo(), 'cells', (res) => {
+        if (res?.data) setCellsInfo(res.data)
+      })
+
+      // 4. 外网连通性检测（依赖公网 ping，较慢）
+      const connectivityTask = refreshSlowData
+        ? executeTask(api.getConnectivity(), 'connectivity', (res) => {
+            if (res?.data) setConnectivity(res.data)
+          })
+        : Promise.resolve()
+
+      // 快速通道：基础状态 (stats, switches) 完成后立即解除 initialLoading
+      void Promise.race([
+        Promise.allSettled([statsTask, dataTask, airplaneTask, roamingTask]),
+        new Promise((resolve) => window.setTimeout(resolve, 150)),
+      ]).then(() => {
+        setInitialLoading(false)
+      })
+
+      // 等待本轮所有任务收敛
+      await Promise.allSettled([
+        statsTask,
+        dataTask,
+        airplaneTask,
+        roamingTask,
+        deviceTask,
+        simTask,
+        networkTask,
+        addressesTask,
+        cellsTask,
+        connectivityTask,
       ])
 
-      // 慢速请求：不阻塞页面渲染，异步填充数据
-      const statsPromise = requestOrNull(api.getSystemStats(), 'stats')
-      const connectivityPromise = refreshSlowData
-        ? requestOrNull(api.getConnectivity(), 'connectivity')
-        : Promise.resolve(null)
-
-      // 等待快速请求完成即可渲染页面
-      const [
-        deviceRes,
-        simRes,
-        networkRes,
-        dataRes,
-        airplaneModeRes,
-        addressesRes,
-        roamingRes,
-        cellsRes,
-      ] = await fastPromise
-
-      if (deviceRes?.data) setDeviceInfo(deviceRes.data)
-      if (simRes?.data) setSimInfo(simRes.data)
-      if (networkRes?.data) setNetworkInfo(networkRes.data)
-      if (dataRes?.data) setDataStatus(dataRes.data.active)
-      if (airplaneModeRes?.data) setAirplaneMode(airplaneModeRes.data)
-      if (addressesRes?.data) setConnectionAddresses(addressesRes.data)
-      if (roamingRes?.data) setRoaming(roamingRes.data)
-      if (cellsRes?.data) setCellsInfo(cellsRes.data)
-
-      // 快速数据就绪，立即解除 loading
       setInitialLoading(false)
 
-      // 异步等待慢速请求并填充数据
-      const [statsRes, connectivityRes] = await Promise.all([statsPromise, connectivityPromise])
-
-      if (statsRes?.data) {
-        setSystemStats(statsRes.data)
-        updateSpeedHistory(statsRes.data)
-      }
-      if (connectivityRes?.data) setConnectivity(connectivityRes.data)
-
-      const dataActive = dataRes?.data?.active ?? false
-      if (statsRes?.data) {
-        setQosInfo(qosFromWwanInterface(statsRes.data, dataActive))
-      } else {
-        setQosInfo(null)
-      }
-
-      // 错误处理：区分后台轮询与首次/手动加载
+      // 错误处理：过滤所有开机/搜网/暂态错误，仅真实故障向用户弹窗
       if (failures.length > 0) {
-        if (background) {
-          // 后台轮询：过滤 Modem 暂态错误，非暂态错误仍向用户展示
-          const nonTransient = failures.filter((f) => !isTransientModemError(f))
-          if (nonTransient.length > 0) {
-            setError(nonTransient[0])
-          } else {
-            throttledWarn('Dashboard', failures.join('; '))
-          }
+        const nonTransient = failures.filter((f) => !isTransientModemError(f))
+        if (nonTransient.length > 0) {
+          setError(nonTransient[0])
         } else {
-          // 首次加载 / 手动刷新：所有错误都应反馈给用户
-          setError(failures[0])
+          throttledWarn('Dashboard', failures.join('; '))
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      const nonTransient = !isTransientModemError(err)
+      if (nonTransient) {
+        setError(err instanceof Error ? err.message : String(err))
+      } else {
+        throttledWarn('Dashboard', String(err))
+      }
       setInitialLoading(false)
     } finally {
-      if (progressiveTimer !== undefined) window.clearTimeout(progressiveTimer)
+      if (earlyTimer !== undefined) window.clearTimeout(earlyTimer)
       loadingRef.current = false
     }
   }, [api, updateSpeedHistory])
@@ -228,7 +267,11 @@ export function useDashboardData(refreshInterval: number, refreshKey: number) {
     try {
       const nextStatus = !dataStatus
       await api.setDataStatus(nextStatus)
+      latestDataActiveRef.current = nextStatus
       setDataStatus(nextStatus)
+      if (latestStatsRef.current) {
+        setQosInfo(qosFromWwanInterface(latestStatsRef.current, nextStatus))
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }

@@ -1,4 +1,4 @@
-import { Box, Chip, CircularProgress, Paper, Stack, Typography } from '@mui/material'
+import { Box, Chip, LinearProgress, Paper, Stack, Typography } from '@mui/material'
 import Grid from '@mui/material/Grid'
 import {
   CheckCircle,
@@ -44,6 +44,8 @@ function StatusBar({ data }: { data: DashboardData }) {
   const carrierLogo = getCarrierLogo(data.networkInfo?.mcc, data.networkInfo?.mnc)
   const carrierName = formatCarrierName(data.networkInfo?.mcc, data.networkInfo?.mnc)
   const isAirplaneMode = data.airplaneMode?.enabled ?? false
+  const isDeviceKnown = data.deviceInfo !== null
+  const isOnline = data.deviceInfo?.online ?? false
   const ipValueSx = {
     minWidth: 0,
     overflow: 'hidden',
@@ -72,9 +74,9 @@ function StatusBar({ data }: { data: DashboardData }) {
                 position: 'absolute',
                 inset: 0,
                 borderRadius: '50%',
-                bgcolor: data.deviceInfo?.online ? 'success.main' : 'error.main',
+                bgcolor: !isDeviceKnown ? 'info.main' : isOnline ? 'success.main' : 'error.main',
                 opacity: 0.3,
-                animation: data.deviceInfo?.online ? 'pulse 1.8s infinite' : 'none',
+                animation: (!isDeviceKnown || isOnline) ? 'pulse 1.8s infinite' : 'none',
                 '@keyframes pulse': {
                   '0%': { transform: 'scale(1)', opacity: 0.45 },
                   '70%': { transform: 'scale(2.1)', opacity: 0 },
@@ -87,40 +89,50 @@ function StatusBar({ data }: { data: DashboardData }) {
                 position: 'absolute',
                 inset: 2,
                 borderRadius: '50%',
-                bgcolor: data.deviceInfo?.online ? 'success.main' : 'error.main',
+                bgcolor: !isDeviceKnown ? 'info.main' : isOnline ? 'success.main' : 'error.main',
               }}
             />
           </Box>
           <Typography fontSize="16px" fontWeight={800}>
-            {data.deviceInfo?.online ? '系统在线' : '系统离线'}
+            {!isDeviceKnown ? '系统就绪中...' : isOnline ? '系统在线' : '系统离线'}
           </Typography>
         </Box>
 
         {!isAirplaneMode && (
-          <>
-            <Box display="flex" alignItems="center" gap={1}>
-              {carrierLogo ? (
-                <Box component="img" src={carrierLogo} alt={carrierName} sx={{ height: 24, maxWidth: 92, objectFit: 'contain' }} />
-              ) : (
-                <Chip label={carrierName} size="small" variant="outlined" />
-              )}
+          data.networkInfo ? (
+            <>
+              <Box display="flex" alignItems="center" gap={1}>
+                {carrierLogo ? (
+                  <Box component="img" src={carrierLogo} alt={carrierName} sx={{ height: 24, maxWidth: 92, objectFit: 'contain' }} />
+                ) : (
+                  <Chip label={carrierName} size="small" variant="outlined" />
+                )}
+                <Chip
+                  icon={<SignalCellularAlt />}
+                  label={`${signal}%`}
+                  color={signal > 70 ? 'success' : signal > 35 ? 'primary' : 'warning'}
+                  size="small"
+                  variant="outlined"
+                />
+              </Box>
+              <Chip icon={<WifiTethering />} label={networkTech} color={networkTech === '5G' ? 'success' : 'primary'} size="small" />
               <Chip
-                icon={<SignalCellularAlt />}
-                label={`${signal}%`}
-                color={signal > 70 ? 'success' : signal > 35 ? 'primary' : 'warning'}
+                icon={<CheckCircle />}
+                label={getRegistrationLabel(data.networkInfo?.registration_status)}
+                color={data.networkInfo?.registration_status === 'registered' ? 'success' : 'default'}
                 size="small"
                 variant="outlined"
               />
-            </Box>
-            <Chip icon={<WifiTethering />} label={networkTech} color={networkTech === '5G' ? 'success' : 'primary'} size="small" />
+            </>
+          ) : (
             <Chip
-              icon={<CheckCircle />}
-              label={getRegistrationLabel(data.networkInfo?.registration_status)}
-              color={data.networkInfo?.registration_status === 'registered' ? 'success' : 'default'}
+              icon={<SignalCellularAlt />}
+              label="蜂窝网络加载中..."
               size="small"
               variant="outlined"
+              sx={{ opacity: 0.75 }}
             />
-          </>
+          )
         )}
         {isAirplaneMode && <Chip icon={<FlightTakeoff />} label="飞行模式" color="warning" size="small" />}
         <Typography variant="caption" color="text.disabled">
@@ -166,16 +178,21 @@ export default function DashboardPage({ readOnly = false }: DashboardPageProps) 
   const { refreshInterval, refreshKey } = useRefreshInterval()
   const { initialLoading, error, setError, data, actions } = useDashboardData(refreshInterval, refreshKey)
 
-  if (initialLoading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
-        <CircularProgress />
-      </Box>
-    )
-  }
-
   return (
-    <Box sx={{ maxWidth: 1600, mx: 'auto' }}>
+    <Box sx={{ maxWidth: 1600, mx: 'auto', position: 'relative' }}>
+      {initialLoading && (
+        <LinearProgress
+          sx={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 1500,
+            height: 3,
+            bgcolor: 'transparent',
+          }}
+        />
+      )}
       <ErrorSnackbar error={error} onClose={() => setError(null)} />
 
       <Stack spacing={2}>

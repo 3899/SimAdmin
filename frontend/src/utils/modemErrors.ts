@@ -23,6 +23,10 @@ const TRANSIENT_PATTERNS: string[] = [
   'getcellinfo is unsupported',
   'no sim object found',
   'failed to find modem',
+  'modem not found',
+  'request timed out',
+  'timed out',
+  'timeout',
 ]
 
 /**

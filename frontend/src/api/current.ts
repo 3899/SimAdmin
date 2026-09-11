@@ -519,7 +519,7 @@ export class SimAdminCurrentAPI {
 
   async getSimInfo() {
     return this.request<ApiResponse<SimInfo>>('/sim', {
-      timeoutMs: 2500,
+      timeoutMs: 8000,
     })
   }
 
@@ -527,7 +527,7 @@ export class SimAdminCurrentAPI {
     return this.request<ApiResponse<Record<string, never>>>('/sim/details/refresh', {
       method: 'POST',
       body: JSON.stringify({}),
-      timeoutMs: 2500,
+      timeoutMs: 8000,
     })
   }
 
@@ -623,7 +623,7 @@ export class SimAdminCurrentAPI {
 
   async getSystemStats() {
     return this.request<ApiResponse<SystemStatsResponse>>('/stats', {
-      timeoutMs: 2500,
+      timeoutMs: 6000,
     })
   }
 

@@ -40,22 +40,26 @@ export function DeviceInfoCard({ deviceInfo, systemStats }: DeviceInfoCardProps)
           <Box>
             <Typography variant="caption" color="text.secondary">IMEI</Typography>
             <Typography data-sensitive="true" variant="body2" fontFamily="monospace" fontSize="0.75rem" sx={getSensitiveStyle(showInfo)}>
-              {deviceInfo?.imei || 'N/A'}
+              {deviceInfo?.imei || (deviceInfo === null ? '读取中...' : 'N/A')}
             </Typography>
           </Box>
           <Box>
             <Typography variant="caption" color="text.secondary">制造商</Typography>
-            <Typography variant="body2" fontSize="0.75rem">{deviceInfo?.manufacturer || 'N/A'}</Typography>
+            <Typography variant="body2" fontSize="0.75rem">
+              {deviceInfo?.manufacturer || (deviceInfo === null ? '读取中...' : 'N/A')}
+            </Typography>
           </Box>
           <Box>
             <Typography variant="caption" color="text.secondary">型号</Typography>
-            <Typography variant="body2" fontSize="0.75rem">{deviceInfo?.model || 'N/A'}</Typography>
+            <Typography variant="body2" fontSize="0.75rem">
+              {deviceInfo?.model || (deviceInfo === null ? '读取中...' : 'N/A')}
+            </Typography>
           </Box>
           <Box>
             <Typography variant="caption" color="text.secondary" display="block">电源状态</Typography>
             <Chip
-              label={deviceInfo?.powered ? '已上电' : '未上电'}
-              color={deviceInfo?.powered ? 'success' : 'default'}
+              label={deviceInfo === null ? '检测中...' : (deviceInfo.powered ? '已上电' : '未上电')}
+              color={deviceInfo === null ? 'default' : (deviceInfo.powered ? 'success' : 'default')}
               size="small"
               sx={{ height: 20, fontSize: '0.7rem', mt: 0.25 }}
             />
