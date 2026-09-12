@@ -236,7 +236,7 @@ export default function ConfigurationPage({ embedded = false }: { embedded?: boo
       const [dataRes, airplaneModeRes, hubRes] = await Promise.all([
         api.getDataStatus(),
         api.getAirplaneMode(),
-        embedded ? Promise.resolve(null) : api.getHubSettings(),
+        api.getHubSettings(),
       ])
 
       if (dataRes.data) setDataStatus(dataRes.data.active)
@@ -259,10 +259,10 @@ export default function ConfigurationPage({ embedded = false }: { embedded?: boo
     const interval = window.setInterval(() => {
       if (!embedded) {
         void checkHealth()
-        void api.getHubSettings().then((response) => {
-          if (response.data) setHubRuntime(response.data.runtime)
-        }).catch(() => undefined)
       }
+      void api.getHubSettings().then((response) => {
+        if (response.data) setHubRuntime(response.data.runtime)
+      }).catch(() => undefined)
     }, 30000)
     return () => window.clearInterval(interval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -513,7 +513,7 @@ export default function ConfigurationPage({ embedded = false }: { embedded?: boo
       ) : (
         <Box display="flex" flexDirection="column" gap={3} sx={{ pt: 2 }}>
 
-          {!embedded && <Card>
+          <Card>
             <CardHeader
               avatar={<Devices color="primary" />}
               title="设备管理方式"
@@ -727,7 +727,7 @@ export default function ConfigurationPage({ embedded = false }: { embedded?: boo
                 </Box>
               </Collapse>
             </CardContent>
-          </Card>}
+          </Card>
 
 
 

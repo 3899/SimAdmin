@@ -202,6 +202,7 @@ export default function NotificationChannelsTab({
       label={label}
       type={extra?.password ? 'password' : 'text'}
       value={getString(channel.config, key)}
+      placeholder={extra?.password ? '留空表示沿用已保存密钥' : undefined}
       onChange={(event: ChangeEvent<HTMLInputElement>) => onPatchChannelConfig(channel.id, { [key]: event.target.value })}
       multiline={extra?.multiline}
       minRows={extra?.multiline ? 3 : undefined}

@@ -621,7 +621,12 @@ impl NotificationSender {
             "device_status",
             &format!("device_status.{rule_id}"),
             "设备状态定时报表".to_owned(),
-            json!({ "rule_id": rule_id, "report": report }),
+            json!({
+                "rule_id": rule_id,
+                "report": report,
+                "status_content": report.text(),
+                "status_lines": report.lines,
+            }),
         )
         .await?
         {
