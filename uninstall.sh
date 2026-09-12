@@ -12,7 +12,8 @@ SIMADMIN_LOCK_DIR="${SIMADMIN_LOCK_DIR:-/run/lock/simadmin-install.lock}"
 MODEM_RECOVERY_SERVICE_NAME="${MODEM_RECOVERY_SERVICE_NAME:-simadmin-modem-recovery}"
 MODEM_RECOVERY_SCRIPT="${MODEM_RECOVERY_SCRIPT:-${MODEM_RECOVERY_BIN_DIR}/simadmin-modem-recovery.sh}"
 NM_CONF="${NM_CONF:-/etc/NetworkManager/conf.d/99-simadmin-unmanaged-modem.conf}"
-MM_DEBUG_CONF="${MM_DEBUG_CONF:-${SYSTEMD_UNIT_DIR}/ModemManager.service.d/99-simadmin-debug.conf}"
+MM_DEBUG_CONF="${MM_DEBUG_CONF:-${SYSTEMD_UNIT_DIR}/ModemManager.service.d/zz-simadmin-debug.conf}"
+MM_DEBUG_CONF_LEGACY="${SYSTEMD_UNIT_DIR}/ModemManager.service.d/99-simadmin-debug.conf"
 OTA_STAGING_DIR="${OTA_STAGING_DIR:-/tmp/ota_staging}"
 DEVICE_CONFIG_PATH="${DEVICE_CONFIG_PATH:-/data/config.json}"
 HUB_AGENT_DB_PATH="${HUB_AGENT_DB_PATH:-/data/hub-agent.db}"
@@ -176,7 +177,13 @@ validate_configuration() {
   assert_safe_service_name MODEM_RECOVERY_SERVICE_NAME "$MODEM_RECOVERY_SERVICE_NAME"
   assert_managed_file MODEM_RECOVERY_SCRIPT "$MODEM_RECOVERY_SCRIPT" simadmin-modem-recovery.sh
   assert_managed_file NM_CONF "$NM_CONF" 99-simadmin-unmanaged-modem.conf
-  assert_managed_file MM_DEBUG_CONF "$MM_DEBUG_CONF" 99-simadmin-debug.conf
+  case "${MM_DEBUG_CONF##*/}" in
+    zz-simadmin-debug.conf|99-simadmin-debug.conf) ;;
+    *)
+      echo "error: unsafe MM_DEBUG_CONF: expected zz-simadmin-debug.conf or 99-simadmin-debug.conf" >&2
+      exit 1
+      ;;
+  esac
   assert_managed_file DEVICE_CONFIG_PATH "$DEVICE_CONFIG_PATH" config.json
   assert_managed_file HUB_AGENT_DB_PATH "$HUB_AGENT_DB_PATH" hub-agent.db
   for managed_dir in "$INSTALL_DIR" "$SYSTEMD_UNIT_DIR" "$MODEM_RECOVERY_BIN_DIR"; do
@@ -377,9 +384,12 @@ main() {
   mm_changed=0
   if remove_path "$MM_DEBUG_CONF"; then
     mm_changed=1
-    mm_override_dir="${MM_DEBUG_CONF%/*}"
-    rmdir "$mm_override_dir" >/dev/null 2>&1 || true
   fi
+  if remove_path "$MM_DEBUG_CONF_LEGACY"; then
+    mm_changed=1
+  fi
+  mm_override_dir="${SYSTEMD_UNIT_DIR}/ModemManager.service.d"
+  rmdir "$mm_override_dir" >/dev/null 2>&1 || true
 
   remove_path "$OTA_STAGING_DIR" || true
   cleanup_transaction_residue
