@@ -82,6 +82,9 @@ SH
     cat > "$fake_bin/apt-get" <<'SH'
 #!/bin/sh
 printf '%s\n' "$*" >> "$FAKE_APT_LOG"
+if [ "${FAKE_FAIL_APT:-0}" = "1" ]; then
+    exit 100
+fi
 if [ "${1:-}" = "install" ]; then
     shift
     for package in "$@"; do
@@ -225,6 +228,27 @@ test_architectures_and_cli() {
     ')"
     assert_eq "simadmin-vowifi-x86_64.tar.gz" "$output" "--asset wfc selection"
 
+    output="$(SIMADMIN_INSTALL_LIBRARY_ONLY=1 bash -c '
+        . ./install_latest.sh
+        SIMADMIN_TARGET_ARCH=amd64 resolve_simadmin_asset_name 1.2.0
+    ')"
+    assert_eq "simadmin-x86_64-v1.2.0.tar.gz" "$output" "resolve asset name with numeric version"
+
+    output="$(SIMADMIN_INSTALL_LIBRARY_ONLY=1 bash -c '
+        . ./install_latest.sh
+        SIMADMIN_TARGET_ARCH=amd64 resolve_simadmin_asset_name v1.2.0
+    ')"
+    assert_eq "simadmin-x86_64-v1.2.0.tar.gz" "$output" "resolve asset name with tag version"
+
+    output="$(SIMADMIN_INSTALL_LIBRARY_ONLY=1 bash -c '
+        . ./install_latest.sh
+        parse_args --volte; target_edition
+        parse_args --vowifi; target_edition
+        parse_args --full; target_edition
+        parse_args --wfc; target_edition
+    ')"
+    assert_eq $'volte\nvowifi\nfull\nwfc' "$output" "edition resolution across variants"
+
     set +e
     output="$(SIMADMIN_INSTALL_LIBRARY_ONLY=1 bash -c '. ./install_latest.sh; parse_args --asset' 2>&1)"
     status=$?
@@ -257,6 +281,41 @@ JSON
     ')"
     assert_eq "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" \
         "$output" "GitHub asset digest parsing"
+
+    output="$(SIMADMIN_INSTALL_LIBRARY_ONLY=1 bash -c '
+        . ./install_latest.sh
+        release_asset_digest simadmin-armv7.tar.gz <<"JSON"
+{
+  "name": "simadmin-armv7-v1.2.0.tar.gz",
+  "digest": "sha256:49e86192f96566e8f91b33f15727f14e70bde3bb6af718b04a548d2c924c5e09"
+}
+JSON
+    ')"
+    assert_eq "49e86192f96566e8f91b33f15727f14e70bde3bb6af718b04a548d2c924c5e09" \
+        "$output" "GitHub versioned asset digest parsing with unversioned query"
+
+    output="$(SIMADMIN_INSTALL_LIBRARY_ONLY=1 bash -c '
+        . ./install_latest.sh
+        release_asset_digest simadmin-armv7-v1.2.0.tar.gz <<"JSON"
+{
+  "name": "simadmin-armv7-v1.2.0.tar.gz",
+  "digest": "sha256:49e86192f96566e8f91b33f15727f14e70bde3bb6af718b04a548d2c924c5e09"
+}
+JSON
+    ')"
+    assert_eq "49e86192f96566e8f91b33f15727f14e70bde3bb6af718b04a548d2c924c5e09" \
+        "$output" "GitHub versioned asset digest parsing with versioned query"
+
+    output="$(SIMADMIN_INSTALL_LIBRARY_ONLY=1 bash -c '
+        . ./install_latest.sh
+        release_asset_digest simadmin-aarch64.tar.gz <<"JSON"
+{
+  "name": "simadmin-armv7-v1.2.0.tar.gz",
+  "digest": "sha256:49e86192f96566e8f91b33f15727f14e70bde3bb6af718b04a548d2c924c5e09"
+}
+JSON
+    ')"
+    assert_eq "" "$output" "GitHub asset digest architecture mismatch"
 
     output="$(SIMADMIN_INSTALL_LIBRARY_ONLY=1 bash -c '
         . ./install_latest.sh
@@ -447,6 +506,26 @@ test_incremental_dependencies() {
     assert_file_not_contains "$apt_log" "update" "SIMADMIN_APT_UPDATE=never ran apt update"
     assert_file_contains "$apt_log" "install -y --no-install-recommends libmbim-utils" \
         "MBIM missing package was not installed"
+
+    # Optional package failure tolerance in auto mode vs full mode
+    : > "$apt_log"
+    rm -f "$state"/installed.*
+    PATH="$fake_bin:$PATH" FAKE_APT_LOG="$apt_log" FAKE_PACKAGE_STATE="$state" \
+        FAKE_MISSING_PACKAGE=unzip FAKE_FAIL_APT=1 SIMADMIN_INSTALL_LIBRARY_ONLY=1 \
+        SIMADMIN_APT_UPDATE=never SIMADMIN_DEPS_MODE=auto SIMADMIN_INSTALL_LPAC=0 \
+        bash -c '. ./install_latest.sh; install_system_dependencies' >/dev/null
+
+    assert_command_fails "full mode must not tolerate optional package failure" \
+        env PATH="$fake_bin:$PATH" FAKE_APT_LOG="$apt_log" FAKE_PACKAGE_STATE="$state" \
+        FAKE_MISSING_PACKAGE=unzip FAKE_FAIL_APT=1 SIMADMIN_INSTALL_LIBRARY_ONLY=1 \
+        SIMADMIN_APT_UPDATE=never SIMADMIN_DEPS_MODE=full SIMADMIN_INSTALL_LPAC=0 \
+        bash -c '. ./install_latest.sh; install_system_dependencies'
+
+    assert_command_fails "auto mode must fail when essential package is missing" \
+        env PATH="$fake_bin:$PATH" FAKE_APT_LOG="$apt_log" FAKE_PACKAGE_STATE="$state" \
+        FAKE_MISSING_PACKAGE=modemmanager FAKE_FAIL_APT=1 SIMADMIN_INSTALL_LIBRARY_ONLY=1 \
+        SIMADMIN_APT_UPDATE=never SIMADMIN_DEPS_MODE=auto SIMADMIN_INSTALL_LPAC=0 \
+        bash -c '. ./install_latest.sh; install_system_dependencies'
 
     output="$(SIMADMIN_INSTALL_LIBRARY_ONLY=1 SIMADMIN_MODEM_PROTOCOL=qmi \
         SIMADMIN_INSTALL_LPAC=0 bash -c '. ./install_latest.sh; required_package_list')"

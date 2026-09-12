@@ -336,6 +336,10 @@ remove_install_files_purge() {
   remove_path "${HUB_AGENT_DB_PATH}-wal" || true
   remove_path "${HUB_AGENT_DB_PATH}-shm" || true
   remove_path "${HUB_AGENT_DB_PATH}-journal" || true
+  if command_exists nmcli; then
+    nmcli connection delete "simadmin-modem" >/dev/null 2>&1 || true
+  fi
+  remove_path "/etc/NetworkManager/system-connections/simadmin-modem.nmconnection" || true
 }
 
 main() {
@@ -371,10 +375,21 @@ main() {
   fi
 
   remove_path "$MODEM_RECOVERY_SCRIPT" || true
-  remove_path "/etc/udev/rules.d/99-simadmin-secondary-qmi.rules" || true
-  remove_path "/etc/udev/rules.d/simadmin-secondary-qmi.rules" || true
-  remove_path "/run/udev/rules.d/99-simadmin-secondary-qmi.rules" || true
-  remove_path "/run/udev/rules.d/simadmin-secondary-qmi.rules" || true
+
+  udev_changed=0
+  for udev_rule in \
+    "/etc/udev/rules.d/99-simadmin-secondary-qmi.rules" \
+    "/etc/udev/rules.d/simadmin-secondary-qmi.rules" \
+    "/run/udev/rules.d/99-simadmin-secondary-qmi.rules" \
+    "/run/udev/rules.d/simadmin-secondary-qmi.rules"; do
+    if remove_path "$udev_rule"; then
+      udev_changed=1
+    fi
+  done
+  if [ "$udev_changed" -eq 1 ] && command_exists udevadm; then
+    udevadm control --reload-rules >/dev/null 2>&1 || true
+    udevadm trigger --action=change >/dev/null 2>&1 || true
+  fi
 
   nm_changed=0
   if remove_path "$NM_CONF"; then
@@ -392,6 +407,12 @@ main() {
   rmdir "$mm_override_dir" >/dev/null 2>&1 || true
 
   remove_path "$OTA_STAGING_DIR" || true
+  remove_path "/run/simadmin" || true
+  for tmp_dir in /tmp/simadmin.[0-9a-zA-Z]*; do
+    if [ -d "$tmp_dir" ] || [ -L "$tmp_dir" ]; then
+      remove_path "$tmp_dir" || true
+    fi
+  done
   cleanup_transaction_residue
 
   if [ "$KEEP_USER_DATA" -eq 1 ]; then
@@ -407,6 +428,7 @@ main() {
     fi
     systemctl reset-failed "${SERVICE_NAME}.service" >/dev/null 2>&1 || true
     systemctl reset-failed "${MODEM_RECOVERY_SERVICE_NAME}.service" >/dev/null 2>&1 || true
+    systemctl reset-failed "simadmin-secondary-qmi.service" >/dev/null 2>&1 || true
 
     if [ "$nm_changed" -eq 1 ] && systemctl is-active --quiet NetworkManager.service; then
       echo "==> restarting NetworkManager"

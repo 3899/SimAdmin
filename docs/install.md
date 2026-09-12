@@ -32,21 +32,84 @@ SimAdmin 提供四种功能形态的产物包，安装脚本支持根据设备�
 # 安装最新标准版
 curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh
 
+# 安装最新标准版（国内加速代理）
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh
+
 # 安装最新 VoLTE 版
-curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- --volte
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- --volte
 
 # 安装最新 VoWiFi 版 (兼容旧版 --wfc)
-curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- --vowifi
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- --vowifi
 
-# 安装最新 完整版 (全特性)
-curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- --full
-
-# 同时指定版本与版本形态
-curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- -v1.2.0 --volte
-
-# 通过环境变量指定
-curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | VERSION=v1.2.0 VARIANT=full sh
+# 安装最新 完整版
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- --full
 ```
+
+### 指定版本号与版本形态安装
+
+脚本完整支持安装指定历史版本或特定发布版本（版本号支持 `v1.2.0` 或 `1.2.0` 两种写法），推荐以下三种安装姿势：
+
+#### 方式一：环境变量注入方式（最推荐，语法最稳妥）
+
+在管道末端的 `sh` 前注入环境变量指定目标版本与版本形态，可完全避免 Shell 选项解析歧义：
+
+```bash
+# 指定安装 v1.2.0 标准版
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | VERSION=v1.2.0 sh
+
+# 指定安装 v1.2.0 完整版
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | VERSION=v1.2.0 VARIANT=full sh
+
+# 指定安装 v1.2.0 VoLTE 版
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | VERSION=v1.2.0 VARIANT=volte sh
+
+# 指定安装 v1.2.0 VoWiFi 版
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | VERSION=v1.2.0 VARIANT=vowifi sh
+```
+
+#### 方式二：管道命令行参数方式（`sh -s --`）
+
+当通过管道向 Shell 脚本传递命令行参数时，必须使用 `sh -s --` 引导参数列表：
+
+```bash
+# 使用 -v 指定版本号
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- -v 1.2.0
+
+# 同时指定版本号与版本形态（完整版 / VoLTE 版 / VoWiFi 版）
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- -v 1.2.0 --full
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- -v 1.2.0 --volte
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- -v 1.2.0 --vowifi
+
+# 也支持紧凑参数写法或位置参数
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- -v1.2.0 --volte
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh | sh -s -- 1.2.0 --full
+```
+
+#### 方式三：下载脚本后本地执行
+
+先将脚本保存到本地，再直接传参运行：
+
+```bash
+# 下载安装脚本到当前目录
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.sh -o install_latest.sh
+
+# 查看脚本所有支持的选项
+sh install_latest.sh --help
+
+# 本地执行指定版本与形态安装
+sh install_latest.sh -v 1.2.0 --full
+```
+
+> [!WARNING]
+> **常见注意事项与排错指南**：
+> 1. **切勿写成 `curl ... | sh -v 1.2.0`**：
+>    在 Unix/Linux Shell 中，`/bin/sh -v` 是 Shell 解释器自身的内置参数（Verbose，打印读入脚本代码），随后的 `1.2.0` 会被系统 Shell 误当成要运行的文件路径，导致报错 `1.2.0: No such file or directory`。管道传参请务必写成 `sh -s -- -v 1.2.0` 或采用环境变量写法 `VERSION=1.2.0 sh`。
+> 2. **版本号格式兼容性**：
+>    版本号写作 `1.2.0` 或 `v1.2.0` 均可，脚本内部会自动规范化为 Release Tag 命名。
+> 3. **跳过校验（离线或 GitHub API 异常应急）**：
+>    若设备网络因代理限制导致拉取 GitHub Release API Digest 失败，可通过添加 `SIMADMIN_VERIFY_ASSET=0` 跳过 SHA-256 校验：
+>    `curl -fsSL ... | SIMADMIN_VERIFY_ASSET=0 sh`
+
 
 ### 安装脚本参数说明
 
@@ -103,12 +166,12 @@ curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/install_latest.s
 
 | 模式 | 自动补齐内容 | 适用场景 |
 |------|------|------|
-| `auto` | 显式安装 `ca-certificates`、`curl`、`tar`、D-Bus、udev、ModemManager、基础网络/诊断工具；按配置加入 NetworkManager；按设备能力加入 QMI 或 MBIM 工具；仅在支持 lpac 的架构加入 PC/SC 运行库 | 默认，保证对应硬件路径的完整功能 |
-| `minimal` | 保证下载安装和 ModemManager 主路径所需的 `ca-certificates curl tar dbus udev modemmanager`；启用 NetworkManager 时也保证 `network-manager` | 已自行维护其他网络工具的裁剪系统；部分诊断能力可能不可用 |
-| `full` | `auto` 的能力检测结果，加上 NetworkManager 和可选 iptables 只读诊断工具 | 希望同时准备完整诊断能力的通用镜像 |
+| `auto` | 显式安装核心依赖与基础网络/诊断工具。**具备可选依赖容错机制**：当 `iproute2`、`unzip`、`psmisc` 等可选辅助工具因源 404 或镜像失效安装失败时，只要核心依赖（`ca-certificates curl tar dbus udev modemmanager`）已满足，安装器会自动降级警告并继续完成部署，不会阻塞安装流程 | 默认推荐，兼顾完整功能与老旧/异常镜像源的容错能力 |
+| `minimal` | 只保证下载安装和主路径运行所需的核心包：`ca-certificates curl tar dbus udev modemmanager`（若启用 NM 则加 `network-manager`）；完全不请求安装 `iproute2`、`unzip`、`psmisc` 等辅助包 | 极端裁剪系统、内网或老旧系统无法获取新软件包的场景 |
+| `full` | `auto` 的能力检测结果，加上 NetworkManager 和可选 iptables 只读诊断工具，严格要求所有包必须安装成功 | 希望同时准备完整诊断能力的通用镜像 |
 | `skip` | 不执行任何 apt 操作，已有的 `curl`、`tar` 等命令仍必须可用 | 只读系统、离线部署或由镜像预装全部依赖 |
 
-默认 `auto` 中各包不是按 CPU 架构机械安装：QMI/MBIM 根据设备节点和 ModemManager 信息选择，与 ARM64、AMD64、ARMv7 无关；未连接 modem 时同时准备 QMI/MBIM 工具，避免之后插入设备还要重跑安装。ARMv7 MVP 始终排除 lpac 和 `libpcsclite1`。`unzip` 用于 zip OTA，`psmisc` 提供重启准备所需的 `killall`，`iproute2` 和 `iputils-ping` 用于网络状态与连通性路径；`iptables` 只在 `full` 中补齐，程序缺少它时只会失去对应的只读诊断。
+默认 `auto` 模式中，`ca-certificates`、`curl`、`tar`、`dbus`、`udev`、`modemmanager` 为必须的核心依赖；而 `iproute2`（网卡 IP 回退查询）、`unzip`（可选 lpac 离线解压）、`psmisc`（重启前 killall 辅助）为可选辅助依赖。如果由于系统镜像源失效导致可选依赖无法通过 apt 下载，`auto` 模式会自动跳过缺失的可选包并完成主服务部署。如果需要完全跳过系统依赖检查，可使用 `SIMADMIN_DEPS_MODE=minimal` 或 `SIMADMIN_INSTALL_SYSTEM_DEPS=0`。
 
 `SIMADMIN_APT_UPDATE=never` 只禁止刷新软件包索引，不会忽略缺包；如果本地索引无法解析所需包，安装仍会明确失败。卸载脚本不会自动移除这些系统依赖，因为它们可能正被其他服务使用。
 
@@ -229,14 +292,15 @@ curl -fsSL https://raw.githubusercontent.com/3899/SimAdmin/main/uninstall.sh \
 
 ### 卸载脚本动作说明
 
-- 停止并禁用 `simadmin.service`。
-- 停止并禁用 `simadmin-modem-recovery.service`。
-- 删除 systemd 单元文件；确有 unit/override 变化时才执行 `daemon-reload`，并清理失败状态。
+- 停止并禁用 `simadmin.service`、`simadmin-modem-recovery.service` 以及 `simadmin-secondary-qmi.service`。
+- 删除 systemd 单元文件；确有 unit/override 变化时才执行 `daemon-reload`，并清理失败状态（`reset-failed`）。
 - 删除 `/usr/local/bin/simadmin-modem-recovery.sh`。
+- 删除 secondary-qmi 相关的 udev 规则文件（`/etc/udev/rules.d/` 与 `/run/udev/rules.d/`），并自动调用 `udevadm control --reload-rules && udevadm trigger` 重载内核规则。
 - 删除 `/etc/NetworkManager/conf.d/99-simadmin-unmanaged-modem.conf`；仅当该文件实际存在且 NetworkManager 正在运行时重启它。
+- 默认 `--purge` 模式下自动清理 SimAdmin 创建的 `simadmin-modem` 蜂窝网络连接配置。
 - 删除 SimAdmin 创建的 ModemManager debug override；仅当该文件实际存在且 ModemManager 正在运行时重启它。
-- 删除 `/tmp/ota_staging`。
+- 删除 `/tmp/ota_staging`、`/tmp/simadmin.*` 临时目录及运行时状态目录 `/run/simadmin`。
 - 清理安装事务遗留的 `.new` / `.previous` 文件。
 - 默认删除 `/opt/simadmin`、`/data/config.json`、`/data/hub-agent.db` 及其 SQLite sidecar；使用 `--keep-user-data` 时只删除受管应用文件，保留数据库、配置和备份。
-- 与安装器共用 `/run/lock/simadmin-install.lock`，拒绝并发安装/卸载；重复卸载不会无意义重启 NM/MM。
-- 不卸载 Debian 系统依赖，避免破坏其他程序。
+- 与安装器共用 `/run/lock/simadmin-install.lock`，拒绝并发安装/卸载；重复卸载具有幂等性，不会无意义重启 NM/MM。
+- 不卸载 Debian 系统依赖（如 curl, iproute2, psmisc, unzip 等），避免破坏其他程序与系统网络底层。

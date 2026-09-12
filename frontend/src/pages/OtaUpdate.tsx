@@ -1745,7 +1745,7 @@ export default function OtaUpdate() {
                       <Box>
                         <Typography variant="subtitle2" fontWeight={700}>
                           准备安装包：
-                          <Box component="span" sx={{ color: (selectedAssetItem?.edition === 'vowifi' || selectedAssetItem?.edition === 'wfc') ? 'secondary.main' : 'primary.main', ml: 0.5 }}>
+                          <Box component="span" sx={{ color: selectedAssetItem?.edition === 'vowifi' ? 'secondary.main' : 'primary.main', ml: 0.5 }}>
                             {selectedAsset?.name || '未选择'}
                           </Box>
                         </Typography>
@@ -1756,7 +1756,7 @@ export default function OtaUpdate() {
 
                       <Button
                         variant="contained"
-                        color={(selectedAssetItem?.edition === 'vowifi' || selectedAssetItem?.edition === 'wfc') ? 'secondary' : 'primary'}
+                        color={selectedAssetItem?.edition === 'vowifi' ? 'secondary' : 'primary'}
                         startIcon={onlineState === 'downloading' ? <CircularProgress size={18} color="inherit" /> : <Download />}
                         onClick={() => void handlePrepareOnlineUpdate()}
                         disabled={onlineState === 'downloading' || !selectedAsset}

@@ -9,6 +9,7 @@ set -e
 cd "$(dirname "$0")/../.."
 
 TARGET="${TARGET:-aarch64-unknown-linux-musl}"
+EDITION="${EDITION:-${VARIANT:-standard}}"
 for arg in "$@"; do
     case "$arg" in
         --target=aarch64|--target=arm64|--target=aarch64-unknown-linux-musl)
@@ -20,8 +21,23 @@ for arg in "$@"; do
         --target=x86_64|--target=amd64|--target=x86_64-unknown-linux-musl)
             TARGET="x86_64-unknown-linux-musl"
             ;;
+        --full|full|--all|all|--volte-vowifi|volte-vowifi|--volte_vowifi|volte_vowifi)
+            EDITION="full"
+            ;;
+        --wfc|wfc|--vowifi|vowifi)
+            EDITION="vowifi"
+            ;;
+        --volte|volte)
+            EDITION="volte"
+            ;;
+        --standard|standard)
+            EDITION="standard"
+            ;;
+        --edition=*|--variant=*)
+            EDITION="${arg#*=}"
+            ;;
         --help|-h)
-            echo "用法: ./scripts/build/pack-ota.sh [--target=aarch64|armv7|x86_64]"
+            echo "用法: ./scripts/build/pack-ota.sh [--target=aarch64|armv7|x86_64] [--standard|--volte|--vowifi|--full]"
             exit 0
             ;;
         *)
@@ -165,16 +181,6 @@ else
     FRONTEND_MD5=$(find "$OTA_TMP/www" -type f -exec md5sum {} \; | cut -d' ' -f1 | sort | md5sum | cut -d' ' -f1)
 fi
 echo "   MD5: $FRONTEND_MD5"
-EDITION="${EDITION:-${VARIANT:-standard}}"
-for arg in "$@"; do
-    case "$arg" in
-        --full|full|--all|all|--volte-vowifi|volte-vowifi|--volte_vowifi|volte_vowifi) EDITION="full" ;;
-        --wfc|wfc|--vowifi|vowifi) EDITION="vowifi" ;;
-        --volte|volte) EDITION="volte" ;;
-        --standard|standard) EDITION="standard" ;;
-        --edition=*|--variant=*) EDITION="${arg#*=}" ;;
-    esac
-done
 
 # 生成 meta.json
 echo "📋 生成 meta.json ( edition: $EDITION)..."

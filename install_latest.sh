@@ -496,9 +496,18 @@ missing_package_list() {
   printf '%s\n' "$missing_result"
 }
 
+essential_package_list() {
+  packages="ca-certificates curl dbus modemmanager tar udev"
+  if truthy "$SIMADMIN_ENABLE_NETWORKMANAGER"; then
+    packages="$packages network-manager"
+  fi
+  printf '%s\n' "$packages"
+}
+
 ensure_package_list() {
   dependency_label="$1"
   requested_packages="$2"
+  allow_optional_failure="${3:-0}"
   [ -n "$requested_packages" ] || return 0
   missing_packages="$(missing_package_list "$requested_packages")"
 
@@ -517,22 +526,42 @@ ensure_package_list() {
   fi
 
   command -v apt-get >/dev/null 2>&1 || {
+    if [ "$allow_optional_failure" -eq 1 ]; then
+      essential_remaining="$(missing_package_list "$(essential_package_list)")"
+      if [ -z "$essential_remaining" ]; then
+        echo "warning: apt-get is unavailable; continuing without optional packages: ${missing_packages}" >&2
+        return 0
+      fi
+    fi
     echo "error: apt-get is unavailable; missing packages: ${missing_packages}" >&2
     exit 1
   }
   if [ "$SIMADMIN_APT_UPDATE" != "never" ] && [ "${APT_METADATA_UPDATED:-0}" -ne 1 ]; then
     echo "==> updating apt package metadata"
-    apt-get update
+    apt-get update || true
     APT_METADATA_UPDATED=1
   fi
 
   echo "==> installing missing ${dependency_label}: ${missing_packages}"
   # Word splitting is intentional: Debian package names cannot contain spaces.
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $missing_packages
+  if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $missing_packages; then
+    if [ "$allow_optional_failure" -eq 1 ]; then
+      echo "warning: apt-get encountered errors while installing: ${missing_packages}" >&2
+    fi
+  fi
   SYSTEM_DEPS_CHANGED=1
 
   remaining_packages="$(missing_package_list "$requested_packages")"
   if [ -n "$remaining_packages" ]; then
+    if [ "$allow_optional_failure" -eq 1 ]; then
+      essential_remaining="$(missing_package_list "$(essential_package_list)")"
+      if [ -z "$essential_remaining" ]; then
+        echo "warning: optional packages are missing but core requirements are satisfied: ${remaining_packages}" >&2
+        return 0
+      fi
+      echo "error: essential dependencies are still missing: ${essential_remaining}" >&2
+      exit 1
+    fi
     echo "error: dependencies are still missing or below their required versions: ${remaining_packages}" >&2
     exit 1
   fi
@@ -611,8 +640,13 @@ install_system_dependencies() {
     return 0
   fi
 
+  allow_optional=0
+  if [ "$SIMADMIN_DEPS_MODE" = "auto" ]; then
+    allow_optional=1
+  fi
+
   required_packages="$(required_package_list)"
-  ensure_package_list "runtime dependencies" "$required_packages"
+  ensure_package_list "runtime dependencies" "$required_packages" "$allow_optional"
 }
 
 install_bootstrap_dependencies() {
@@ -759,7 +793,11 @@ release_asset_digest() {
       value = $0
       sub(/^.*"name"[[:space:]]*:[[:space:]]*"/, "", value)
       sub(/".*$/, "", value)
-      selected = (value == expected)
+      norm_val = value
+      sub(/-v[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9.]+)?\.tar\.gz$/, ".tar.gz", norm_val)
+      norm_exp = expected
+      sub(/-v[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9.]+)?\.tar\.gz$/, ".tar.gz", norm_exp)
+      selected = (value == expected || norm_val == norm_exp)
     }
     selected && /"digest"[[:space:]]*:/ {
       value = $0
@@ -806,8 +844,17 @@ verify_release_asset() {
 
   if [ -z "$expected_sha" ] && [ -z "$ASSET_URL" ]; then
     echo "==> reading release asset digest"
-    release_json="$(read_with_proxies "$(release_api_url)")"
-    expected_sha="$(printf '%s\n' "$release_json" | release_asset_digest "$verify_asset_name")"
+    if release_json="$(read_with_proxies "$(release_api_url)")"; then
+      expected_sha="$(printf '%s\n' "$release_json" | release_asset_digest "$verify_asset_name")"
+    fi
+    if [ -z "$expected_sha" ]; then
+      latest_api="https://api.github.com/repos/${REPO}/releases/latest"
+      if [ "$(release_api_url)" != "$latest_api" ]; then
+        if release_json="$(read_with_proxies "$latest_api" 2>/dev/null)"; then
+          expected_sha="$(printf '%s\n' "$release_json" | release_asset_digest "$verify_asset_name")"
+        fi
+      fi
+    fi
   fi
 
   if [ -z "$expected_sha" ]; then
@@ -911,8 +958,8 @@ resolve_simadmin_asset_name() {
   }
 
   tag_suffix=""
-  if [ -n "${1:-}" ]; then
-    tag_suffix="-$1"
+  if [ -n "${1:-}" ] && [ "$1" != "latest" ]; then
+    tag_suffix="-$(version_to_tag "$1")"
   fi
 
   case "${VARIANT:-}" in
@@ -979,6 +1026,26 @@ resolve_latest_tag() {
   return 1
 }
 
+resolve_target_tag() {
+  if [ -n "${TARGET_TAG:-}" ]; then
+    printf '%s\n' "$TARGET_TAG"
+    return 0
+  fi
+
+  if [ "$VERSION" = "latest" ]; then
+    tag="$(resolve_latest_tag || true)"
+  else
+    tag="$(version_to_tag "$VERSION")"
+  fi
+
+  if [ -n "$tag" ]; then
+    printf '%s\n' "$tag"
+    return 0
+  fi
+
+  return 1
+}
+
 resolve_asset_url() {
   if [ -n "$ASSET_URL" ]; then
     printf '%s\n' "$ASSET_URL"
@@ -987,11 +1054,7 @@ resolve_asset_url() {
 
   tag="${TARGET_TAG:-}"
   if [ -z "$tag" ]; then
-    if [ "$VERSION" = "latest" ]; then
-      tag="$(resolve_latest_tag || true)"
-    else
-      tag="$(version_to_tag "$VERSION")"
-    fi
+    tag="$(resolve_target_tag || true)"
     TARGET_TAG="$tag"
   fi
 
@@ -1049,10 +1112,12 @@ download_release_asset() {
   primary_url="$2"
   fallback_url=""
   PRIMARY_DOWNLOAD_URL="$primary_url"
+  DOWNLOADED_ASSET_URL=""
 
   echo "==> downloading release asset"
   if download_with_proxies "$primary_url" "$archive_path"; then
     DOWNLOADED_RELEASE_VERSION="${PRIMARY_RELEASE_VERSION:-$VERSION}"
+    DOWNLOADED_ASSET_URL="$primary_url"
     return 0
   fi
 
@@ -1061,12 +1126,14 @@ download_release_asset() {
     echo "==> primary asset download failed, trying fallback asset: $fallback_url"
     if download_with_proxies "$fallback_url" "$archive_path"; then
       DOWNLOADED_RELEASE_VERSION="${FALLBACK_RELEASE_VERSION:-$VERSION}"
+      DOWNLOADED_ASSET_URL="$fallback_url"
       return 0
     fi
   fi
 
   if [ "${VARIANT:-}" = "vowifi" ] || [ "${VARIANT:-}" = "wfc" ] || truthy "$WFC"; then
     tag="${TARGET_TAG:-}"
+    simadmin_arch="$(detect_simadmin_arch || uname -m)"
     if [ -n "$tag" ]; then
       legacy_wfc_url="https://github.com/${REPO}/releases/download/${tag}/simadmin-wfc-${simadmin_arch}.tar.gz"
     else
@@ -1076,6 +1143,7 @@ download_release_asset() {
       echo "==> primary asset download failed, trying legacy WFC asset: $legacy_wfc_url"
       if download_with_proxies "$legacy_wfc_url" "$archive_path"; then
         DOWNLOADED_RELEASE_VERSION="${FALLBACK_RELEASE_VERSION:-$VERSION}"
+        DOWNLOADED_ASSET_URL="$legacy_wfc_url"
         return 0
       fi
     fi
@@ -1089,6 +1157,19 @@ download_release_asset() {
   exit 1
 }
 
+download_managed_source_file() {
+  target_file="$1"
+  pattern="$2"
+  shift 2
+  for candidate_url in "$@"; do
+    [ -n "$candidate_url" ] || continue
+    if download_with_proxies "$candidate_url" "$target_file" 2>/dev/null && grep -q "$pattern" "$target_file" 2>/dev/null; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 prepare_managed_service_files() {
   downloaded_service="${tmp_dir}/simadmin.service.source"
   downloaded_recovery_script="${tmp_dir}/simadmin-modem-recovery.sh.source"
@@ -1098,14 +1179,15 @@ prepare_managed_service_files() {
   staged_recovery_service="${tmp_dir}/simadmin-modem-recovery.service"
 
   echo "==> downloading systemd and recovery sources"
-  download_with_proxies "$SERVICE_URL" "$downloaded_service"
-  download_with_proxies "$MODEM_RECOVERY_SCRIPT_URL" "$downloaded_recovery_script"
-  download_with_proxies "$MODEM_RECOVERY_SERVICE_URL" "$downloaded_recovery_service"
-
-  grep -q '^\[Service\]' "$downloaded_service" || {
+  if ! download_managed_source_file "$downloaded_service" '^\[Service\]' \
+    "$SERVICE_URL" \
+    "${RAW_BASE}/${selected_source_ref}/scripts/system/simadmin.service" \
+    "${RAW_BASE}/${selected_source_ref}/scripts/simadmin.service" \
+    "${RAW_BASE}/main/scripts/system/simadmin.service"; then
     echo "error: invalid SimAdmin systemd service source" >&2
     return 1
-  }
+  fi
+
   grep -q '^ExecStart=' "$downloaded_service" || {
     echo "error: SimAdmin systemd service has no ExecStart" >&2
     return 1
@@ -1114,14 +1196,25 @@ prepare_managed_service_files() {
     echo "error: SimAdmin systemd service has no WorkingDirectory" >&2
     return 1
   }
-  grep -q '^#!' "$downloaded_recovery_script" || {
+
+  if ! download_managed_source_file "$downloaded_recovery_script" '^#!' \
+    "$MODEM_RECOVERY_SCRIPT_URL" \
+    "${RAW_BASE}/${selected_source_ref}/scripts/system/simadmin-modem-recovery.sh" \
+    "${RAW_BASE}/${selected_source_ref}/scripts/simadmin-modem-recovery.sh" \
+    "${RAW_BASE}/main/scripts/system/simadmin-modem-recovery.sh"; then
     echo "error: invalid modem recovery script source" >&2
     return 1
-  }
-  grep -q '^\[Service\]' "$downloaded_recovery_service" || {
+  fi
+
+  if ! download_managed_source_file "$downloaded_recovery_service" '^\[Service\]' \
+    "$MODEM_RECOVERY_SERVICE_URL" \
+    "${RAW_BASE}/${selected_source_ref}/scripts/system/simadmin-modem-recovery.service" \
+    "${RAW_BASE}/${selected_source_ref}/scripts/simadmin-modem-recovery.service" \
+    "${RAW_BASE}/main/scripts/system/simadmin-modem-recovery.service"; then
     echo "error: invalid modem recovery systemd service source" >&2
     return 1
-  }
+  fi
+
   grep -q '^ExecStart=' "$downloaded_recovery_service" || {
     echo "error: modem recovery systemd service has no ExecStart" >&2
     return 1
@@ -1917,11 +2010,34 @@ expected_target_triple() {
 }
 
 target_edition() {
-  if truthy "$WFC" || [ "$VARIANT" = "wfc" ]; then
+  case "${VARIANT:-}" in
+    volte)
+      printf '%s\n' "volte"
+      return 0
+      ;;
+    vowifi)
+      printf '%s\n' "vowifi"
+      return 0
+      ;;
+    full)
+      printf '%s\n' "full"
+      return 0
+      ;;
+    wfc)
+      printf '%s\n' "wfc"
+      return 0
+      ;;
+  esac
+
+  if truthy "$WFC"; then
     printf '%s\n' "wfc"
     return 0
   fi
+
   case "${ASSET_NAME:-}" in
+    *volte*) printf '%s\n' "volte" ;;
+    *vowifi*) printf '%s\n' "vowifi" ;;
+    *full*) printf '%s\n' "full" ;;
     *wfc*) printf '%s\n' "wfc" ;;
     *) printf '%s\n' "standard" ;;
   esac
@@ -1952,9 +2068,19 @@ validate_package_metadata() {
     return 1
   fi
   package_edition="$(json_string_field edition < "$package_meta")"
-  if [ -n "$package_edition" ] && [ "$package_edition" != "$expected_edition" ]; then
-    echo "error: package edition mismatch: expected ${expected_edition}, got ${package_edition}" >&2
-    return 1
+  if [ -n "$package_edition" ]; then
+    edition_matched=0
+    if [ "$package_edition" = "$expected_edition" ]; then
+      edition_matched=1
+    elif [ "$expected_edition" = "vowifi" ] && [ "$package_edition" = "wfc" ]; then
+      edition_matched=1
+    elif [ "$expected_edition" = "wfc" ] && [ "$package_edition" = "vowifi" ]; then
+      edition_matched=1
+    fi
+    if [ "$edition_matched" -ne 1 ]; then
+      echo "error: package edition mismatch: expected ${expected_edition}, got ${package_edition}" >&2
+      return 1
+    fi
   fi
   PACKAGE_VERSION="$(json_string_field version < "$package_meta")"
 }
@@ -2224,6 +2350,13 @@ main() {
   install_bootstrap_dependencies
   require_cmd curl
 
+  if [ -z "$ASSET_URL" ] && [ -z "${TARGET_TAG:-}" ]; then
+    TARGET_TAG="$(resolve_target_tag || true)"
+  fi
+  if [ -n "${TARGET_TAG:-}" ]; then
+    PRIMARY_RELEASE_VERSION="${TARGET_TAG#v}"
+  fi
+
   asset_url="$(resolve_asset_url)"
   case "$asset_url" in
     *.tar.gz)
@@ -2237,7 +2370,17 @@ main() {
   esac
 
   download_release_asset "$archive_path" "$asset_url"
-  archive_asset_name="$(resolve_simadmin_asset_name)"
+  if [ -n "$ASSET_NAME" ]; then
+    archive_asset_name="$ASSET_NAME"
+  elif [ -n "${DOWNLOADED_ASSET_URL:-}" ]; then
+    archive_asset_name="${DOWNLOADED_ASSET_URL##*/}"
+    archive_asset_name="${archive_asset_name%%\?*}"
+    archive_asset_name="${archive_asset_name%%#*}"
+  elif [ -n "${TARGET_TAG:-}" ]; then
+    archive_asset_name="$(resolve_simadmin_asset_name "$TARGET_TAG")"
+  else
+    archive_asset_name="$(resolve_simadmin_asset_name)"
+  fi
   verify_release_asset "$archive_path" "$archive_asset_name"
   extract_release_package "$archive_path"
   expected_arch="$(expected_target_triple)"
