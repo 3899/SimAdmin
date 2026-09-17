@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } from 'react'
 import {
   Box,
   Card,
@@ -7,19 +7,11 @@ import {
   Button,
   TextField,
   List,
-  ListItemText,
-  ListItemButton,
   Alert,
   CircularProgress,
-  Chip,
   IconButton,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
   Divider,
   Paper,
-  Badge,
   Avatar,
   Snackbar,
   useMediaQuery,
@@ -29,20 +21,28 @@ import {
 } from '@mui/material'
 import type { Theme } from '@mui/material/styles'
 import {
-  Sms as SmsIcon,
-  Send,
   Refresh,
   Person,
   ArrowBack,
   Add,
   Checklist,
-  Delete,
-  DeleteOutline,
-  SelectAll,
   Close,
   Search,
+  SelectAll,
 } from '@mui/icons-material'
 import { api, type SmsMessage, type SmsStats } from '../api/current'
+import {
+  SmsMessageBubble,
+  SmsComposer,
+  SmsConversationItem,
+  SmsDeleteConfirmDialog,
+  SmsNewChatDialog,
+  SmsBatchBar,
+  SmsEmptyState,
+  compareSmsChronological,
+  compareSmsNewestFirst,
+  includesSearchText,
+} from './sms/index'
 
 interface ConversationGroup {
   phoneNumber: string
@@ -59,24 +59,6 @@ type DeleteTarget =
   | { type: 'batch' }
   | { type: 'conversation'; phoneNumber: string; messageCount: number }
   | { type: 'message'; message: SmsMessage }
-
-function parseSmsTimestamp(timestamp: string): Date | null {
-  const normalized = timestamp.includes(' ') ? timestamp.replace(' ', 'T') : timestamp
-  const date = new Date(normalized)
-  return Number.isNaN(date.getTime()) ? null : date
-}
-
-function smsTimestampMillis(timestamp: string): number {
-  return parseSmsTimestamp(timestamp)?.getTime() ?? 0
-}
-
-function compareSmsChronological(a: SmsMessage, b: SmsMessage): number {
-  return smsTimestampMillis(a.timestamp) - smsTimestampMillis(b.timestamp) || a.id - b.id
-}
-
-function compareSmsNewestFirst(a: SmsMessage, b: SmsMessage): number {
-  return smsTimestampMillis(b.timestamp) - smsTimestampMillis(a.timestamp) || b.id - a.id
-}
 
 function buildConversations(msgs: SmsMessage[]): ConversationGroup[] {
   const groups = new Map<string, SmsMessage[]>()
@@ -105,52 +87,6 @@ function buildConversations(msgs: SmsMessage[]): ConversationGroup[] {
   return conversationList
 }
 
-function includesSearchText(value: string, query: string) {
-  return value.toLocaleLowerCase().includes(query.toLocaleLowerCase())
-}
-
-function renderHighlightedText(text: string, query: string): ReactNode {
-  const trimmedQuery = query.trim()
-  if (!trimmedQuery) {
-    return text
-  }
-
-  const lowerText = text.toLocaleLowerCase()
-  const lowerQuery = trimmedQuery.toLocaleLowerCase()
-  const nodes: ReactNode[] = []
-  let cursor = 0
-  let matchIndex = lowerText.indexOf(lowerQuery)
-
-  while (matchIndex !== -1) {
-    if (matchIndex > cursor) {
-      nodes.push(text.slice(cursor, matchIndex))
-    }
-    const end = matchIndex + trimmedQuery.length
-    nodes.push(
-      <Box
-        key={`${matchIndex}-${end}`}
-        component="mark"
-        sx={{
-          px: 0.25,
-          borderRadius: 0.5,
-          bgcolor: '#1296DB',
-          color: 'common.white',
-        }}
-      >
-        {text.slice(matchIndex, end)}
-      </Box>,
-    )
-    cursor = end
-    matchIndex = lowerText.indexOf(lowerQuery, cursor)
-  }
-
-  if (cursor < text.length) {
-    nodes.push(text.slice(cursor))
-  }
-
-  return nodes
-}
-
 export default function SMSPage() {
   const isMobile = useMediaQuery<Theme>((theme: Theme) => theme.breakpoints.down('md'))
 
@@ -164,7 +100,6 @@ export default function SMSPage() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [newChatDialogOpen, setNewChatDialogOpen] = useState(false)
-  const [newChatNumber, setNewChatNumber] = useState('')
 
   // 对话状态
   const [conversations, setConversations] = useState<ConversationGroup[]>([])
@@ -339,7 +274,6 @@ export default function SMSPage() {
   }, [visibleConversations, messageById, selectedConversationPhones, selectedMessageIds])
 
   const hasBatchSelection = batchSelection.messageCount > 0
-  const batchSelectionText = `已选 ${batchSelection.conversationCount} 个对话共 ${batchSelection.messageCount}条短信`
   const smsStats = stats ?? { total: 0, incoming: 0, outgoing: 0, pushed: 0, push_attempted: 0 }
   const pushCount = smsStats.pushed ?? 0
   const pushAttemptedCount = smsStats.push_attempted ?? 0
@@ -376,19 +310,39 @@ export default function SMSPage() {
     setConversationMessages([])
   }
 
-  const handleStartNewChat = () => {
-    if (!newChatNumber.trim()) {
+  const handleStartNewChat = async (phone: string, text: string) => {
+    if (!phone.trim()) {
       setError('请输入电话号码')
       return
     }
     setNewChatDialogOpen(false)
-    setSelectedConversation(newChatNumber)
-    setPhoneNumber(newChatNumber)
-    setConversationMessages([])
-    setNewChatNumber('')
+    setSendLoading(true)
+    setError(null)
+    setSuccess(null)
+
+    try {
+      const response = await api.sendSms(phone, text)
+      if (response.status === 'ok') {
+        setSuccess(`短信已发送到 ${phone}`)
+        setSelectedConversation(phone)
+        setPhoneNumber(phone)
+        setContent('')
+        setTimeout(() => {
+          void fetchMessages()
+          void fetchStats()
+          void fetchConversation(phone)
+        }, 1000)
+      } else {
+        setError(response.message)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSendLoading(false)
+    }
   }
 
-  const handleSend = async () => {
+  const handleSendMessage = async () => {
     if (!phoneNumber.trim()) {
       setError('请输入电话号码')
       return
@@ -451,30 +405,32 @@ export default function SMSPage() {
       resetBatchSelection()
       return
     }
-    setSelectedConversationPhones(new Set(visibleConversations.map((conv) => conv.phoneNumber)))
-    setSelectedMessageIds(new Set())
+
+    const nextPhones = new Set<string>()
+    const nextIds = new Set<number>()
+
+    visibleConversations.forEach((conv) => {
+      nextPhones.add(conv.phoneNumber)
+      conv.messages.forEach((msg) => nextIds.delete(msg.id))
+    })
+
+    setSelectedConversationPhones(nextPhones)
+    setSelectedMessageIds(nextIds)
   }
 
   const toggleMessageSelection = (msg: SmsMessage) => {
     if (selectedConversationPhones.has(msg.phone_number)) {
-      const relatedMessages = Array.from(messageById.values()).filter(
-        (item) => item.phone_number === msg.phone_number,
-      )
-      setSelectedConversationPhones((prev) => {
-        const next = new Set(prev)
-        next.delete(msg.phone_number)
-        return next
+      const nextPhones = new Set(selectedConversationPhones)
+      nextPhones.delete(msg.phone_number)
+      const nextIds = new Set(selectedMessageIds)
+      const currentConv = conversations.find((conv) => conv.phoneNumber === msg.phone_number)
+      currentConv?.messages.forEach((item) => {
+        if (item.id !== msg.id) {
+          nextIds.add(item.id)
+        }
       })
-      setSelectedMessageIds((prev) => {
-        const next = new Set(prev)
-        relatedMessages.forEach((item) => {
-          if (item.id !== msg.id) {
-            next.add(item.id)
-          }
-        })
-        next.delete(msg.id)
-        return next
-      })
+      setSelectedConversationPhones(nextPhones)
+      setSelectedMessageIds(nextIds)
       return
     }
 
@@ -524,36 +480,12 @@ export default function SMSPage() {
     selectedConversationPhones.has(msg.phone_number) || selectedMessageIds.has(msg.id)
   )
 
-  const getConversationMessageSelectionState = (conv: ConversationGroup) => {
-    if (selectedConversationPhones.has(conv.phoneNumber)) {
-      return { checked: true, indeterminate: false }
-    }
-
-    const selectedCount = conv.messages.filter((msg) => selectedMessageIds.has(msg.id)).length
-    return {
-      checked: selectedCount > 0 && selectedCount === conv.messages.length,
-      indeterminate: selectedCount > 0 && selectedCount < conv.messages.length,
-    }
-  }
-
-  const requestConversationDelete = (
-    event: MouseEvent<HTMLButtonElement>,
-    conv: ConversationGroup,
-  ) => {
-    event.stopPropagation()
+  const requestConversationDelete = (conv: ConversationGroup) => {
     setDeleteTarget({
       type: 'conversation',
       phoneNumber: conv.phoneNumber,
       messageCount: conv.messages.length,
     })
-  }
-
-  const requestMessageDelete = (
-    event: MouseEvent<HTMLButtonElement>,
-    message: SmsMessage,
-  ) => {
-    event.stopPropagation()
-    setDeleteTarget({ type: 'message', message })
   }
 
   const refreshAfterDelete = (clearConversation: boolean) => {
@@ -622,94 +554,19 @@ export default function SMSPage() {
     }
   }
 
-  const formatTime = (timestamp: string) => {
-    try {
-      const date = parseSmsTimestamp(timestamp)
-      if (!date) return timestamp
-      const now = new Date()
-      const isToday = date.toDateString() === now.toDateString()
-      if (isToday) {
-        return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-      }
-      return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-    } catch {
-      return timestamp
-    }
-  }
-
-  const formatShortTime = (timestamp: string) => {
-    try {
-      const date = parseSmsTimestamp(timestamp)
-      if (!date) return timestamp
-      const now = new Date()
-      const isToday = date.toDateString() === now.toDateString()
-      if (isToday) {
-        return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-      }
-      return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
-    } catch {
-      return timestamp
-    }
-  }
-
-  const deleteDialogTitle = deleteTarget?.type === 'batch'
-    ? '确认批量删除'
-    : deleteTarget?.type === 'conversation'
-      ? '确认删除对话'
-      : '确认删除短信'
-
-  const deleteDialogContent = (() => {
-    if (!deleteTarget) {
-      return ''
-    }
-    if (deleteTarget.type === 'batch') {
-      return `${batchSelectionText}，确定要删除吗？此操作不可撤销。`
-    }
-    if (deleteTarget.type === 'conversation') {
-      return `确定要删除与 ${deleteTarget.phoneNumber} 的对话及全部 ${deleteTarget.messageCount} 条短信吗？此操作不可撤销。`
-    }
-    return '确定要删除当前短信内容吗？此操作不可撤销。'
-  })()
-
   const renderBatchSelectionBar = () => (
     batchMode && hasBatchSelection ? (
-      <Box
-        sx={{
-          mx: 2,
-          mb: 1,
-          p: 1,
-          borderRadius: 1,
-          bgcolor: 'action.hover',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 1,
-        }}
-      >
-        <Typography variant="body2" fontWeight={600}>
-          {batchSelectionText}
-        </Typography>
-        <Button
-          size="small"
-          color="error"
-          variant="contained"
-          startIcon={<Delete />}
-          onClick={() => setDeleteTarget({ type: 'batch' })}
-          disabled={deleteLoading}
-        >
-          删除
-        </Button>
-      </Box>
+      <SmsBatchBar
+        selectedText={`已选 ${batchSelection.conversationCount} 个对话共 ${batchSelection.messageCount} 条短信`}
+        onDelete={() => setDeleteTarget({ type: 'batch' })}
+        deleting={deleteLoading}
+      />
     ) : null
   )
 
   const conversationListContent = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <Box display="flex" gap={1} p={2} flexWrap="wrap">
-        {/* <Paper sx={{ p: 1, flex: 1, minWidth: 60, textAlign: 'center' }}>
-          <Typography variant="h6" color="primary" fontWeight={600}>{smsStats.total}</Typography>
-          <Typography variant="caption" color="text.secondary">总计</Typography>
-        </Paper> */}
         <Paper sx={{ p: 1, flex: 1, minWidth: 60, textAlign: 'center' }}>
           <Typography variant="h6" color="success.main" fontWeight={600}>{smsStats.incoming}</Typography>
           <Typography variant="caption" color="text.secondary">接收</Typography>
@@ -799,7 +656,6 @@ export default function SMSPage() {
                 <InputAdornment position="end">
                   <IconButton
                     size="small"
-                    aria-label="清空搜索"
                     onClick={() => setSearchQuery('')}
                     edge="end"
                   >
@@ -809,111 +665,38 @@ export default function SMSPage() {
               ) : null,
             },
           }}
-          sx={{
-            '& .MuiOutlinedInput-root': {
-              bgcolor: 'transparent',
-              borderRadius: 1.5,
-              '& .MuiOutlinedInput-notchedOutline': {
-                borderColor: 'divider',
-              },
-              '&:hover .MuiOutlinedInput-notchedOutline': {
-                borderColor: 'text.disabled',
-              },
-              '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-                borderColor: '#1296DB',
-              },
-            },
-          }}
         />
       </Box>
 
-      {renderBatchSelectionBar()}
-
-      <Divider />
+      {!isMobile && renderBatchSelectionBar()}
 
       {loading && conversations.length === 0 ? (
-        <Box display="flex" justifyContent="center" py={4}><CircularProgress /></Box>
-      ) : conversations.length === 0 ? (
-        <Box p={2}><Alert severity="info">暂无对话，点击 + 开始新对话</Alert></Box>
+        <Box display="flex" justifyContent="center" py={4}>
+          <CircularProgress />
+        </Box>
       ) : visibleConversations.length === 0 ? (
-        <Box p={2}><Alert severity="info">未找到匹配的对话</Alert></Box>
+        <SmsEmptyState type={searchTerm ? 'search_empty' : 'no_conversations'} />
       ) : (
-        <List sx={{ flex: 1, overflow: 'auto' }}>
-          {visibleConversations.map((conv, idx) => {
-            const selectionState = getConversationMessageSelectionState(conv)
-            const displayMessage = conv.matchedMessage ?? conv.lastMessage
-            return (
-              <Box
-                key={conv.phoneNumber}
-                sx={{
-                  '&:hover .conversation-delete, &:focus-within .conversation-delete': {
-                    opacity: 1,
-                  },
-                }}
-              >
-                <ListItemButton
-                  onClick={() => handleSelectConversation(conv.phoneNumber, conv.matchedMessage?.id)}
-                  selected={selectedConversation === conv.phoneNumber}
-                  sx={{ gap: 1 }}
-                >
-                  {batchMode && (
-                    <Checkbox
-                      edge="start"
-                      size="small"
-                      checked={selectionState.checked}
-                      indeterminate={selectionState.indeterminate}
-                      onClick={(event) => event.stopPropagation()}
-                      onChange={() => toggleConversationSelection(conv.phoneNumber)}
-                      inputProps={{ 'aria-label': `选择对话 ${conv.phoneNumber}` }}
-                    />
-                  )}
-                  <Avatar sx={{ bgcolor: 'primary.light' }}><Person /></Avatar>
-                  <ListItemText
-                    primary={
-                      <Box display="flex" alignItems="center" gap={1}>
-                        <Typography fontWeight={600}>
-                          {renderHighlightedText(conv.phoneNumber, searchTerm)}
-                        </Typography>
-                        <Badge badgeContent={conv.messages.length} color="primary" max={99} />
-                      </Box>
-                    }
-                    secondary={
-                      <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 180 }}>
-                        {displayMessage.direction === 'outgoing' ? '你: ' : ''}
-                        {renderHighlightedText(displayMessage.content, searchTerm)}
-                      </Typography>
-                    }
-                  />
-                  <Typography variant="caption" color="text.secondary" sx={{ minWidth: 44, textAlign: 'right' }}>
-                    {formatShortTime(displayMessage.timestamp)}
-                  </Typography>
-                  {!batchMode && (
-                    <Tooltip title="删除对话">
-                      <IconButton
-                        className="conversation-delete"
-                        size="small"
-                        onClick={(event) => requestConversationDelete(event, conv)}
-                        sx={{
-                          opacity: 0,
-                          color: 'text.secondary',
-                          transition: (theme: Theme) => theme.transitions.create(['opacity', 'color'], {
-                            duration: theme.transitions.duration.shortest,
-                          }),
-                          '&:hover': {
-                            color: 'error.main',
-                            bgcolor: 'rgba(211, 47, 47, 0.08)',
-                          },
-                        }}
-                      >
-                        <DeleteOutline fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  )}
-                </ListItemButton>
-                {idx < visibleConversations.length - 1 && <Divider />}
-              </Box>
-            )
-          })}
+        <List sx={{ flex: 1, overflow: 'auto', p: 0 }}>
+          {visibleConversations.map((conv, idx) => (
+            <Box key={conv.phoneNumber}>
+              <SmsConversationItem
+                phoneNumber={conv.phoneNumber}
+                lastMessageContent={conv.lastMessage.content}
+                timestamp={conv.lastMessage.timestamp}
+                messageCount={conv.messages.length}
+                unreadCount={conv.unreadCount}
+                isSelected={selectedConversation === conv.phoneNumber}
+                onClick={() => handleSelectConversation(conv.phoneNumber)}
+                searchQuery={searchQuery}
+                batchMode={batchMode}
+                checked={selectedConversationPhones.has(conv.phoneNumber)}
+                onToggleSelect={() => toggleConversationSelection(conv.phoneNumber)}
+                onDelete={() => requestConversationDelete(conv)}
+              />
+              {idx < visibleConversations.length - 1 && <Divider />}
+            </Box>
+          ))}
         </List>
       )}
     </Box>
@@ -965,240 +748,112 @@ export default function SMSPage() {
         {conversationLoading ? (
           <Box display="flex" justifyContent="center" py={4}><CircularProgress /></Box>
         ) : conversationMessages.length === 0 ? (
-          <Box display="flex" justifyContent="center" alignItems="center" height="100%">
-            <Typography color="text.secondary">开始发送第一条消息</Typography>
-          </Box>
+          <SmsEmptyState type="no_messages" title="开始发送第一条消息" />
         ) : (
           <>
             {conversationMessages.map((msg, idx) => (
-              <Box
+              <SmsMessageBubble
                 key={msg.id || idx}
-                id={`sms-message-${msg.id}`}
-                display="flex"
-                justifyContent={msg.direction === 'outgoing' ? 'flex-end' : 'flex-start'}
-                alignItems="center"
-                gap={0.75}
-                mb={1.5}
-                onClick={batchMode ? () => toggleMessageSelection(msg) : undefined}
-                sx={{
-                  cursor: batchMode ? 'pointer' : 'default',
-                  '&:hover .message-delete, &:focus-within .message-delete': {
-                    opacity: 1,
-                  },
-                }}
-              >
-                {batchMode && (
-                  <Checkbox
-                    size="small"
-                    checked={isMessageSelected(msg)}
-                    onClick={(event) => event.stopPropagation()}
-                    onChange={() => toggleMessageSelection(msg)}
-                    inputProps={{ 'aria-label': '选择短信' }}
-                  />
-                )}
-                <Paper
-                  elevation={1}
-                  sx={{
-                    p: 1.5,
-                    maxWidth: '75%',
-                    bgcolor: msg.direction === 'outgoing'
-                      ? 'primary.main'
-                      : (theme: Theme) => theme.palette.mode === 'dark' ? 'grey.800' : 'white',
-                    color: msg.direction === 'outgoing'
-                      ? 'white'
-                      : 'text.primary',
-                    borderRadius: 2,
-                    borderTopRightRadius: msg.direction === 'outgoing' ? 0 : 16,
-                    borderTopLeftRadius: msg.direction === 'incoming' ? 0 : 16,
-                  }}
-                >
-                  <Typography variant="body2" sx={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
-                    {renderHighlightedText(msg.content, searchTerm)}
-                  </Typography>
-                  <Box display="flex" alignItems="center" justifyContent="flex-end" gap={0.5} mt={0.5}>
-                    <Typography
-                      variant="caption"
-                      sx={{ opacity: 0.7 }}
-                    >
-                      {formatTime(msg.timestamp)}
-                    </Typography>
-                    {msg.direction === 'outgoing' && (
-                      msg.status === 'sent' ? (
-                        <Chip label="已发送" size="small" sx={{ height: 16, fontSize: '0.65rem', bgcolor: 'rgba(255,255,255,0.2)' }} />
-                      ) : msg.status === 'failed' ? (
-                        <Chip label="失败" size="small" color="error" sx={{ height: 16, fontSize: '0.65rem' }} />
-                      ) : null
-                    )}
-                  </Box>
-                </Paper>
-                {!batchMode && (
-                  <Tooltip title="删除短信">
-                    <IconButton
-                      className="message-delete"
-                      size="small"
-                      onClick={(event) => requestMessageDelete(event, msg)}
-                      sx={{
-                        opacity: 0,
-                        color: 'text.secondary',
-                        transition: (theme: Theme) => theme.transitions.create(['opacity', 'color'], {
-                          duration: theme.transitions.duration.shortest,
-                        }),
-                        '&:hover': {
-                          color: 'error.main',
-                          bgcolor: 'rgba(211, 47, 47, 0.08)',
-                        },
-                      }}
-                    >
-                      <DeleteOutline fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                )}
-              </Box>
+                message={msg}
+                searchQuery={searchTerm}
+                batchMode={batchMode}
+                checked={isMessageSelected(msg)}
+                onToggleSelect={() => toggleMessageSelection(msg)}
+                onDelete={(m) => setDeleteTarget({ type: 'message', message: m as any })}
+                onCopySuccess={(code) => setSuccess(`验证码 [${code}] 已复制`)}
+              />
             ))}
             <div ref={chatEndRef} />
           </>
         )}
       </Box>
 
-      <Box
-        sx={{
-          p: 2,
-          borderTop: 1,
-          borderColor: 'divider',
-          bgcolor: 'background.paper',
-        }}
-      >
-        <TextField
-          fullWidth
-          multiline
-          maxRows={4}
-          value={content}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => setContent(e.target.value)}
-          placeholder="输入短信内容..."
-          disabled={sendLoading}
-          onFocus={() => { inputFocusedRef.current = true }}
-          onBlur={() => { inputFocusedRef.current = false }}
-          onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              void handleSend()
-            }
-          }}
-          slotProps={{
-            input: {
-              endAdornment: (
-                <InputAdornment position="end">
-                  <IconButton
-                    color="primary"
-                    onClick={() => void handleSend()}
-                    disabled={sendLoading || !content.trim()}
-                  >
-                    {sendLoading ? <CircularProgress size={24} /> : <Send />}
-                  </IconButton>
-                </InputAdornment>
-              ),
-            },
-          }}
-        />
-        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
-          {content.length} 字符 | Enter 发送，Shift+Enter 换行
-        </Typography>
-      </Box>
-    </Box>
-  )
-
-  const emptyStateContent = (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', p: 4 }}>
-      <SmsIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
-      <Typography variant="h6" color="text.secondary" gutterBottom>
-        选择一个对话开始聊天
-      </Typography>
-      <Typography variant="body2" color="text.secondary">
-        或点击左上角 + 开始新对话
-      </Typography>
+      {/* 底部输入框 */}
+      <SmsComposer
+        value={content}
+        onChange={setContent}
+        onSend={handleSendMessage}
+        disabled={sendLoading}
+        sending={sendLoading}
+        onFocus={() => { inputFocusedRef.current = true }}
+        onBlur={() => { inputFocusedRef.current = false }}
+      />
     </Box>
   )
 
   return (
-    <Box sx={{ height: 'calc(100vh - 140px)', minHeight: 500 }}>
-      <Box display="flex" alignItems="center" gap={1} mb={2}>
-        <Typography variant="h5" fontWeight={700}>
-          短信管理
-        </Typography>
-      </Box>
-
-      <Snackbar open={!!error} autoHideDuration={4000} resumeHideDuration={3000} onClose={() => setError(null)} anchorOrigin={{ vertical: 'top', horizontal: 'center' }}>
-        <Alert severity="error" onClose={() => setError(null)} variant="filled">{error}</Alert>
-      </Snackbar>
-      <Snackbar open={!!success} autoHideDuration={3000} resumeHideDuration={3000} onClose={() => setSuccess(null)} anchorOrigin={{ vertical: 'top', horizontal: 'center' }}>
-        <Alert severity="success" onClose={() => setSuccess(null)} variant="filled">{success}</Alert>
-      </Snackbar>
-
-      <Card sx={{ height: 'calc(100% - 48px)' }}>
-        <CardContent sx={{ height: '100%', p: 0, '&:last-child': { pb: 0 } }}>
+    <Box sx={{ p: { xs: 1, sm: 2, md: 3 } }}>
+      <Card sx={{ height: 'calc(100vh - 120px)', minHeight: 500, display: 'flex', flexDirection: 'column' }}>
+        <CardContent sx={{ flex: 1, p: '0 !important', display: 'flex', overflow: 'hidden' }}>
           {isMobile ? (
-            selectedConversation ? chatAreaContent : conversationListContent
+            selectedConversation ? (
+              <Box sx={{ width: '100%', height: '100%' }}>{chatAreaContent}</Box>
+            ) : (
+              <Box sx={{ width: '100%', height: '100%' }}>{conversationListContent}</Box>
+            )
           ) : (
-            <Box display="flex" height="100%">
-              <Box
-                sx={{
-                  width: 340,
-                  borderRight: 1,
-                  borderColor: 'divider',
-                  flexShrink: 0,
-                }}
-              >
+            <>
+              <Box sx={{ width: { sm: '40%', md: '35%' }, borderRight: 1, borderColor: 'divider', height: '100%' }}>
                 {conversationListContent}
               </Box>
-              <Box sx={{ flex: 1 }}>
-                {selectedConversation ? chatAreaContent : emptyStateContent}
+              <Box sx={{ flex: 1, height: '100%' }}>
+                {selectedConversation ? (
+                  chatAreaContent
+                ) : (
+                  <SmsEmptyState type="unselected" />
+                )}
               </Box>
-            </Box>
+            </>
           )}
         </CardContent>
       </Card>
 
-      <Dialog open={!!deleteTarget} onClose={() => !deleteLoading && setDeleteTarget(null)}>
-        <DialogTitle>{deleteDialogTitle}</DialogTitle>
-        <DialogContent>
-          <Typography>{deleteDialogContent}</Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteTarget(null)} disabled={deleteLoading}>取消</Button>
-          <Button
-            onClick={() => void handleConfirmDelete()}
-            color="error"
-            variant="contained"
-            disabled={deleteLoading || (deleteTarget?.type === 'batch' && !hasBatchSelection)}
-          >
-            {deleteLoading ? '删除中...' : '确认删除'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      {/* 新建短信对话框 */}
+      <SmsNewChatDialog
+        open={newChatDialogOpen}
+        onClose={() => setNewChatDialogOpen(false)}
+        onSend={({ phoneNumber: phone, content: text }) => handleStartNewChat(phone, text)}
+        loading={sendLoading}
+        error={error}
+      />
 
-      <Dialog open={newChatDialogOpen} onClose={() => setNewChatDialogOpen(false)}>
-        <DialogTitle>新建对话</DialogTitle>
-        <DialogContent>
-          <TextField
-            autoFocus
-            fullWidth
-            label="电话号码"
-            value={newChatNumber}
-            onChange={(e: ChangeEvent<HTMLInputElement>) => setNewChatNumber(e.target.value)}
-            placeholder="输入收件人电话号码"
-            sx={{ mt: 1 }}
-            onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
-              if (e.key === 'Enter') {
-                handleStartNewChat()
-              }
-            }}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setNewChatDialogOpen(false)}>取消</Button>
-          <Button onClick={handleStartNewChat} variant="contained">开始对话</Button>
-        </DialogActions>
-      </Dialog>
+      {/* 删除确认弹窗 */}
+      <SmsDeleteConfirmDialog
+        open={Boolean(deleteTarget)}
+        target={deleteTarget ? {
+          type: deleteTarget.type,
+          phone_number: (deleteTarget as any).phoneNumber,
+          message_count: (deleteTarget as any).messageCount,
+          message: (deleteTarget as any).message,
+        } : null}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
+        loading={deleteLoading}
+        error={error}
+        batchCount={batchSelection.messageCount}
+      />
+
+      <Snackbar
+        open={Boolean(success)}
+        autoHideDuration={4000}
+        onClose={() => setSuccess(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setSuccess(null)} severity="success" sx={{ width: '100%' }}>
+          {success}
+        </Alert>
+      </Snackbar>
+
+      <Snackbar
+        open={Boolean(error)}
+        autoHideDuration={6000}
+        onClose={() => setError(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setError(null)} severity="error" sx={{ width: '100%' }}>
+          {error}
+        </Alert>
+      </Snackbar>
     </Box>
   )
 }
