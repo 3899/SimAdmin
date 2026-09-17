@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     path::Path,
     sync::{Arc, Mutex},
     time::Duration,
@@ -228,6 +228,11 @@ impl AgentStore {
                     .any(|item| item.item_id == item_id),
                 "event_batch" => envelope
                     .decode_payload::<simadmin_protocol::EventBatchPayload>()?
+                    .items
+                    .iter()
+                    .any(|item| item.item_id == item_id),
+                "sms_deleted_batch" => envelope
+                    .decode_payload::<simadmin_protocol::SmsDeletedBatchPayload>()?
                     .items
                     .iter()
                     .any(|item| item.item_id == item_id),
@@ -500,6 +505,12 @@ pub trait AgentExecutor: Send + Sync + 'static {
     ) -> AgentResult<Vec<simadmin_protocol::SmsItem>> {
         Ok(vec![])
     }
+    async fn deleted_sms_items(
+        &self,
+        _device_ids: &[String],
+    ) -> AgentResult<Vec<simadmin_protocol::SmsDeletedItem>> {
+        Ok(vec![])
+    }
     async fn event_items(
         &self,
         _device_ids: &[String],
@@ -758,7 +769,27 @@ impl<E: AgentExecutor> AgentRuntime<E> {
                 )?)?;
             }
         }
-        let events = self.store.retain_undelivered(
+        let deleted_sms = self.store.retain_undelivered(
+            "sms_deleted_batch",
+            self.executor.deleted_sms_items(&self.config.device_ids).await?,
+            |item| item.item_id.as_str(),
+        )?;
+        for item in deleted_sms {
+            if !self.store.has_pending_item("sms_deleted_batch", &item.item_id)? {
+                self.store.enqueue(&Envelope::new(
+                    "sms_deleted_batch",
+                    &agent_id,
+                    item.device_id.clone(),
+                    None,
+                    simadmin_protocol::SmsDeletedBatchPayload {
+                        items: vec![item.clone()],
+                        item_ids: vec![item.item_id.clone()],
+                        device_id: item.device_id.clone(),
+                    },
+                )?)?;
+            }
+        }
+                let events = self.store.retain_undelivered(
             "event_batch",
             self.executor.event_items(&self.config.device_ids).await?,
             |item| item.item_id.as_str(),

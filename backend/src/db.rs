@@ -455,7 +455,14 @@ impl Database {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_hub_notification_sync
-                ON hub_notification_events(sync_status,created_at);",
+                ON hub_notification_events(sync_status,created_at);
+            CREATE TABLE IF NOT EXISTS hub_sms_deleted_events (
+                item_id TEXT PRIMARY KEY,
+                sync_status TEXT NOT NULL DEFAULT 'pending',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_hub_sms_deleted_sync
+                ON hub_sms_deleted_events(sync_status, created_at);",
         )?;
         normalize_existing_sms_timestamps(&conn)?;
 
@@ -978,6 +985,44 @@ impl Database {
         )
     }
 
+    pub fn enqueue_sms_deleted(&self, item_ids: &[String]) -> Result<()> {
+        if item_ids.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "INSERT OR IGNORE INTO hub_sms_deleted_events (item_id, sync_status) VALUES (?1, 'pending')",
+        )?;
+        for item_id in item_ids {
+            stmt.execute([item_id])?;
+        }
+        Ok(())
+    }
+
+    pub fn unsynced_sms_deleted(&self, limit: i64) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT item_id FROM hub_sms_deleted_events WHERE sync_status != 'synced' ORDER BY created_at LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit], |row| row.get(0))?;
+        rows.collect()
+    }
+
+    pub fn mark_sms_deleted_synced(&self, item_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE hub_sms_deleted_events SET sync_status = 'synced' WHERE item_id = ?1",
+            [item_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_sms_ids_by_phone(&self, phone: &str) -> Result<Vec<i64>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id FROM sms_messages WHERE phone_number = ?1")?;
+        let rows = stmt.query_map([phone], |r| r.get(0))?;
+        rows.collect()
+    }
     pub fn enqueue_hub_event(&self, event: &HubEventRecord) -> Result<bool> {
         Ok(self.conn.lock().unwrap().execute(
             "INSERT OR IGNORE INTO hub_notification_events

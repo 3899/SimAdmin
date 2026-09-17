@@ -125,7 +125,7 @@ usage() {
     '  sh install_latest.sh --vowifi               # Install latest VoWiFi release' \
     '  sh install_latest.sh --full                 # Install latest Full release' \
     '  sh install_latest.sh --wfc                  # Install latest Wi-Fi Calling release' \
-    '  sh install_latest.sh -v1.2.0 --volte        # Install v1.2.0 VoLTE release' \
+    '  sh install_latest.sh -v1.2.1 --volte        # Install v1.2.1 VoLTE release' \
     '  curl -fsSL .../install_latest.sh | WFC=1 sh # Install latest WFC release via env' \
     '' \
     'Options:' \

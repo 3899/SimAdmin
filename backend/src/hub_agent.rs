@@ -292,8 +292,17 @@ impl SimAdminExecutor {
                     "radio_mode": radio.as_ref().map(|value| value.mode.clone()),
                     "apn": self.app.config_manager.get_apn_config(),
                 }),
-                device_network: serde_json::to_value(self.app.config_manager.get_device_network())
-                    .unwrap_or_default(),
+                device_network: {
+                    let mut net_val = serde_json::to_value(self.app.config_manager.get_device_network())
+                        .unwrap_or_default();
+                    if let Some(obj) = net_val.as_object_mut() {
+                        let conn_addrs = simadmin_device_runtime::connection_addresses();
+                        if let Some(first_v4) = conn_addrs.ipv4.first() {
+                            obj.insert("lan_ip".to_string(), serde_json::Value::String(first_v4.clone()));
+                        }
+                    }
+                    net_val
+                },
                 vowifi: Value::Null,
                 volte: Value::Null,
                 phone: json!({}),
@@ -332,7 +341,49 @@ impl SimAdminExecutor {
             "sent",
             None,
         )?;
-        Ok(json!({"path": path, "local_sms_id": sms_id, "hub_command_id": command.command_id}))
+        let formatted_local_sms_id = format!("sms-local-{sms_id}");
+        Ok(json!({
+            "path": path,
+            "local_sms_id": formatted_local_sms_id,
+            "raw_local_sms_id": sms_id,
+            "hub_command_id": command.command_id
+        }))
+    }
+
+    async fn execute_delete_sms(&self, command: &CommandPayload) -> AgentResult<Value> {
+        let mut deleted_count = 0;
+        let item_ids: Vec<String> = command
+            .payload
+            .get("item_ids")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .or_else(|| {
+                command
+                    .payload
+                    .get("item_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| vec![s.to_string()])
+            })
+            .unwrap_or_default();
+
+        let mut parsed_ids = Vec::new();
+        for item in &item_ids {
+            let raw = item.strip_prefix("sms-local-").unwrap_or(item);
+            if let Ok(id) = raw.parse::<i64>() {
+                parsed_ids.push(id);
+            }
+        }
+        if !parsed_ids.is_empty() {
+            match self.app.database.delete_sms_batch(&parsed_ids, &[]) {
+                Ok(count) => deleted_count = count,
+                Err(e) => {
+                    tracing::warn!("Failed to delete sms batch via hub command: {e}");
+                }
+            }
+        }
+        Ok(json!({
+            "deleted": deleted_count,
+            "item_ids": item_ids
+        }))
     }
 
     async fn execute_device_action(&self, command: &CommandPayload) -> AgentResult<Value> {
@@ -573,6 +624,20 @@ impl AgentExecutor for SimAdminExecutor {
         Ok(vec![self.snapshot(self.device_id(device_ids)?).await])
     }
 
+    async fn deleted_sms_items(&self, device_ids: &[String]) -> AgentResult<Vec<simadmin_protocol::SmsDeletedItem>> {
+        let device_id = self.device_id(device_ids)?.to_owned();
+        Ok(self
+            .app
+            .database
+            .unsynced_sms_deleted(100)?
+            .into_iter()
+            .map(|item_id| simadmin_protocol::SmsDeletedItem {
+                item_id,
+                device_id: Some(device_id.clone()),
+            })
+            .collect())
+    }
+
     async fn sms_items(&self, device_ids: &[String]) -> AgentResult<Vec<SmsItem>> {
         let device_id = self.device_id(device_ids)?.to_owned();
         let sim = get_sim_info_data_with_cache(&self.app.dbus_conn, Some(&self.app.database))
@@ -648,7 +713,11 @@ impl AgentExecutor for SimAdminExecutor {
         source: &Envelope,
         ack: &MessageAckPayload,
     ) -> AgentResult<()> {
-        if source.message_type == "sms_batch" {
+        if source.message_type == "sms_deleted_batch" {
+            for item in ack.items.iter().filter(|item| item.accepted) {
+                self.app.database.mark_sms_deleted_synced(&item.item_id)?;
+            }
+        } else if source.message_type == "sms_batch" {
             for item in ack.items.iter().filter(|item| item.accepted) {
                 if let Some(id) = item
                     .item_id
@@ -687,6 +756,7 @@ impl AgentExecutor for SimAdminExecutor {
         }
         let result = match command.command_type.as_str() {
             "send_sms" => self.execute_send_sms(command).await,
+            "delete_sms" => self.execute_delete_sms(command).await,
             "device_action" => self.execute_device_action(command).await,
             "restart_baseband" => {
                 self.execute_device_action(&CommandPayload {
@@ -1348,7 +1418,7 @@ fn router_cell() -> &'static std::sync::OnceLock<Router> {
     &ROUTER
 }
 
-fn hub_business_wakeup() -> &'static Arc<Notify> {
+pub fn hub_business_wakeup() -> &'static Arc<Notify> {
     static WAKEUP: OnceLock<Arc<Notify>> = OnceLock::new();
     WAKEUP.get_or_init(|| Arc::new(Notify::new()))
 }

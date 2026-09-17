@@ -391,17 +391,13 @@ impl NotificationSender {
 
     /// Forward an incoming SMS to all enabled channels.
     pub async fn forward_sms(&self, message: &SmsMessage) -> Result<(), String> {
-        if crate::hub_agent::queue_notification_event(
-            &self.config_manager,
-            &self.database,
-            "sms",
-            "sms.received",
-            compact_summary(&format!("[{}] {}", message.phone_number, message.content)),
-            serde_json::to_value(message).map_err(|error| error.to_string())?,
-        )
-        .await?
-        {
-            return Ok(());
+        let config = self.config_manager.get_hub_config();
+        if config.enabled {
+            let online = crate::hub_agent::runtime_status(&config).await.online;
+            if online {
+                crate::hub_agent::hub_business_wakeup().notify_one();
+                return Ok(());
+            }
         }
         self.forward_sms_local(message).await
     }

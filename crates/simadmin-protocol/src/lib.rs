@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+﻿use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -429,6 +429,23 @@ pub struct DeviceStatusBatchPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SmsBatchPayload {
     pub items: Vec<SmsItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmsDeletedItem {
+    pub item_id: String,
+    #[serde(default)]
+    pub device_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmsDeletedBatchPayload {
+    #[serde(default)]
+    pub items: Vec<SmsDeletedItem>,
+    #[serde(default)]
+    pub item_ids: Vec<String>,
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -893,7 +910,7 @@ mod tests {
             None,
             HeartbeatPayload {
                 agent_type: AgentType::Simadmin,
-                agent_version: "1.2.0".into(),
+                agent_version: "1.2.1".into(),
                 session_generation: 4,
                 managed_device_count: 1,
                 local_queue_size: 0,

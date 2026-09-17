@@ -3153,13 +3153,17 @@ pub async fn delete_sms_message_handler(
     Path(id): Path<i64>,
 ) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
     match db.delete_sms(id) {
-        Ok(deleted) => (
+        Ok(deleted) => {
+            let _ = db.enqueue_sms_deleted(&[format!("sms-local-{}", id)]);
+            crate::hub_agent::hub_business_wakeup().notify_one();
+            (
             StatusCode::OK,
             Json(ApiResponse::success_with_message(
                 "SMS deleted",
                 json!({ "deleted": deleted }),
             )),
-        ),
+        )
+        }
         Err(e) => (
             StatusCode::OK,
             Json(ApiResponse::error(format!("Failed: {}", e))),
@@ -3172,9 +3176,15 @@ pub async fn delete_sms_conversation_handler(
     State(app): State<AppState>,
     Path(phone_number): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
+    let phone_ids = app.database.get_sms_ids_by_phone(&phone_number).unwrap_or_default();
     match app.database.delete_sms_conversation(&phone_number) {
         Ok(deleted) => {
             schedule_sms_db_maintenance(&app, deleted);
+            if !phone_ids.is_empty() {
+                let items: Vec<String> = phone_ids.into_iter().map(|id| format!("sms-local-{}", id)).collect();
+                let _ = app.database.enqueue_sms_deleted(&items);
+                crate::hub_agent::hub_business_wakeup().notify_one();
+            }
             (
                 StatusCode::OK,
                 Json(ApiResponse::success_with_message(
@@ -3199,12 +3209,23 @@ pub async fn delete_sms_batch_handler(
         return (StatusCode::OK, Json(ApiResponse::error("No SMS selected")));
     }
 
+    let mut all_ids = payload.ids.clone();
+    for pn in &payload.phone_numbers {
+        if let Ok(ids) = app.database.get_sms_ids_by_phone(pn) {
+            all_ids.extend(ids);
+        }
+    }
     match app
         .database
         .delete_sms_batch(&payload.ids, &payload.phone_numbers)
     {
         Ok(deleted) => {
             schedule_sms_db_maintenance(&app, deleted);
+            if !all_ids.is_empty() {
+                let items: Vec<String> = all_ids.into_iter().map(|id| format!("sms-local-{}", id)).collect();
+                let _ = app.database.enqueue_sms_deleted(&items);
+                crate::hub_agent::hub_business_wakeup().notify_one();
+            }
             (
                 StatusCode::OK,
                 Json(ApiResponse::success_with_message(
