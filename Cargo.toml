@@ -1,4 +1,4 @@
-[workspace]
+﻿[workspace]
 resolver = "2"
 members = [
   "backend",
@@ -8,6 +8,7 @@ members = [
   "crates/simadmin-device-runtime",
   "crates/simadmin-notify",
   "crates/simadmin-protocol",
+  "crates/simadmin-sms-core",
 ]
 
 [workspace.package]

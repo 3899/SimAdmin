@@ -1809,6 +1809,7 @@ dependencies = [
  "simadmin-device-runtime",
  "simadmin-notify",
  "simadmin-protocol",
+ "simadmin-sms-core",
  "socket2 0.6.1",
  "tempfile",
  "tokio",
@@ -1905,7 +1906,21 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "simadmin-sms-core",
  "uuid",
+]
+
+[[package]]
+name = "simadmin-sms-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "hex",
+ "regex-automata",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
 ]
 
 [[package]]

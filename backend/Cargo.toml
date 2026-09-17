@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "simadmin"
 version = "1.2.1"
 edition = "2021"
@@ -37,6 +37,7 @@ simadmin-auth = { path = "../crates/simadmin-auth" }
 simadmin-device-runtime = { path = "../crates/simadmin-device-runtime" }
 simadmin-protocol = { path = "../crates/simadmin-protocol" }
 simadmin-notify = { path = "../crates/simadmin-notify" }
+simadmin-sms-core = { path = "../crates/simadmin-sms-core" }
 
 [dev-dependencies]
 tempfile = "3"
