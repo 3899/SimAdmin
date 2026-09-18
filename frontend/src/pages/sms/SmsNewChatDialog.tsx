@@ -1,4 +1,4 @@
-import { useState, useEffect, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   Dialog,
   DialogTitle,
@@ -36,12 +36,10 @@ export function SmsNewChatDialog({
   const [phoneNumber, setPhoneNumber] = useState('')
   const [content, setContent] = useState('')
 
-  useEffect(() => {
-    if (open) {
-      setPhoneNumber('')
-      setContent('')
-    }
-  }, [open])
+  const handleReset = () => {
+    setPhoneNumber('')
+    setContent('')
+  }
 
   const { chars, segments } = calculateSmsSegments(content)
   const canSubmit = isDeviceSelected && phoneNumber.trim().length > 0 && content.trim().length > 0 && !loading
@@ -51,8 +49,19 @@ export function SmsNewChatDialog({
     onSend({ phoneNumber: phoneNumber.trim(), content })
   }
 
+  const handleClose = () => {
+    handleReset()
+    onClose()
+  }
+
   return (
-    <Dialog open={open} onClose={loading ? undefined : onClose} fullWidth maxWidth="sm">
+    <Dialog
+      open={open}
+      onClose={loading ? undefined : handleClose}
+      TransitionProps={{ onEnter: handleReset }}
+      fullWidth
+      maxWidth="sm"
+    >
       <DialogTitle sx={{ fontWeight: 700 }}>发送新短信</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={1.8}>

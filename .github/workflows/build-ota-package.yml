@@ -240,6 +240,11 @@ jobs:
         if: matrix.cross == true
         run: cargo install cross --locked
 
+      - name: Clean previous build outputs
+        run: |
+          rm -f "target/${{ matrix.target }}/release/simadmin" "target/${{ matrix.target }}/release/simadmin.exe" "target/release/simadmin" "target/release/simadmin.exe"
+          rm -rf frontend/dist
+
       - name: Cache Rust dependencies
         uses: actions/cache@v4
         with:
@@ -248,7 +253,10 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.edition }}-${{ matrix.target }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-${{ matrix.edition }}-${{ matrix.target }}-cargo-
+
 
       - name: Build backend
         env:

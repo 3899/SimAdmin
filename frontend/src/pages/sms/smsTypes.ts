@@ -1,15 +1,14 @@
 export interface BaseSmsMessage {
   id: string | number
-  direction: 'incoming' | 'outgoing' | string
+  direction: string
   phone_number: string
   content: string
   timestamp: string
-  status?: 'pending' | 'sent' | 'failed' | 'received' | 'unknown' | string
+  status?: string
   transport?: string | null
   pdu?: string
   device_id?: string
   device_name?: string
-  [key: string]: any
 }
 
 export interface BaseConversation {
@@ -19,10 +18,17 @@ export interface BaseConversation {
   unread_count?: number
   device_id?: string
   device_name?: string
-  [key: string]: any
 }
 
 export type DeleteTarget =
   | { type: 'batch' }
-  | { type: 'conversation'; phone_number: string; message_count?: number; [key: string]: any }
+  | {
+      type: 'conversation'
+      phone_number?: string
+      phoneNumber?: string
+      message_count?: number
+      messageCount?: number
+      conversation?: { phone_number?: string; message_count?: number }
+    }
   | { type: 'message'; message: BaseSmsMessage }
+

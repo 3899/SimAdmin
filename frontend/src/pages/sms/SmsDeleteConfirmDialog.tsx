@@ -13,7 +13,7 @@ import type { DeleteTarget } from './smsTypes'
 
 export interface SmsDeleteConfirmDialogProps {
   open: boolean
-  target: DeleteTarget | any
+  target: DeleteTarget | null
   onClose: () => void
   onConfirm: () => void
   loading?: boolean

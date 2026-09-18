@@ -759,7 +759,7 @@ export default function SMSPage() {
                 batchMode={batchMode}
                 checked={isMessageSelected(msg)}
                 onToggleSelect={() => toggleMessageSelection(msg)}
-                onDelete={(m) => setDeleteTarget({ type: 'message', message: m as any })}
+                onDelete={() => setDeleteTarget({ type: 'message', message: msg })}
                 onCopySuccess={(code) => setSuccess(`验证码 [${code}] 已复制`)}
               />
             ))}
@@ -772,7 +772,7 @@ export default function SMSPage() {
       <SmsComposer
         value={content}
         onChange={setContent}
-        onSend={handleSendMessage}
+        onSend={() => { void handleSendMessage() }}
         disabled={sendLoading}
         sending={sendLoading}
         onFocus={() => { inputFocusedRef.current = true }}
@@ -812,7 +812,7 @@ export default function SMSPage() {
       <SmsNewChatDialog
         open={newChatDialogOpen}
         onClose={() => setNewChatDialogOpen(false)}
-        onSend={({ phoneNumber: phone, content: text }) => handleStartNewChat(phone, text)}
+        onSend={({ phoneNumber: phone, content: text }) => { void handleStartNewChat(phone, text) }}
         loading={sendLoading}
         error={error}
       />
@@ -820,14 +820,22 @@ export default function SMSPage() {
       {/* 删除确认弹窗 */}
       <SmsDeleteConfirmDialog
         open={Boolean(deleteTarget)}
-        target={deleteTarget ? {
-          type: deleteTarget.type,
-          phone_number: (deleteTarget as any).phoneNumber,
-          message_count: (deleteTarget as any).messageCount,
-          message: (deleteTarget as any).message,
-        } : null}
+        target={deleteTarget ? (
+          deleteTarget.type === 'batch'
+            ? { type: 'batch' }
+            : deleteTarget.type === 'conversation'
+              ? {
+                  type: 'conversation',
+                  phone_number: deleteTarget.phoneNumber,
+                  message_count: deleteTarget.messageCount,
+                }
+              : {
+                  type: 'message',
+                  message: deleteTarget.message,
+                }
+        ) : null}
         onClose={() => setDeleteTarget(null)}
-        onConfirm={handleConfirmDelete}
+        onConfirm={() => { void handleConfirmDelete() }}
         loading={deleteLoading}
         error={error}
         batchCount={batchSelection.messageCount}
