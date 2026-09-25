@@ -43,7 +43,17 @@ export const formatSpeed = (bytesPerSec: number): string => {
 
 export const convertSignalValue = (value: string | number | undefined): number | null => {
   if (value === undefined || value === null) return null
-  const numValue = typeof value === 'string' ? parseFloat(value) : value
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return null
+    const numValue = parseFloat(trimmed)
+    if (isNaN(numValue)) return null
+    if (trimmed.toLowerCase().includes('db')) {
+      return numValue
+    }
+    return numValue / 100
+  }
+  const numValue = value
   if (isNaN(numValue)) return null
   return numValue / 100
 }

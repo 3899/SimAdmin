@@ -1360,6 +1360,7 @@ pub async fn enable_esim_profile_handler(
                     .await;
             }
         }
+        refresh_sim_details_background(&bg_app.dbus_conn, &bg_app.database, true).await;
     });
 
     let response = EsimCommandResponse {
@@ -3635,6 +3636,12 @@ pub(crate) fn temperature_sensor_label(sensor_type: &str, zone: &str) -> String 
     };
     let normalized = source.to_ascii_lowercase().replace('_', "-");
 
+    if ["baseband-chip", "modem-chip", "bb-chip", "基带芯片"]
+        .iter()
+        .any(|pattern| normalized.contains(pattern))
+    {
+        return "基带芯片".to_string();
+    }
     if ["modem", "baseband", "wwan", "qmi", "mhi"]
         .iter()
         .any(|pattern| normalized.contains(pattern))
@@ -3804,6 +3811,43 @@ pub(crate) fn read_temperature_sensors() -> Vec<ThermalZone> {
             }
         }
     }
+
+    if sensors.is_empty() {
+        let hwmon_path = Path::new("/sys/class/hwmon");
+        if let Ok(entries) = fs::read_dir(hwmon_path) {
+            for entry in entries.flatten() {
+                let hwmon_dir = entry.path();
+                let hwmon_name = fs::read_to_string(hwmon_dir.join("name"))
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|_| entry.file_name().to_string_lossy().to_string());
+                if let Ok(sub_entries) = fs::read_dir(&hwmon_dir) {
+                    for sub in sub_entries.flatten() {
+                        let sub_name = sub.file_name().to_string_lossy().to_string();
+                        if sub_name.starts_with("temp") && sub_name.ends_with("_input") {
+                            let prefix = &sub_name[..sub_name.len() - 6];
+                            let label_file = hwmon_dir.join(format!("{prefix}_label"));
+                            let sensor_type = fs::read_to_string(label_file)
+                                .map(|s| s.trim().to_string())
+                                .unwrap_or_else(|_| hwmon_name.clone());
+                            let temperature = fs::read_to_string(sub.path())
+                                .ok()
+                                .and_then(|s| s.trim().parse::<i32>().ok())
+                                .map(|t| t as f64 / 1000.0)
+                                .unwrap_or(0.0);
+                            let label = temperature_sensor_label(&sensor_type, prefix);
+                            sensors.push(ThermalZone {
+                                zone: format!("{}_{}", entry.file_name().to_string_lossy(), prefix),
+                                sensor_type,
+                                label,
+                                temperature,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     sensors.sort_by(|a, b| a.zone.cmp(&b.zone));
     sensors
 }

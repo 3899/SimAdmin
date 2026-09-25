@@ -52,21 +52,53 @@ export function SmsMessageBubble({
       e.stopPropagation()
       if (!verificationCode) return
 
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(verificationCode).then(() => {
-          setCopied(true)
-          onCopySuccess?.(verificationCode)
-          setTimeout(() => setCopied(false), 1800)
-        }).catch(() => {
-          // 剪贴板降级处理
-          setCopied(true)
-          onCopySuccess?.(verificationCode)
-          setTimeout(() => setCopied(false), 1800)
-        })
-      } else {
+      const onCopied = () => {
         setCopied(true)
         onCopySuccess?.(verificationCode)
         setTimeout(() => setCopied(false), 1800)
+      }
+
+      const fallbackCopy = (text: string): boolean => {
+        try {
+          const textArea = document.createElement('textarea')
+          textArea.value = text
+          textArea.style.position = 'fixed'
+          textArea.style.top = '0'
+          textArea.style.left = '0'
+          textArea.style.width = '2em'
+          textArea.style.height = '2em'
+          textArea.style.padding = '0'
+          textArea.style.border = 'none'
+          textArea.style.outline = 'none'
+          textArea.style.boxShadow = 'none'
+          textArea.style.background = 'transparent'
+          textArea.style.opacity = '0'
+          document.body.appendChild(textArea)
+          textArea.focus()
+          textArea.select()
+          const successful = document.execCommand('copy')
+          document.body.removeChild(textArea)
+          return successful
+        } catch {
+          return false
+        }
+      }
+
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard
+          .writeText(verificationCode)
+          .then(() => {
+            onCopied()
+          })
+          .catch(() => {
+            if (fallbackCopy(verificationCode)) {
+              onCopied()
+            }
+          })
+      } else {
+        if (fallbackCopy(verificationCode)) {
+          onCopied()
+        }
       }
     },
     [verificationCode, onCopySuccess],

@@ -1,4 +1,4 @@
-﻿pub use simadmin_sms_core as sms;
+pub use simadmin_sms_core as sms;
 pub use simadmin_sms_core::{
     clean_empty_verification_code_template, compute_content_hash, compute_pdu_hash,
     compute_sms_fingerprint, extract_verification_code, format_beijing_time, is_phone_number_match,
@@ -917,7 +917,7 @@ mod tests {
             None,
             HeartbeatPayload {
                 agent_type: AgentType::Simadmin,
-                agent_version: "1.2.1".into(),
+                agent_version: "1.2.2".into(),
                 session_generation: 4,
                 managed_device_count: 1,
                 local_queue_size: 0,

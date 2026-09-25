@@ -3,8 +3,6 @@
 use std::collections::HashMap;
 #[cfg(unix)]
 use std::fs;
-#[cfg(unix)]
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -265,7 +263,8 @@ fn is_plausible_smsc(value: &str) -> bool {
 }
 
 fn normalize_smsc(value: &str) -> String {
-    let value = value
+    let decoded = simadmin_device_runtime::decode_hex_ucs2_if_needed(value);
+    let value = decoded
         .trim()
         .trim_matches(|c| matches!(c, '"' | '\'' | ',' | ';'))
         .trim();
@@ -1154,12 +1153,19 @@ pub async fn current_sim_identity(conn: &Connection) -> Option<SimIdentity> {
     let sim_props = get_all_properties(conn, &sim_path, MM_SIM)
         .await
         .unwrap_or_default();
-    let iccid = crate::utils::normalize_iccid(
+    let mut iccid = crate::utils::normalize_iccid(
         &sim_props
             .get("SimIdentifier")
             .map(extract_string)
             .unwrap_or_default(),
     );
+    if iccid.is_empty() {
+        if let Ok(modem_ctx) = ModemContext::new(conn, &modem_path) {
+            if let Some(fallback) = modem_ctx.fallback_iccid().await {
+                iccid = crate::utils::normalize_iccid(&fallback);
+            }
+        }
+    }
     let imsi = sim_props
         .get("Imsi")
         .map(extract_string)
@@ -1750,7 +1756,15 @@ async fn refresh_sim_details_background_inner(conn: &Connection, db: &Database, 
     if force || own_number_cache_entry_for_identity(db, &identity).is_none() {
         let mut phone_numbers = Vec::new();
         if let Some(path) = modem_path.as_deref() {
-            phone_numbers = simple_status_own_numbers_fallback(conn, path).await;
+            if let Ok(output) = send_at_via_modem_command(conn, path, "AT+CNUM").await {
+                let own = simadmin_device_runtime::extract_own_number_from_cnum_output(&output);
+                if !own.is_empty() {
+                    phone_numbers = vec![own];
+                }
+            }
+            if phone_numbers.is_empty() {
+                phone_numbers = simple_status_own_numbers_fallback(conn, path).await;
+            }
             if phone_numbers.is_empty() {
                 phone_numbers = active_protocol_own_numbers_fallback(conn, path).await;
             }
@@ -1773,7 +1787,10 @@ async fn refresh_sim_details_background_inner(conn: &Connection, db: &Database, 
         if sms_center.is_empty() {
             if let Some(path) = modem_path.as_deref() {
                 if let Ok(output) = send_at_via_modem_command(conn, path, "AT+CSCA?").await {
-                    sms_center = parse_smsc_from_at_output(&output);
+                    sms_center = simadmin_device_runtime::extract_smsc_from_csca_output(&output);
+                    if sms_center.is_empty() {
+                        sms_center = parse_smsc_from_at_output(&output);
+                    }
                     source = "background_at";
                 }
             }
@@ -2838,6 +2855,68 @@ LTE Timing Advance: 'unavailable'"#;
 
         assert_eq!(dedup_apn_contexts(contexts).len(), 2);
     }
+
+    #[test]
+    fn maps_earfcn_to_lte_bands() {
+        assert_eq!(lte_band_from_earfcn(100), Some("B1"));
+        assert_eq!(lte_band_from_earfcn(1300), Some("B3"));
+        assert_eq!(lte_band_from_earfcn(2450), Some("B5"));
+        assert_eq!(lte_band_from_earfcn(3590), Some("B8"));
+        assert_eq!(lte_band_from_earfcn(9410), Some("B28"));
+        assert_eq!(lte_band_from_earfcn(38400), Some("B39"));
+        assert_eq!(lte_band_from_earfcn(39000), Some("B40"));
+        assert_eq!(lte_band_from_earfcn(40936), Some("B41"));
+        assert_eq!(lte_band_from_earfcn(999999), None);
+    }
+
+    #[test]
+    fn parses_muestats_cell_metrics_and_bands() {
+        let output = "+MUESTATS: \"scell\",4,460,00,38400,0,231,-1020,-130,-690,5,5\r\n\
++MUESTATS: \"ncell\",4,,,38400,0,336,-1000,-120,-800,-32768,255\r\n\
++MUESTATS: \"ncell\",4,,,3590,0,233,-1040,-130,-820,-32768,255\r\n\
++MUESTATS: \"ncell\",4,,,40936,0,431,-1080,-200,-800,-32768,255\r\n\
++MUESTATS: \"ncell\",4,,,1300,0,170,-1090,-200,-720,-32768,255";
+
+        let mut serving_cell = ServingCell::default();
+        let mut serving = CellInfo {
+            is_serving: true,
+            tech: "lte".to_string(),
+            cell_type: "LTE".to_string(),
+            ..Default::default()
+        };
+        let mut extra = Vec::new();
+        parse_muestats_cell_lines(output, &mut serving_cell, &mut serving, &mut extra);
+
+        assert_eq!(serving.band, "B39");
+        assert_eq!(serving.earfcn, "38400");
+        assert_eq!(serving.pci, "231");
+        assert_eq!(serving.rsrp, "-10200");
+        assert_eq!(serving.rsrq, "-1300");
+        assert_eq!(serving.sinr, "50");
+
+        assert_eq!(extra.len(), 4);
+        assert_eq!(extra[0].band, "B39");
+        assert_eq!(extra[0].earfcn, "38400");
+        assert_eq!(extra[0].pci, "336");
+        assert_eq!(extra[0].rsrp, "-10000");
+        assert_eq!(extra[0].rsrq, "-1200");
+        assert_eq!(extra[0].sinr, "");
+
+        assert_eq!(extra[1].band, "B8");
+        assert_eq!(extra[1].earfcn, "3590");
+        assert_eq!(extra[1].rsrp, "-10400");
+        assert_eq!(extra[1].rsrq, "-1300");
+
+        assert_eq!(extra[2].band, "B41");
+        assert_eq!(extra[2].earfcn, "40936");
+        assert_eq!(extra[2].rsrp, "-10800");
+        assert_eq!(extra[2].rsrq, "-2000");
+
+        assert_eq!(extra[3].band, "B3");
+        assert_eq!(extra[3].earfcn, "1300");
+        assert_eq!(extra[3].rsrp, "-10900");
+        assert_eq!(extra[3].rsrq, "-2000");
+    }
 }
 
 fn parse_mmcli_colon_value(line: &str) -> Option<(String, String)> {
@@ -2915,6 +2994,338 @@ pub async fn stop_cell_monitoring() -> Result<(), String> {
     Ok(())
 }
 
+async fn send_mm_at_command(proxy: &Proxy<'_>, cmd: &str) -> Option<String> {
+    proxy.call("Command", &(cmd, 3u32)).await.ok()
+}
+
+pub fn lte_band_from_earfcn(earfcn: u32) -> Option<&'static str> {
+    match earfcn {
+        0..=599 => Some("B1"),
+        600..=1199 => Some("B2"),
+        1200..=1949 => Some("B3"),
+        1950..=2399 => Some("B4"),
+        2400..=2649 => Some("B5"),
+        2650..=2749 => Some("B6"),
+        2750..=3449 => Some("B7"),
+        3450..=3799 => Some("B8"),
+        3800..=4149 => Some("B9"),
+        4150..=4749 => Some("B10"),
+        4750..=4949 => Some("B11"),
+        5010..=5179 => Some("B12"),
+        5180..=5279 => Some("B13"),
+        5280..=5379 => Some("B14"),
+        5730..=5849 => Some("B17"),
+        5850..=5999 => Some("B18"),
+        6000..=6149 => Some("B19"),
+        6150..=6449 => Some("B20"),
+        6450..=6599 => Some("B21"),
+        6600..=7399 => Some("B22"),
+        7500..=7699 => Some("B23"),
+        7700..=8039 => Some("B24"),
+        8040..=8689 => Some("B25"),
+        8690..=9039 => Some("B26"),
+        9040..=9209 => Some("B27"),
+        9210..=9659 => Some("B28"),
+        9660..=9769 => Some("B29"),
+        9770..=9869 => Some("B30"),
+        9870..=9919 => Some("B31"),
+        9920..=10359 => Some("B32"),
+        36000..=36199 => Some("B33"),
+        36200..=36349 => Some("B34"),
+        36350..=36949 => Some("B35"),
+        36950..=37549 => Some("B36"),
+        37550..=37749 => Some("B37"),
+        37750..=38249 => Some("B38"),
+        38250..=38649 => Some("B39"),
+        38650..=39649 => Some("B40"),
+        39650..=41589 => Some("B41"),
+        41590..=43589 => Some("B42"),
+        43590..=45589 => Some("B43"),
+        45590..=46589 => Some("B44"),
+        46790..=54539 => Some("B46"),
+        54540..=55239 => Some("B47"),
+        55240..=56739 => Some("B48"),
+        65536..=66435 => Some("B65"),
+        66436..=67335 => Some("B66"),
+        67536..=68535 => Some("B70"),
+        68586..=68985 => Some("B71"),
+        _ => None,
+    }
+}
+
+fn parse_cced_line(line: &str, serving_cell: &mut ServingCell, serving: &mut CellInfo) {
+    if let Some(payload) = line.split(':').nth(2).or_else(|| line.split(':').nth(1)) {
+        let parts: Vec<&str> = payload.trim().split(',').map(str::trim).collect();
+        if parts.len() >= 13 {
+            if serving_cell.tech.is_empty() || serving_cell.tech == "gsm" {
+                serving_cell.tech = "lte".to_string();
+            }
+            if serving.tech.is_empty() || serving.tech == "gsm" {
+                serving.tech = "lte".to_string();
+                serving.cell_type = "LTE".to_string();
+            }
+            let band_num = parts[4];
+            if !band_num.is_empty() && serving.band.is_empty() {
+                serving.band = if band_num.to_ascii_uppercase().starts_with('B') {
+                    band_num.to_ascii_uppercase()
+                } else {
+                    format!("B{band_num}")
+                };
+            }
+            let earfcn = parts[6];
+            if !earfcn.is_empty() {
+                if serving.earfcn.is_empty() {
+                    serving.earfcn = earfcn.to_string();
+                }
+                if serving.arfcn.is_empty() {
+                    serving.arfcn = earfcn.to_string();
+                }
+                if serving.band.is_empty() {
+                    if let Ok(earfcn_num) = earfcn.parse::<u32>() {
+                        if let Some(b) = lte_band_from_earfcn(earfcn_num) {
+                            serving.band = b.to_string();
+                        }
+                    }
+                }
+            }
+            if let Ok(cid) = parts[7].parse::<u32>() {
+                if cid != 0 {
+                    serving.cell_id = cid;
+                    serving_cell.cell_id = cid;
+                }
+            }
+            if let Ok(tac) = parts[10].parse::<u32>() {
+                if tac != 0 {
+                    serving_cell.tac = tac;
+                }
+            }
+            let pci = parts[12];
+            if !pci.is_empty() && serving.pci.is_empty() {
+                serving.pci = pci.to_string();
+            }
+        }
+    }
+}
+
+fn parse_muestats_cell_lines(
+    resp: &str,
+    serving_cell: &mut ServingCell,
+    serving: &mut CellInfo,
+    extra_cells: &mut Vec<CellInfo>,
+) {
+    for line in resp.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("+MUESTATS:") {
+            let parts: Vec<&str> = trimmed
+                .strip_prefix("+MUESTATS:")
+                .unwrap_or("")
+                .split(',')
+                .map(|s| s.trim().trim_matches('"'))
+                .collect();
+            if parts.is_empty() {
+                continue;
+            }
+            let kind = parts[0];
+            if kind == "scell" && parts.len() >= 11 {
+                if serving_cell.tech.is_empty() || serving_cell.tech == "gsm" {
+                    serving_cell.tech = "lte".to_string();
+                }
+                if serving.tech.is_empty() || serving.tech == "gsm" {
+                    serving.tech = "lte".to_string();
+                    serving.cell_type = "LTE".to_string();
+                }
+                let earfcn = parts[4];
+                let pci = parts[6];
+                if !earfcn.is_empty() {
+                    if serving.earfcn.is_empty() {
+                        serving.earfcn = earfcn.to_string();
+                    }
+                    if serving.arfcn.is_empty() {
+                        serving.arfcn = earfcn.to_string();
+                    }
+                    if serving.band.is_empty() {
+                        if let Ok(earfcn_num) = earfcn.parse::<u32>() {
+                            if let Some(b) = lte_band_from_earfcn(earfcn_num) {
+                                serving.band = b.to_string();
+                            }
+                        }
+                    }
+                }
+                if !pci.is_empty() && serving.pci.is_empty() {
+                    serving.pci = pci.to_string();
+                }
+                if let Ok(raw_rsrp) = parts[7].parse::<i32>() {
+                    if serving.rsrp.is_empty() {
+                        serving.rsrp = (raw_rsrp * 10).to_string();
+                    }
+                }
+                if let Ok(raw_rsrq) = parts[8].parse::<i32>() {
+                    if serving.rsrq.is_empty() {
+                        serving.rsrq = (raw_rsrq * 10).to_string();
+                    }
+                }
+                if let Ok(raw_sinr) = parts[10].parse::<i32>() {
+                    if serving.sinr.is_empty() && raw_sinr != -32768 {
+                        serving.sinr = (raw_sinr * 10).to_string();
+                    }
+                }
+            } else if kind == "ncell" && parts.len() >= 9 {
+                let earfcn = parts[4];
+                let pci = parts[6];
+                if !serving.pci.is_empty()
+                    && !serving.earfcn.is_empty()
+                    && pci == serving.pci
+                    && earfcn == serving.earfcn
+                {
+                    continue;
+                }
+                let band = earfcn
+                    .parse::<u32>()
+                    .ok()
+                    .and_then(lte_band_from_earfcn)
+                    .map(|b| b.to_string())
+                    .unwrap_or_else(|| {
+                        if !serving.band.is_empty()
+                            && (earfcn.is_empty() || earfcn == serving.earfcn)
+                        {
+                            serving.band.clone()
+                        } else {
+                            String::new()
+                        }
+                    });
+                let rsrp_val = parts[7]
+                    .parse::<i32>()
+                    .ok()
+                    .map(|v| (v * 10).to_string())
+                    .unwrap_or_default();
+                let rsrq_val = parts[8]
+                    .parse::<i32>()
+                    .ok()
+                    .map(|v| (v * 10).to_string())
+                    .unwrap_or_default();
+                let sinr_val = parts
+                    .get(10)
+                    .and_then(|s| s.parse::<i32>().ok())
+                    .filter(|&v| v != -32768)
+                    .map(|v| (v * 10).to_string())
+                    .unwrap_or_default();
+                extra_cells.push(CellInfo {
+                    is_serving: false,
+                    tech: serving.tech.clone(),
+                    cell_id: 0,
+                    band,
+                    arfcn: earfcn.to_string(),
+                    pci: pci.to_string(),
+                    rsrp: rsrp_val,
+                    rsrq: rsrq_val,
+                    sinr: sinr_val,
+                    earfcn: earfcn.to_string(),
+                    nrarfcn: String::new(),
+                    cell_type: serving.cell_type.clone(),
+                    ssb_rsrp: String::new(),
+                    ssb_rsrq: String::new(),
+                    ssb_sinr: String::new(),
+                });
+            }
+        }
+    }
+}
+
+async fn enrich_cells_via_at(
+    conn: &Connection,
+    modem_path: &str,
+    serving_cell: &mut ServingCell,
+    serving: &mut CellInfo,
+    extra_cells: &mut Vec<CellInfo>,
+) {
+    let proxy = match Proxy::new(conn, MM_SERVICE, modem_path, MM_MODEM).await {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+
+    // 1. Try AT+CCED=0,1 (supported on ML307X / ASR)
+    // +CCED: LTE current cell:460,00,460000000000001,1,39,5,38400,151211264,37,13,37267,42,231
+    if let Some(resp) = send_mm_at_command(&proxy, "AT+CCED=0,1").await {
+        if let Some(line) = resp.lines().find(|l| l.contains("+CCED:")) {
+            parse_cced_line(line, serving_cell, serving);
+        }
+    }
+
+    // 2. Try AT+MUESTATS=cell (serving cell + neighbor cells)
+    // +MUESTATS: "scell",4,460,00,38400,0,231,-1060,-150,-700,-25,5
+    // +MUESTATS: "ncell",4,,,38400,0,313,-1030,-150,-810,-32768,255
+    if let Some(resp) = send_mm_at_command(&proxy, "AT+MUESTATS=cell").await {
+        parse_muestats_cell_lines(&resp, serving_cell, serving, extra_cells);
+    }
+
+    // 3. Try AT+MUESTATS=sband if band is still empty
+    // +MUESTATS: "sband",39
+    if serving.band.is_empty() {
+        if let Some(resp) = send_mm_at_command(&proxy, "AT+MUESTATS=sband").await {
+            for line in resp.lines() {
+                if let Some(pos) = line.find("+MUESTATS:") {
+                    let text = &line[pos + 10..];
+                    let parts: Vec<&str> = text.split(',').map(|s| s.trim().trim_matches('"')).collect();
+                    if parts.len() >= 2 && parts[0] == "sband" {
+                        let b = parts[1];
+                        if !b.is_empty() {
+                            serving.band = if b.to_ascii_uppercase().starts_with('B') {
+                                b.to_ascii_uppercase()
+                            } else {
+                                format!("B{b}")
+                            };
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Try AT+QNWINFO if band or arfcn is still empty
+    // +QNWINFO: "TDD LTE",46000,"LTE BAND 39",38400
+    if serving.band.is_empty() || serving.arfcn.is_empty() {
+        if let Some(resp) = send_mm_at_command(&proxy, "AT+QNWINFO").await {
+            if let Some(line) = resp.lines().find(|l| l.contains("+QNWINFO:")) {
+                let text = line.split(':').nth(1).unwrap_or("");
+                let parts: Vec<&str> = text.split(',').map(|s| s.trim().trim_matches('"')).collect();
+                if parts.len() >= 4 {
+                    let band_str = parts[2];
+                    if serving.band.is_empty() {
+                        if let Some(pos) = band_str.find("BAND") {
+                            let b_digits: String = band_str[pos + 4..].chars().filter(char::is_ascii_digit).collect();
+                            if !b_digits.is_empty() {
+                                serving.band = format!("B{b_digits}");
+                            }
+                        }
+                    }
+                    let earfcn = parts[3];
+                    if !earfcn.is_empty() {
+                        if serving.earfcn.is_empty() { serving.earfcn = earfcn.to_string(); }
+                        if serving.arfcn.is_empty() { serving.arfcn = earfcn.to_string(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // 5. If serving band still empty, derive from earfcn
+    if serving.band.is_empty() && !serving.earfcn.is_empty() {
+        if let Ok(earfcn_num) = serving.earfcn.parse::<u32>() {
+            if let Some(b) = lte_band_from_earfcn(earfcn_num) {
+                serving.band = b.to_string();
+            }
+        }
+    }
+
+    // 6. Ensure neighbor cells have band populated if matching serving cell
+    for cell in extra_cells.iter_mut() {
+        if cell.band.is_empty() && !serving.band.is_empty() && (cell.earfcn.is_empty() || cell.earfcn == serving.earfcn) {
+            cell.band = serving.band.clone();
+        }
+    }
+}
+
 async fn get_cells_data_mmcli_fallback(
     conn: &Connection,
     modem_path: &str,
@@ -2941,11 +3352,7 @@ async fn get_cells_data_mmcli_fallback(
     let tac = parse_hex_u32(&tac_text);
     let cell_id = parse_hex_u32(&cid_text);
 
-    if tac == 0 && cell_id == 0 {
-        return Ok(CellsResponse::default());
-    }
-
-    let serving = CellInfo {
+    let mut serving = CellInfo {
         is_serving: true,
         tech: tech.clone(),
         cell_id,
@@ -2973,9 +3380,27 @@ async fn get_cells_data_mmcli_fallback(
         ssb_sinr: String::new(),
     };
 
+    let mut serving_cell = ServingCell { tech, cell_id, tac };
+    let mut extra_cells = Vec::new();
+
+    if serving.band.is_empty() || serving.pci.is_empty() || serving.arfcn.is_empty() {
+        enrich_cells_via_at(conn, modem_path, &mut serving_cell, &mut serving, &mut extra_cells).await;
+    }
+
+    if serving.cell_id == 0 && serving_cell.cell_id != 0 {
+        serving.cell_id = serving_cell.cell_id;
+    }
+
+    if serving_cell.tac == 0 && serving_cell.cell_id == 0 && serving.arfcn.is_empty() && extra_cells.is_empty() {
+        return Ok(CellsResponse::default());
+    }
+
+    let mut all_cells = vec![serving];
+    all_cells.extend(extra_cells);
+
     Ok(CellsResponse {
-        serving_cell: ServingCell { tech, cell_id, tac },
-        cells: vec![serving],
+        serving_cell,
+        cells: all_cells,
     })
 }
 
@@ -2988,7 +3413,11 @@ pub async fn get_cells_data(conn: &Connection) -> zbus::Result<CellsResponse> {
     }
 
     let proxy = Proxy::new(conn, MM_SERVICE, modem_path.as_str(), MM_MODEM).await?;
-    let cells: Vec<HashMap<String, OwnedValue>> = match proxy.call("GetCellInfo", &()).await {
+    let res: zbus::Result<Vec<HashMap<String, OwnedValue>>> = proxy.call("GetCellInfo", &()).await;
+    let cells = match res {
+        Ok(v) if v.is_empty() => {
+            return get_cells_data_mmcli_fallback(conn, &modem_path).await;
+        }
         Ok(v) => v,
         Err(e) if is_get_cellinfo_unsupported(&e) => {
             return get_cells_data_mmcli_fallback(conn, &modem_path).await;
@@ -3085,6 +3514,21 @@ pub async fn get_cells_data(conn: &Connection) -> zbus::Result<CellsResponse> {
             ),
             ssb_sinr: parse_cell_metric(cell.get("ssb-sinr").or_else(|| cell.get("ss-sinr"))),
         });
+    }
+
+    if let Some(serving_pos) = parsed_cells.iter().position(|c| c.is_serving) {
+        if parsed_cells[serving_pos].band.is_empty() {
+            let mut extra_cells = Vec::new();
+            enrich_cells_via_at(
+                conn,
+                &modem_path,
+                &mut serving_cell,
+                &mut parsed_cells[serving_pos],
+                &mut extra_cells,
+            )
+            .await;
+            parsed_cells.extend(extra_cells);
+        }
     }
 
     Ok(CellsResponse {
@@ -5729,119 +6173,144 @@ async fn power_cycle_sim_for_profile_switch_inner(
         None,
     );
 
-    let initial_qmi_device = match find_modem_path(conn).await {
-        Ok(modem_path) => {
+    let initial_modem_path = find_modem_path(conn).await.ok();
+    let initial_qmi_device = match &initial_modem_path {
+        Some(modem_path) => {
             record_baseband_step(&mut steps, "定位当前基带", "ok", Some(modem_path.clone()));
-            qmi_control_device(conn, &modem_path)
+            qmi_control_device(conn, modem_path)
                 .await
                 .or_else(find_qmi_device_path)
         }
-        Err(err) => {
+        None => {
             record_baseband_step(
                 &mut steps,
                 "定位当前基带",
                 "warning",
-                Some(format!("D-Bus 暂不可用，改用设备节点兜底：{err}")),
+                Some("D-Bus 暂不可用，改用设备节点兜底".to_string()),
             );
             find_qmi_device_path()
         }
     };
 
-    record_baseband_step(&mut steps, "停止 ModemManager", "running", None);
-    match run_recovery_command("systemctl", &["stop", "ModemManager"]).await {
-        Ok(output) => record_baseband_step(&mut steps, "停止 ModemManager", "ok", Some(output)),
-        Err(err) => record_baseband_step(
+    let modem_path = if initial_qmi_device.is_none() {
+        // 非 QMI 设备（如 ML307X 等 Cat.1 串口模组）：
+        // 无需停止 ModemManager 或调用 qmicli，直接通过 D-Bus 下发 AT+CFUN=0/1 实现平滑 SIM 重读与蜂窝重附着
+        record_baseband_step(
             &mut steps,
-            "停止 ModemManager",
-            "warning",
-            Some(format!("停止失败，继续尝试 SIM 断电：{err}")),
-        ),
-    }
-    // Poll for MM to become inactive instead of a fixed 3s sleep
-    for _ in 0..6 {
-        match Command::new("systemctl")
-            .args(["is-active", "--quiet", "ModemManager.service"])
-            .status()
-            .await
-        {
-            Ok(status) if !status.success() => break,
-            _ => tokio::time::sleep(Duration::from_millis(500)).await,
+            "非 QMI 设备：通过 AT+CFUN 刷新 SIM 协议栈",
+            "running",
+            None,
+        );
+        let path = initial_modem_path.unwrap_or_else(|| "/org/freedesktop/ModemManager1/Modem/0".to_string());
+        if let Ok(proxy) = Proxy::new(conn, MM_SERVICE, path.as_str(), MM_MODEM).await {
+            let _ = send_mm_at_command(&proxy, "AT+CFUN=0").await;
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            let _ = send_mm_at_command(&proxy, "AT+CFUN=1").await;
+            tokio::time::sleep(Duration::from_millis(2000)).await;
         }
-    }
-
-    let power_result: Result<(), String> = async {
-        let qmi_device =
-            wait_for_qmi_device_path(initial_qmi_device.as_deref(), Duration::from_secs(12))
+        record_baseband_step(
+            &mut steps,
+            "非 QMI 设备：通过 AT+CFUN 刷新 SIM 协议栈",
+            "ok",
+            Some(format!("基带路径保持不变：{path}")),
+        );
+        path
+    } else {
+        // 标准 QMI 设备流程：断电重启 ModemManager 与 SIM
+        record_baseband_step(&mut steps, "停止 ModemManager", "running", None);
+        match run_recovery_command("systemctl", &["stop", "ModemManager"]).await {
+            Ok(output) => record_baseband_step(&mut steps, "停止 ModemManager", "ok", Some(output)),
+            Err(err) => record_baseband_step(
+                &mut steps,
+                "停止 ModemManager",
+                "warning",
+                Some(format!("停止失败，继续尝试 SIM 断电：{err}")),
+            ),
+        }
+        // Poll for MM to become inactive instead of a fixed 3s sleep
+        for _ in 0..6 {
+            match Command::new("systemctl")
+                .args(["is-active", "--quiet", "ModemManager.service"])
+                .status()
                 .await
-                .ok_or_else(|| "未找到 QMI 设备节点，无法执行 SIM 断电上电".to_string())?;
-        record_baseband_step(&mut steps, "定位 QMI 设备", "ok", Some(qmi_device.clone()));
-
-        record_baseband_step(&mut steps, "SIM 断电", "running", None);
-        match qmicli_sim_power(&qmi_device, false).await {
-            Ok(output) => record_baseband_step(&mut steps, "SIM 断电", "ok", Some(output)),
-            Err(err) => {
-                record_baseband_step(&mut steps, "SIM 断电", "error", Some(err.clone()));
-                return Err(err);
+            {
+                Ok(status) if !status.success() => break,
+                _ => tokio::time::sleep(Duration::from_millis(500)).await,
             }
+        }
+
+        let power_result: Result<(), String> = async {
+            let qmi_device =
+                wait_for_qmi_device_path(initial_qmi_device.as_deref(), Duration::from_secs(12))
+                    .await
+                    .ok_or_else(|| "未找到 QMI 设备节点，无法执行 SIM 断电上电".to_string())?;
+            record_baseband_step(&mut steps, "定位 QMI 设备", "ok", Some(qmi_device.clone()));
+
+            record_baseband_step(&mut steps, "SIM 断电", "running", None);
+            match qmicli_sim_power(&qmi_device, false).await {
+                Ok(output) => record_baseband_step(&mut steps, "SIM 断电", "ok", Some(output)),
+                Err(err) => {
+                    record_baseband_step(&mut steps, "SIM 断电", "error", Some(err.clone()));
+                    return Err(err);
+                }
+            }
+
+            record_baseband_step(
+                &mut steps,
+                "等待 SIM 断电完成",
+                "running",
+                Some("等待 1 秒".to_string()),
+            );
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            record_baseband_step(&mut steps, "等待 SIM 断电完成", "ok", None);
+
+            let qmi_device = wait_for_qmi_device_path(Some(&qmi_device), Duration::from_secs(12))
+                .await
+                .ok_or_else(|| "SIM 断电后未重新找到 QMI 设备节点".to_string())?;
+            record_baseband_step(&mut steps, "SIM 上电", "running", None);
+            match qmicli_sim_power(&qmi_device, true).await {
+                Ok(output) => record_baseband_step(&mut steps, "SIM 上电", "ok", Some(output)),
+                Err(err) => {
+                    record_baseband_step(&mut steps, "SIM 上电", "error", Some(err.clone()));
+                    return Err(err);
+                }
+            }
+
+            record_baseband_step(
+                &mut steps,
+                "等待 SIM 重新上电",
+                "running",
+                Some("等待 1 秒".to_string()),
+            );
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            record_baseband_step(&mut steps, "等待 SIM 重新上电", "ok", None);
+            Ok(())
+        }
+        .await;
+
+        record_baseband_step(&mut steps, "启动 ModemManager", "running", None);
+        let start_result = run_recovery_command("systemctl", &["start", "ModemManager"]).await;
+        match &start_result {
+            Ok(output) => {
+                record_baseband_step(&mut steps, "启动 ModemManager", "ok", Some(output.clone()))
+            }
+            Err(err) => {
+                record_baseband_step(&mut steps, "启动 ModemManager", "error", Some(err.clone()))
+            }
+        }
+
+        power_result?;
+        if let Err(err) = start_result {
+            return Err(format!("SIM 已重新上电，但 ModemManager 启动失败：{err}"));
         }
 
         record_baseband_step(
             &mut steps,
-            "等待 SIM 断电完成",
+            "等待基带重新枚举",
             "running",
-            Some("等待 1 秒".to_string()),
+            Some("轮询等待 Modem 出现（最长 15 秒）".to_string()),
         );
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        record_baseband_step(&mut steps, "等待 SIM 断电完成", "ok", None);
-
-        let qmi_device = wait_for_qmi_device_path(Some(&qmi_device), Duration::from_secs(12))
-            .await
-            .ok_or_else(|| "SIM 断电后未重新找到 QMI 设备节点".to_string())?;
-        record_baseband_step(&mut steps, "SIM 上电", "running", None);
-        match qmicli_sim_power(&qmi_device, true).await {
-            Ok(output) => record_baseband_step(&mut steps, "SIM 上电", "ok", Some(output)),
-            Err(err) => {
-                record_baseband_step(&mut steps, "SIM 上电", "error", Some(err.clone()));
-                return Err(err);
-            }
-        }
-
-        record_baseband_step(
-            &mut steps,
-            "等待 SIM 重新上电",
-            "running",
-            Some("等待 1 秒".to_string()),
-        );
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        record_baseband_step(&mut steps, "等待 SIM 重新上电", "ok", None);
-        Ok(())
-    }
-    .await;
-
-    record_baseband_step(&mut steps, "启动 ModemManager", "running", None);
-    let start_result = run_recovery_command("systemctl", &["start", "ModemManager"]).await;
-    match &start_result {
-        Ok(output) => {
-            record_baseband_step(&mut steps, "启动 ModemManager", "ok", Some(output.clone()))
-        }
-        Err(err) => {
-            record_baseband_step(&mut steps, "启动 ModemManager", "error", Some(err.clone()))
-        }
-    }
-
-    power_result?;
-    if let Err(err) = start_result {
-        return Err(format!("SIM 已重新上电，但 ModemManager 启动失败：{err}"));
-    }
-
-    record_baseband_step(
-        &mut steps,
-        "等待基带重新枚举",
-        "running",
-        Some("轮询等待 Modem 出现（最长 15 秒）".to_string()),
-    );
-    // Poll for modem to reappear instead of a fixed 10s sleep
-    let modem_path = {
+        // Poll for modem to reappear instead of a fixed 10s sleep
         let enum_deadline = Instant::now() + Duration::from_secs(15);
         let mut found_path = None;
         loop {

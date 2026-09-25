@@ -8,7 +8,7 @@ import {
   ListItemText,
   Typography,
   Avatar,
-  Badge,
+  // Badge, // 预留未读红标组件，后续恢复未读角标时启用
   IconButton,
   Tooltip,
   Checkbox,
@@ -21,7 +21,7 @@ export interface SmsConversationItemProps {
   lastMessageContent: string
   timestamp: string
   messageCount?: number
-  unreadCount?: number
+  unreadCount?: number // 预留未读数量字段，后续若需展示可解开恢复
   isSelected: boolean
   onClick: () => void
   searchQuery?: string
@@ -38,7 +38,7 @@ export function SmsConversationItem({
   lastMessageContent,
   timestamp,
   messageCount = 0,
-  unreadCount = 0,
+  // unreadCount = 0, // 预留未读数参数，后续启用 Badge 时解开
   isSelected,
   onClick,
   searchQuery = '',
@@ -107,9 +107,11 @@ export function SmsConversationItem({
                 </Typography>
               ) : null}
             </Box>
+            {/* 预留未读红色角标代码，后续若需恢复未读数量呈现可解开注释：
             {unreadCount > 0 && (
               <Badge badgeContent={unreadCount} color="error" max={99} sx={{ flexShrink: 0 }} />
             )}
+            */}
           </Box>
         }
         secondary={

@@ -1,6 +1,6 @@
-﻿[package]
+[package]
 name = "simadmin"
-version = "1.2.1"
+version = "1.2.2"
 edition = "2021"
 
 [dependencies]

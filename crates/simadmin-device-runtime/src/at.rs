@@ -9,8 +9,13 @@ pub const AT_SNAPSHOT_COMMANDS: &[&str] = &[
     "AT+CGMM",
     "AT+CGMR",
     "AT+CGSN",
+    "AT+CGSN=1",
+    "AT+QGSN",
     "AT+CPIN?",
     "AT+CCID",
+    "AT+ICCID",
+    "AT+MCCID",
+    "AT+QCCID",
     "AT+CIMI",
     "AT+CNUM",
     "AT+CSCA?",
@@ -18,11 +23,14 @@ pub const AT_SNAPSHOT_COMMANDS: &[&str] = &[
     "AT+CEREG?",
     "AT+CREG?",
     "AT+CSQ",
+    "AT+MUESTATS=\"sband\"",
     "AT+CGATT?",
     "AT+CGACT?",
     "AT+CGDCONT?",
     "AT+CFUN?",
     "AT+QTEMP",
+    "AT+MDEVSTATUS?",
+    "AT+CPMUTEMP",
 ];
 
 pub const AT_CAPABILITY_COMMANDS: &[&str] = &[
@@ -37,6 +45,8 @@ pub const AT_CAPABILITY_COMMANDS: &[&str] = &[
     "AT+CGLA=?",
     "AT+CCHC=?",
     "AT+QTEMP",
+    "AT+MDEVSTATUS?",
+    "AT+CPMUTEMP",
 ];
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -140,10 +150,12 @@ pub fn capabilities_from_at_probe(responses: &HashMap<String, String>) -> Vec<St
     if supports("AT+CUSD=?") {
         capabilities.push("ussd".into());
     }
-    if supports("AT+CCHO=?") && supports("AT+CGLA=?") && supports("AT+CCHC=?") {
+    if (supports("AT+CCHO=?") && supports("AT+CGLA=?") && supports("AT+CCHC=?"))
+        || supports("AT+CSIM=?")
+    {
         capabilities.push("sim_apdu".into());
     }
-    if supports("AT+QTEMP") {
+    if supports("AT+QTEMP") || supports("AT+MDEVSTATUS?") || supports("AT+CPMUTEMP") {
         capabilities.push("temperature".into());
     }
     capabilities.sort();
@@ -175,12 +187,37 @@ pub fn parse_at_snapshot(responses: &HashMap<String, String>) -> AtModemSnapshot
     };
     let imei = responses
         .get("AT+CGSN")
-        .and_then(|response| find_digits(response, 14, 16));
+        .and_then(|response| find_digits(response, 14, 16))
+        .or_else(|| {
+            responses
+                .get("AT+CGSN=1")
+                .and_then(|response| find_digits(response, 14, 16))
+        })
+        .or_else(|| {
+            responses
+                .get("AT+QGSN")
+                .and_then(|response| find_digits(response, 14, 16))
+        });
     let sim_state =
         prefixed_value(responses.get("AT+CPIN?"), "+CPIN:").unwrap_or_else(|| "UNKNOWN".into());
     let iccid = responses
         .get("AT+CCID")
-        .and_then(|response| find_digits(response, 18, 22));
+        .and_then(|response| find_digits(response, 18, 22))
+        .or_else(|| {
+            responses
+                .get("AT+ICCID")
+                .and_then(|response| find_digits(response, 18, 22))
+        })
+        .or_else(|| {
+            responses
+                .get("AT+MCCID")
+                .and_then(|response| find_digits(response, 18, 22))
+        })
+        .or_else(|| {
+            responses
+                .get("AT+QCCID")
+                .and_then(|response| find_digits(response, 18, 22))
+        });
     let imsi = responses
         .get("AT+CIMI")
         .and_then(|response| find_digits(response, 14, 16));
@@ -239,10 +276,20 @@ pub fn parse_at_snapshot(responses: &HashMap<String, String>) -> AtModemSnapshot
     });
     let airplane_mode = prefixed_value(responses.get("AT+CFUN?"), "+CFUN:")
         .is_some_and(|value| matches!(value.as_str(), "0" | "4"));
-    let temperatures = responses
+    let mut temperatures = responses
         .get("AT+QTEMP")
         .map(|response| parse_temperatures(response))
         .unwrap_or_default();
+    if temperatures.is_empty() {
+        if let Some(resp) = responses.get("AT+MDEVSTATUS?") {
+            temperatures = parse_mdevstatus_temperatures(resp);
+        }
+    }
+    if temperatures.is_empty() {
+        if let Some(resp) = responses.get("AT+CPMUTEMP") {
+            temperatures = parse_cpmutemp_temperatures(resp);
+        }
+    }
 
     AtModemSnapshot {
         imei,
@@ -418,6 +465,45 @@ fn parse_temperatures(response: &str) -> Vec<AtTemperature> {
         .collect()
 }
 
+fn parse_mdevstatus_temperatures(response: &str) -> Vec<AtTemperature> {
+    response
+        .lines()
+        .find_map(|line| {
+            let trimmed = line.trim();
+            let payload = trimmed.strip_prefix("+MDEVSTATUS:")?.trim();
+            let (_, temp_part) = payload.split_once(',')?;
+            let temp = temp_part.trim().parse::<f32>().ok()?;
+            if (-50.0..=125.0).contains(&temp) {
+                Some(vec![AtTemperature {
+                    label: "基带".into(),
+                    temperature: temp,
+                }])
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn parse_cpmutemp_temperatures(response: &str) -> Vec<AtTemperature> {
+    response
+        .lines()
+        .find_map(|line| {
+            let trimmed = line.trim();
+            let payload = trimmed.strip_prefix("+CPMUTEMP:")?.trim();
+            let temp = payload.split_whitespace().next()?.parse::<f32>().ok()?;
+            if (-50.0..=125.0).contains(&temp) {
+                Some(vec![AtTemperature {
+                    label: "基带".into(),
+                    temperature: temp,
+                }])
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,5 +576,36 @@ mod tests {
         assert_eq!(messages[0].index, 7);
         assert_eq!(messages[0].phone_number, "10010");
         assert_eq!(messages[0].content, "余额提醒");
+    }
+
+    #[test]
+    fn parses_ml307x_modem_snapshot() {
+        let responses = HashMap::from([
+            ("AT+CGMI".into(), "AT+CGMI\r\nCMCC\r\nOK".into()),
+            ("AT+CGMM".into(), "ML307X\r\nOK".into()),
+            ("AT+CGMR".into(), "ML307X-DC-MBRH1S00\r\nOK".into()),
+            ("AT+CGSN".into(), "20219M0000000G000000\r\nOK".into()),
+            ("AT+CGSN=1".into(), "+CGSN: 868264000000001\r\nOK".into()),
+            ("AT+CPIN?".into(), "+CPIN: READY\r\nOK".into()),
+            ("AT+CCID".into(), "ERROR\r\n".into()),
+            ("AT+MCCID".into(), "+MCCID: 8944300000000000001F\r\nOK".into()),
+            ("AT+CIMI".into(), "460001234567890\r\nOK".into()),
+            ("AT+COPS?".into(), "+COPS: 0,0,\"CHINA MOBILE\",7\r\nOK".into()),
+            ("AT+CEREG?".into(), "+CEREG: 0,1\r\nOK".into()),
+            ("AT+CSQ".into(), "+CSQ: 25,99\r\nOK".into()),
+            ("AT+CGATT?".into(), "+CGATT: 1\r\nOK".into()),
+            ("AT+CGACT?".into(), "+CGACT: 1,1\r\nOK".into()),
+            ("AT+CFUN?".into(), "+CFUN: 1\r\nOK".into()),
+            ("AT+MDEVSTATUS?".into(), "+MDEVSTATUS: 4180,31\r\nOK".into()),
+        ]);
+
+        let snapshot = parse_at_snapshot(&responses);
+        assert_eq!(snapshot.imei.as_deref(), Some("868264000000001"));
+        assert_eq!(snapshot.iccid.as_deref(), Some("8944300000000000001"));
+        assert_eq!(snapshot.network_type.as_deref(), Some("LTE"));
+        assert_eq!(snapshot.registration_status, "home");
+        assert_eq!(snapshot.temperatures.len(), 1);
+        assert_eq!(snapshot.temperatures[0].label, "基带");
+        assert_eq!(snapshot.temperatures[0].temperature, 31.0);
     }
 }

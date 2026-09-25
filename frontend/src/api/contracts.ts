@@ -33,7 +33,7 @@ export interface ChangePasswordRequest {
   new_password: string
 }
 
-export type WorkMode = 'sim' | 'esim'
+export type WorkMode = 'sim' | 'sim_overseas' | 'esim'
 
 export interface WorkModeResponse {
   mode: WorkMode
@@ -430,6 +430,58 @@ export interface SmsMessage {
   timestamp: string
   status: string
   pdu?: string
+  transport?: SmsTransport
+}
+
+export type SmsTransport = 'modem' | 'volte_ims' | 'vowifi_ims'
+
+export interface SmsSendResponse {
+  path: string
+  local_sms_id?: number | null
+  transport: SmsTransport
+  route_variant?: string | null
+  sip_status?: number | null
+  rpdu_ack?: string | null
+}
+
+export interface VolteConfig {
+  feature_enabled: boolean
+  connection_enabled: boolean
+  sms_enabled: boolean
+}
+
+export interface VolteRuntimeStatus {
+  phase: string
+  stage?: string | null
+  enabled: boolean
+  registered: boolean
+  registration_mode?: string | null
+  interface?: string | null
+  family?: string | null
+  local_ip?: string | null
+  pcscf?: string | null
+  session_started_at?: string | null
+  registered_at?: string | null
+  last_rx_at?: string | null
+  last_tx_at?: string | null
+  last_error?: string | null
+  last_failure_at?: string | null
+  next_retry_at?: string | null
+  retry_after_secs?: number | null
+  registration_degraded_reason?: string | null
+  sent_count: number
+  received_count: number
+  duplicate_count: number
+  reconnect_count: number
+  failure_count: number
+  data_path_mode?: string | null
+  data_path_degraded_reason?: string | null
+}
+
+export interface VolteControlResponse {
+  config: VolteConfig
+  runtime: VolteRuntimeStatus
+  platform_supported: boolean
 }
 
 export interface SmsListRequest {
@@ -952,6 +1004,931 @@ export interface OtaLatestReleaseResponse {
   html_url?: string
   assets?: OtaReleaseAsset[]
   supports_asset_selection?: boolean
+}
+
+export interface VowifiConfig {
+  feature_enabled: boolean
+  connection_enabled: boolean
+  auto_restore_initial_delay_secs: number
+  auto_restore_attempts: number
+  auto_restore_retry_delay_secs: number
+}
+
+export interface VowifiCarrierProfile {
+  profile_id: string
+  mcc: string
+  mnc: string
+  mnc_len: number
+  plmn: string
+  country_iso2: string
+  brand: string
+  operator_legal_name: string
+  aliases: string[]
+  source_refs: string[]
+  last_verified: string
+  supported: boolean
+  support_stage: string
+}
+
+export interface VowifiProfilesResponse {
+  profiles: VowifiCarrierProfile[]
+  count: number
+}
+
+export interface VowifiMaskedSimIdentity {
+  present: boolean
+  iccid: string
+  imsi: string
+  operator_id: string
+}
+
+export interface VowifiProfileMatchResponse {
+  matched: boolean
+  matched_prefix?: string
+  profile?: VowifiCarrierProfile
+  sim_auth?: VowifiAkaAdapterPlan | null
+  epdg?: VowifiEpdgPlan | null
+  ike?: VowifiIkePlan | null
+  dataplane?: VowifiDataplanePlan | null
+  ims?: VowifiImsPlan | null
+  sim: VowifiMaskedSimIdentity
+}
+
+export interface VowifiEpdgPlan {
+  host: string
+  port: number
+  ip_stack: string
+  apn?: string | null
+  dns_server?: string | null
+  route_kind: string
+  route_policy_id: string
+  route_note: string
+}
+
+export interface VowifiIkeProposalPlan {
+  proposal: string
+  encryption: string
+  integrity: string
+  prf: string
+  dh_group: string
+}
+
+export interface VowifiEspProposalPlan {
+  proposal: string
+  encryption: string
+  integrity: string
+  mode: string
+}
+
+export interface VowifiChildSaPlan {
+  mode: string
+  anti_replay_window: number
+  mtu_strategy: string
+  esp_proposals: VowifiEspProposalPlan[]
+}
+
+export interface VowifiIkePlan {
+  exchange_phases: string[]
+  aka_challenge_mode: string
+  nat_keepalive_seconds: number
+  dpd_interval_seconds: number
+  reauth_interval_seconds?: number | null
+  retransmit_policy: string
+  mobike_policy: string
+  ike_proposals: VowifiIkeProposalPlan[]
+  child_sa: VowifiChildSaPlan
+  sensitive_values_policy: string
+}
+
+export interface VowifiSecAgreeMechanismPlan {
+  mechanism: string
+  integrity: string
+  encryption: string
+  protocol: string
+  mode: string
+}
+
+export interface VowifiImsPlan {
+  domain: string
+  realm: string
+  registrar?: string | null
+  pcscf?: string | null
+  transport: string
+  local_port: number
+  user_agent_family: string
+  identity_source: string
+  supported_header: string
+  include_pani_authenticated: boolean
+  strict_security_server_offer: boolean
+  enable_initial_reject_fallback: boolean
+  security_client_mechanisms: VowifiSecAgreeMechanismPlan[]
+  sms_receiver_transport: string
+  sensitive_values_policy: string
+}
+
+export interface VowifiDataplaneEspProposalPlan {
+  proposal: string
+  encryption: string
+  integrity: string
+  encapsulation: string
+}
+
+export interface VowifiTrafficSelectorPlan {
+  local_selector: string
+  remote_selector: string
+  address_assignment: string
+}
+
+export interface VowifiSmoltcpGatewayPlan {
+  stack: string
+  gateway_mode: string
+  ip_stack: string
+  tcp_enabled: boolean
+  udp_enabled: boolean
+  icmp_enabled: boolean
+  socket_policy: string
+}
+
+export interface VowifiDataplanePlan {
+  outer_encapsulation: string
+  nat_t_port: number
+  nat_keepalive_seconds: number
+  anti_replay_window: number
+  mtu_strategy: string
+  mtu: VowifiMtuPlan
+  traffic_selectors: VowifiTrafficSelectorPlan
+  smoltcp: VowifiSmoltcpGatewayPlan
+  esp_proposals: VowifiDataplaneEspProposalPlan[]
+  plaintext_capture_policy: string
+  sensitive_values_policy: string
+}
+
+export interface VowifiAntiReplayWindowSnapshot {
+  window_size: number
+  highest_sequence: number
+  tracked_slots: number
+  sensitive_values_policy: string
+}
+
+export interface VowifiMtuPlan {
+  outer_mtu: number
+  estimated_overhead_bytes: number
+  inner_mtu: number
+  ipv4_header_bytes: number
+  udp_header_bytes: number
+  esp_header_bytes: number
+  iv_bytes: number
+  trailer_budget_bytes: number
+  integrity_check_bytes: number
+  sensitive_values_policy: string
+}
+
+export interface VowifiEspPacketMetadata {
+  sa_identifier_present: boolean
+  sequence_number: number
+  protected_bytes: number
+  outer_frame_bytes: number
+  header_bytes: number
+  sensitive_values_policy: string
+}
+
+export interface VowifiNattPacketSummary {
+  kind: string
+  udp_port: number
+  wire_bytes: number
+  esp?: VowifiEspPacketMetadata | null
+  sensitive_values_policy: string
+}
+
+export interface VowifiMtuDecision {
+  decision: string
+  accepted: boolean
+  inner_packet_bytes: number
+  estimated_outer_frame_bytes: number
+  outer_mtu: number
+  sensitive_values_policy: string
+}
+
+export interface VowifiInnerPacketMetadata {
+  packet_id: number
+  direction: string
+  ip_version: string
+  packet_bytes: number
+  accepted: boolean
+  drop_reason?: string | null
+  sensitive_values_policy: string
+}
+
+export interface VowifiInnerGatewayPublicState {
+  adapter: string
+  ip_stack: string
+  queue_capacity: number
+  queued_packets: number
+  packets_to_esp: number
+  packets_from_esp: number
+  last_packet?: VowifiInnerPacketMetadata | null
+  sensitive_values_policy: string
+}
+
+export interface VowifiSaPairPublicState {
+  inbound_sa_identifier_present: boolean
+  outbound_sa_identifier_present: boolean
+  outbound_sequence_allocated: number
+  packets_in: number
+  packets_out: number
+  bytes_in: number
+  bytes_out: number
+  sensitive_values_policy: string
+}
+
+export interface VowifiEspFrameDecision {
+  direction: string
+  decision: string
+  accepted: boolean
+  sequence_number?: number | null
+  outer_frame_bytes: number
+  natt?: VowifiNattPacketSummary | null
+  mtu?: VowifiMtuDecision | null
+  sensitive_values_policy: string
+}
+
+export interface VowifiChildSaPublicState {
+  profile_id: string
+  plmn: string
+  phase: string
+  selected_esp_proposal?: string | null
+  inbound_sa_identifier_present: boolean
+  outbound_sa_identifier_present: boolean
+  sa_pair: VowifiSaPairPublicState
+  replay_window: VowifiAntiReplayWindowSnapshot
+  mtu: VowifiMtuPlan
+  mtu_drops: number
+  smoltcp: VowifiSmoltcpGatewayPlan
+  inner_gateway: VowifiInnerGatewayPublicState
+  packets_in: number
+  packets_out: number
+  bytes_in: number
+  bytes_out: number
+  last_frame_decision?: VowifiEspFrameDecision | null
+  last_error?: string | null
+  sensitive_values_policy: string
+}
+
+export interface VowifiLogicalChannelPlan {
+  application_priority: string[]
+  channel_scope: string
+  open_policy: string
+  close_policy: string
+  profile_switch_cleanup: string
+}
+
+export interface VowifiAkaChallengePlan {
+  method: string
+  challenge_source: string
+  resync_supported: boolean
+  failure_mapping: string
+  secret_values_policy: string
+}
+
+export interface VowifiAkaAdapterPlan {
+  identity_source: string
+  sim_access: string
+  qmi_proxy_policy: string
+  logical_channel: VowifiLogicalChannelPlan
+  challenge: VowifiAkaChallengePlan
+  timeout_ms: number
+}
+
+export interface VowifiIkeKeySchedulePlan {
+  prf: string
+  encryption: string
+  integrity: string
+  prf_output_bytes: number
+  encryption_key_bytes: number
+  integrity_key_bytes: number
+  total_secret_bytes: number
+  exported_secret_values: boolean
+  sensitive_values_policy: string
+}
+
+export interface VowifiIkeEncryptedPayloadPlan {
+  mode: string
+  outer_payload: string
+  cipher: string
+  integrity: string
+  iv_bytes: number
+  block_bytes: number
+  icv_bytes: number
+  encrypted_payload_bytes: number
+  inner_payload_count: number
+  exported_plaintext: boolean
+  sensitive_values_policy: string
+}
+
+export interface VowifiIkeRetransmitState {
+  message_id: number
+  attempts: number
+  elapsed_ms: number
+  next_timeout_ms: number
+  decision: string
+}
+
+export interface VowifiIkeControlEvent {
+  kind: string
+  message_id: number
+  protocol_id: number
+  spi_size: number
+  spi_present: boolean
+  notify_type?: number | null
+  notify_name?: string | null
+  delete_spi_count?: number | null
+  action: string
+  sensitive_values_policy: string
+}
+
+export interface VowifiEapAkaAttributeSummary {
+  attribute_type: number
+  role: string
+  units: number
+  value_bytes: number
+  value_redacted: boolean
+}
+
+export interface VowifiEapAkaPacketSummary {
+  code: string
+  identifier: number
+  method: string
+  subtype: string
+  attribute_count: number
+  attributes: VowifiEapAkaAttributeSummary[]
+  raw_len: number
+  secret_values_policy: string
+}
+
+export interface VowifiIkeTranscriptEvent {
+  message_id: number
+  exchange: string
+  direction: string
+  payloads: string[]
+  note: string
+}
+
+export interface VowifiIkePublicSnapshot {
+  profile_id: string
+  plmn: string
+  phase: string
+  initiator_spi_present: boolean
+  responder_spi_present: boolean
+  next_message_id: number
+  selected_proposal?: string | null
+  key_schedule?: VowifiIkeKeySchedulePlan | null
+  encrypted_payload?: VowifiIkeEncryptedPayloadPlan | null
+  retransmit: VowifiIkeRetransmitState
+  last_control_event?: VowifiIkeControlEvent | null
+  eap?: VowifiEapAkaPacketSummary | null
+  transcript: VowifiIkeTranscriptEvent[]
+  last_error?: string | null
+
+  sensitive_values_policy: string
+}
+
+export interface VowifiSipMessageSummary {
+  direction: string
+  message_kind: string
+  method?: string | null
+  status_code?: number | null
+  transport: string
+  target_domain: string
+  authorization_present: boolean
+  security_client_present: boolean
+  security_server_present: boolean
+  security_verify_present: boolean
+  digest_challenge_present: boolean
+  body_bytes: number
+  sensitive_values_policy: string
+}
+
+export interface VowifiDigestChallengeSummary {
+  header_kind: string
+  algorithm: string
+  realm_matches_profile: boolean
+  challenge_token_present: boolean
+  qop_present: boolean
+  opaque_present: boolean
+  stale: boolean
+  values_redacted: boolean
+  sensitive_values_policy: string
+}
+
+export interface VowifiAkaDigestPublicState {
+  algorithm: string
+  provider: string
+  challenge_accepted: boolean
+  auth_proof_present: boolean
+  auth_proof_bytes: number
+  sec_agree_key_source_ready: boolean
+  exported_secret_values: boolean
+  sensitive_values_policy: string
+}
+
+export interface VowifiSecAgreePublicState {
+  security_mode: string
+  client_offer_count: number
+  server_offer_count: number
+  selected_security_mechanism?: string | null
+  server_offer_selected: boolean
+  security_verify_ready: boolean
+  protected_transport_ready: boolean
+  local_sa_identifier_present: boolean
+  remote_sa_identifier_present: boolean
+  policy_installed: boolean
+  exported_secret_values: boolean
+  sensitive_values_policy: string
+}
+
+export interface VowifiImsRegisterPublicState {
+  profile_id: string
+  plmn: string
+  phase: string
+  transport: string
+  target_domain: string
+  last_sip_status?: number | null
+  register_200_received: boolean
+  registered_expires_seconds?: number | null
+  security_mode: string
+  selected_security_mechanism?: string | null
+  challenge?: VowifiDigestChallengeSummary | null
+  aka_digest?: VowifiAkaDigestPublicState | null
+  sec_agree?: VowifiSecAgreePublicState | null
+  service_route_present: boolean
+  associated_uri_count: number
+  sms_ready: boolean
+  transcript: VowifiSipMessageSummary[]
+  last_error?: string | null
+  sensitive_values_policy: string
+}
+
+export interface VowifiSmsPartState {
+  reference: number
+  sequence: number
+  total: number
+  received: boolean
+}
+
+export interface VowifiSmsRpduSummary {
+  direction: string
+  rpdu_kind: string
+  user_data_bytes: number
+  segment_reference_present: boolean
+  segment_reference?: number | null
+  segment_sequence?: number | null
+  segment_total?: number | null
+  values_redacted: boolean
+  sensitive_values_policy: string
+}
+
+export interface VowifiSmsSipMessageSummary {
+  direction: string
+  method: string
+  transport: string
+  sip_state: string
+  sip_status?: number | null
+  content_type: string
+  body_bytes: number
+  sensitive_values_policy: string
+}
+
+export interface VowifiSmsAckPlan {
+  ack_kind: string
+  transport: string
+  sip_response_code: number
+  rp_ack_present: boolean
+  failure_cause?: string | null
+  sensitive_values_policy: string
+}
+
+export interface VowifiSmsReassemblyState {
+  key_scope: string
+  reference: number
+  expected_parts: number
+  received_parts: number
+  complete: boolean
+  duplicate_parts: number
+  last_sequence?: number | null
+  sensitive_values_policy: string
+}
+
+export interface VowifiSmsDeliveryPublicRecord {
+  trace_id: string
+  message_id: string
+  direction: string
+  state: string
+  api_status: string
+  sip_state: string
+  rpdu_ack: string
+  delivery_reported: boolean
+  failure_cause?: string | null
+  retry_count: number
+  parts: VowifiSmsPartState[]
+  parts_complete: boolean
+  db_fact_source: string
+  sensitive_values_policy: string
+}
+
+export interface VowifiSmsRuntimePublicState {
+  profile_id: string
+  plmn: string
+  sms_ready: boolean
+  receiver_transport: string
+  subscribe_reg_ready: boolean
+  pending_delivery_count: number
+  mo: VowifiSmsDeliveryPublicRecord
+  mt: VowifiSmsDeliveryPublicRecord
+  last_sip_message?: VowifiSmsSipMessageSummary | null
+  last_rpdu?: VowifiSmsRpduSummary | null
+  last_ack?: VowifiSmsAckPlan | null
+  reassembly?: VowifiSmsReassemblyState | null
+  state_consistency_policy: string
+  sensitive_values_policy: string
+}
+
+export interface VowifiRestoreRuntimeSnapshotSummary {
+  previous_runtime_active: boolean
+  previous_tunnel_present: boolean
+  previous_ims_registered: boolean
+  previous_sms_ready: boolean
+  previous_sms_mode: string
+  profile_generation_captured: boolean
+  sensitive_values_policy: string
+}
+
+export interface VowifiRestoreCleanupSummary {
+  runtime_teardown_done: boolean
+  qmi_sms_restored: boolean
+  apdu_sessions_cleared: boolean
+  stale_runtime_reuse_allowed: boolean
+  sensitive_values_policy: string
+}
+
+export interface VowifiRestoreGateSummary {
+  identity_ready: boolean
+  identity_changed: boolean
+  sim_auth_ready: boolean
+  home_plmn_source: string
+  card_reset_settling_ms: number
+  sensitive_values_policy: string
+}
+
+export interface VowifiRestoreRuntimeAttemptSummary {
+  attempts: number
+  first_failure_retryable: boolean
+  first_failure_reason?: string | null
+  final_register_verified: boolean
+  final_sms_ready: boolean
+  rebuild_strategy: string
+  sensitive_values_policy: string
+}
+
+export interface VowifiRestoreWorkflowEvent {
+  phase: string
+  phase_ms: number
+  identity_ready: boolean
+  sim_auth_ready: boolean
+  retry_count: number
+  sms_mode: string
+  cleanup_done: boolean
+  register_verified: boolean
+  sms_ready: boolean
+  degraded_reason?: string | null
+  sensitive_values_policy: string
+}
+
+export interface VowifiEsimRestorePublicState {
+  switch_token: string
+  switch_phase: string
+  phase_ms: number
+  identity_ready: boolean
+  sim_auth_ready: boolean
+  degraded_reason?: string | null
+  retry_count: number
+  snapshot: VowifiRestoreRuntimeSnapshotSummary
+  cleanup: VowifiRestoreCleanupSummary
+  gate: VowifiRestoreGateSummary
+  runtime_restore: VowifiRestoreRuntimeAttemptSummary
+  events: VowifiRestoreWorkflowEvent[]
+  sensitive_values_policy: string
+}
+export interface VowifiReadiness {
+  identity_ready: boolean
+  sim_auth_ready: boolean
+  profile_matched: boolean
+  epdg_ready: boolean
+  ike_ready: boolean
+  child_sa_ready: boolean
+  esp_ready: boolean
+  ims_registered: boolean
+  sms_ready: boolean
+}
+
+export interface VowifiRuntimeFlowStep {
+  id: string
+  component: string
+  stage: string
+  state: string
+  readiness_key: string
+  blocking_reason?: string | null
+}
+
+export interface VowifiRuntimeFlowStatus {
+  stage: string
+  controlplane_mode: string
+  dataplane_mode: string
+  steps: VowifiRuntimeFlowStep[]
+}
+
+export interface VowifiExecutorCapability {
+  stage: string
+  component: string
+  enabled: boolean
+  mode: string
+  reason: string
+}
+
+export interface VowifiLiveExecutorGateReport {
+  live_network_authorized: boolean
+  device_state_changes_authorized: boolean
+  adb_path_configured: boolean
+  device_admin_url_configured: boolean
+  implementation_ready: boolean
+  effective_live_network_allowed: boolean
+  effective_device_state_changes_allowed: boolean
+  blockers: string[]
+  sensitive_values_policy: string
+}
+
+export interface VowifiRuntimeExecutorReport {
+  executor_id: string
+  mode: string
+  live_network_allowed: boolean
+  dataplane_dry_run?: VowifiChildSaPublicState | null
+  ike_dry_run?: VowifiIkePublicSnapshot | null
+  ims_register_dry_run?: VowifiImsRegisterPublicState | null
+  sms_dry_run?: VowifiSmsRuntimePublicState | null
+  esim_restore_dry_run?: VowifiEsimRestorePublicState | null
+  device_state_changes_allowed: boolean
+  live_gate: VowifiLiveExecutorGateReport
+  capabilities: VowifiExecutorCapability[]
+}
+
+export interface VowifiStatusResponse {
+  phase: string
+  dataplane_mode: string
+  controlplane_mode: string
+  readiness: VowifiReadiness
+  flow: VowifiRuntimeFlowStatus
+  executor: VowifiRuntimeExecutorReport
+  profile: VowifiProfileMatchResponse
+  degraded_reason?: string | null
+  switch_phase?: string | null
+  switch_token?: string | null
+  phase_ms?: number | null
+  switch_identity_ready: boolean
+  switch_sim_auth_ready: boolean
+  switch_retry_count: number
+}
+export interface VowifiRuntimeSnapshotEntry {
+  phase: string
+  profile_id?: string | null
+  plmn?: string | null
+  identity_ready: boolean
+  sim_auth_ready: boolean
+  profile_matched: boolean
+  epdg_ready: boolean
+  ike_ready: boolean
+  child_sa_ready: boolean
+  esp_ready: boolean
+  ims_registered: boolean
+  sms_ready: boolean
+  degraded_reason?: string | null
+  updated_at: string
+}
+
+export interface VowifiDiagnosticsSummary {
+  runtime_phase: string
+  profile_id?: string | null
+  plmn?: string | null
+  ready_stage_count: number
+  total_stage_count: number
+  pending_sms_deliveries: number
+  failed_sms_deliveries: number
+  running_soak_runs: number
+  failed_soak_runs: number
+  last_event_at?: string | null
+  active_trace_id?: string | null
+  degraded: boolean
+  read_only: boolean
+}
+
+export interface VowifiDiagnosticsPrivacy {
+  redaction_policy: string
+  sensitive_fields_returned: boolean
+  event_detail_policy: string
+  trace_filter_policy: string
+  action_interfaces_enabled: boolean
+}
+
+export interface VowifiDiagnosticsTimelineEntry {
+  kind: string
+  timestamp?: string | null
+  trace_id?: string | null
+  level: string
+  phase: string
+  title: string
+  detail: string
+  state: string
+}
+
+export interface VowifiAuditCheck {
+  check_id: string
+  status: string
+  detail: string
+}
+
+export interface VowifiProfileAuditEntry {
+  profile_id: string
+  plmn: string
+  country_iso2: string
+  brand: string
+  offline_plan_ready: boolean
+  dry_run_ready: boolean
+  live_test_ready: boolean
+  blockers: string[]
+  checks: VowifiAuditCheck[]
+}
+
+export interface VowifiLongRunGate {
+  gate_id: string
+  status: string
+  target: string
+  evidence: string
+  blocker?: string | null
+}
+
+export interface VowifiLiveStageReadiness {
+  stage_id: string
+  component: string
+  status: string
+  offline_ready: boolean
+  dry_run_ready: boolean
+  live_network_required: boolean
+  device_state_change_required: boolean
+  live_network_authorized: boolean
+  device_state_changes_authorized: boolean
+  implementation_ready: boolean
+  evidence: string
+  next_step: string
+  blockers: string[]
+  sensitive_values_policy: string
+}
+
+export interface VowifiSoakScenarioPlan {
+  scenario_id: string
+  status: string
+  duration_hours: number
+  sample_interval_seconds: number
+  live_network_required: boolean
+  device_state_change_required: boolean
+  sms_test_required: boolean
+  metrics: string[]
+  pass_criteria: string[]
+  evidence_source: string
+  blockers: string[]
+  sensitive_values_policy: string
+}
+
+export interface VowifiReadinessAuditReport {
+  stage: string
+  clean_room_policy: string
+  live_network_allowed: boolean
+  device_state_changes_allowed: boolean
+  profile_count: number
+  profiles_ready: number
+  dry_run_profiles_ready: number
+  live_profiles_ready: number
+  long_run_gate_count: number
+  long_run_ready_count: number
+  live_stage_count: number
+  live_stage_ready_count: number
+  soak_scenario_count: number
+  soak_scenario_ready_count: number
+  profile_audits: VowifiProfileAuditEntry[]
+  long_run_gates: VowifiLongRunGate[]
+  live_stage_readiness: VowifiLiveStageReadiness[]
+  soak_scenarios: VowifiSoakScenarioPlan[]
+  blockers: string[]
+  sensitive_values_policy: string
+}
+export interface VowifiDiagnosticsResponse {
+  status: VowifiStatusResponse
+  persisted_snapshot?: VowifiRuntimeSnapshotEntry | null
+  events: VowifiRuntimeEventsResponse
+  sms_deliveries: VowifiSmsDeliveriesResponse
+  soak_runs: VowifiSoakRunsResponse
+  restore?: VowifiEsimRestoreEntry | null
+  summary: VowifiDiagnosticsSummary
+  timeline: VowifiDiagnosticsTimelineEntry[]
+  trace_filter?: string | null
+  privacy: VowifiDiagnosticsPrivacy
+  m10_audit: VowifiReadinessAuditReport
+}
+
+export interface VowifiRuntimeEventEntry {
+  id: number
+  trace_id?: string | null
+  level: string
+  phase: string
+  profile_id?: string | null
+  event_type: string
+  detail_json: string
+  created_at: string
+}
+
+export interface VowifiRuntimeEventsResponse {
+  events: VowifiRuntimeEventEntry[]
+  total: number
+}
+
+export interface VowifiSmsPartEntry {
+  message_id: string
+  reference: number
+  sequence: number
+  total: number
+  received: boolean
+  updated_at: string
+}
+
+export interface VowifiSmsDeliveryEntry {
+  message_id: string
+  trace_id: string
+  direction: string
+  state: string
+  sip_state: string
+  rpdu_ack: string
+  delivery_reported: boolean
+  failure_cause?: string | null
+  retry_count: number
+  api_sms_id?: number | null
+  parts: VowifiSmsPartEntry[]
+  created_at: string
+  updated_at: string
+}
+
+export interface VowifiSmsDeliveriesResponse {
+  deliveries: VowifiSmsDeliveryEntry[]
+  total: number
+}
+
+export interface VowifiSoakSampleEntry {
+  id: number
+  run_id: string
+  sample_kind: string
+  metric_name: string
+  metric_value: number
+  state: string
+  created_at: string
+}
+
+export interface VowifiSoakRunEntry {
+  run_id: string
+  scenario_id: string
+  profile_id?: string | null
+  plmn?: string | null
+  status: string
+  started_at: string
+  finished_at?: string | null
+  duration_seconds: number
+  sample_count: number
+  failure_count: number
+  last_error?: string | null
+  sensitive_values_policy: string
+  samples: VowifiSoakSampleEntry[]
+}
+
+export interface VowifiSoakRunsResponse {
+  runs: VowifiSoakRunEntry[]
+  total: number
+  read_only: boolean
+}
+
+export interface VowifiEsimRestoreEntry {
+  switch_token?: string | null
+  switch_phase?: string | null
+  phase_ms?: number | null
+  identity_ready: boolean
+  sim_auth_ready: boolean
+  degraded_reason?: string | null
+  retry_count: number
+  updated_at: string
 }
 
 export type DdnsProvider = 'cloudflare' | 'alidns' | 'tencentcloud'

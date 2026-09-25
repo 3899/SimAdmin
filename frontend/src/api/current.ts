@@ -70,10 +70,21 @@ import type {
   SimInfo,
   UpdateSimCacheRequest,
   SmsMessage,
+  SmsSendResponse,
   SmsConversationRequest,
   SmsListRequest,
   SmsStats,
   SystemStatsResponse,
+  VolteControlResponse,
+  VowifiConfig,
+  VowifiDiagnosticsResponse,
+  VowifiEsimRestoreEntry,
+  VowifiProfileMatchResponse,
+  VowifiProfilesResponse,
+  VowifiRuntimeEventsResponse,
+  VowifiSmsDeliveriesResponse,
+  VowifiSoakRunsResponse,
+  VowifiStatusResponse,
   WebhookTestResponse,
   WorkMode,
   WorkModeRequest,
@@ -490,6 +501,7 @@ export class SimAdminCurrentAPI {
     })
   }
 
+
   async renameEsimProfile(iccid: string, name: string) {
     return this.request<ApiResponse<EsimCommandResponse>>(`/esim/profiles/${encodeURIComponent(iccid)}/rename`, {
       method: 'POST',
@@ -805,9 +817,41 @@ export class SimAdminCurrentAPI {
   }
 
   async sendSms(phoneNumber: string, content: string) {
-    return this.request<ApiResponse<{ path: string }>>('/sms/send', {
+    return this.request<ApiResponse<SmsSendResponse>>('/sms/send', {
       method: 'POST',
       body: JSON.stringify({ phone_number: phoneNumber, content }),
+    })
+  }
+
+  async getVolteControl() {
+    return this.request<ApiResponse<VolteControlResponse>>('/volte/control')
+  }
+
+  async reconnectVolte() {
+    return this.request<ApiResponse<VolteControlResponse>>('/volte/reconnect', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+  }
+
+  async setVolteFeature(enabled: boolean) {
+    return this.request<ApiResponse<VolteControlResponse>>('/volte/feature', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    })
+  }
+
+  async setVolteConnection(enabled: boolean) {
+    return this.request<ApiResponse<VolteControlResponse>>('/volte/connection', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    })
+  }
+
+  async setVolteSms(enabled: boolean) {
+    return this.request<ApiResponse<VolteControlResponse>>('/volte/sms', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
     })
   }
 
@@ -1036,6 +1080,92 @@ export class SimAdminCurrentAPI {
     return this.request<ApiResponse<OtaLatestReleaseResponse>>('/ota/latest-release', {
       method: 'POST',
       body: JSON.stringify(config),
+    })
+  }
+
+  async getVowifiProfiles() {
+    return this.request<ApiResponse<VowifiProfilesResponse>>('/vowifi/profiles', {
+      timeoutMs: 10000,
+    })
+  }
+
+  async getVowifiProfile() {
+    return this.request<ApiResponse<VowifiProfileMatchResponse>>('/vowifi/profile', {
+      timeoutMs: 10000,
+    })
+  }
+
+  async getVowifiStatus() {
+    return this.request<ApiResponse<VowifiStatusResponse>>('/vowifi/status', {
+      timeoutMs: 30000,
+    })
+  }
+
+  async getVowifiControl() {
+    return this.request<ApiResponse<VowifiConfig>>('/vowifi/control', {
+      timeoutMs: 10000,
+    })
+  }
+
+  async setVowifiFeature(enabled: boolean) {
+    return this.request<ApiResponse<VowifiConfig>>('/vowifi/feature', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+      timeoutMs: 10000,
+    })
+  }
+
+  async setVowifiConnection(enabled: boolean) {
+    return this.request<ApiResponse<VowifiStatusResponse>>('/vowifi/connection', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+      timeoutMs: 120000,
+    })
+  }
+
+  async connectVowifi() {
+    return this.request<ApiResponse<VowifiStatusResponse>>('/vowifi/connect', {
+      method: 'POST',
+      timeoutMs: 120000,
+    })
+  }
+
+  async getVowifiDiagnostics(options: { limit?: number; traceId?: string } = {}) {
+    const query = new URLSearchParams()
+    query.set('limit', String(options.limit ?? 50))
+    const traceId = options.traceId?.trim()
+    if (traceId) query.set('trace_id', traceId)
+    const suffix = query.toString()
+    return this.request<ApiResponse<VowifiDiagnosticsResponse>>(`/vowifi/diagnostics${suffix ? `?${suffix}` : ''}`, {
+      timeoutMs: 30000,
+    })
+  }
+
+  async getVowifiEvents(limit = 50, traceId?: string) {
+    const query = new URLSearchParams()
+    query.set('limit', String(limit))
+    const filter = traceId?.trim()
+    if (filter) query.set('trace_id', filter)
+    return this.request<ApiResponse<VowifiRuntimeEventsResponse>>(`/vowifi/events?${query.toString()}`, {
+      timeoutMs: 10000,
+    })
+  }
+
+  async getVowifiSmsDeliveries(limit = 20) {
+    return this.request<ApiResponse<VowifiSmsDeliveriesResponse>>(`/vowifi/sms/delivery?limit=${limit}`, {
+      timeoutMs: 10000,
+    })
+  }
+
+  async getVowifiSoakRuns(limit = 20) {
+    return this.request<ApiResponse<VowifiSoakRunsResponse>>(`/vowifi/soak?limit=${limit}`, {
+      timeoutMs: 10000,
+    })
+  }
+
+  async getVowifiEsimRestore() {
+    return this.request<ApiResponse<VowifiEsimRestoreEntry | null>>('/vowifi/esim-restore/status', {
+      timeoutMs: 10000,
     })
   }
 

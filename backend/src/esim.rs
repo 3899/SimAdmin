@@ -34,6 +34,161 @@ const LPAC_COMPAT_RELEASE_BASE_URL: &str =
 const LPAC_COMPAT_MANIFEST_NAME: &str = "lpac.json";
 const PRIVATE_LPAC_DIR: &str = "/opt/simadmin/lpac";
 const PRIVATE_LPAC_PATH: &str = "/opt/simadmin/lpac/lpac";
+#[allow(dead_code)]
+const PRIVATE_LPAC_CSIM_BRIDGE: &str = "/opt/simadmin/lpac/lpac-csim-bridge.py";
+
+#[allow(dead_code)]
+const LPAC_CSIM_BRIDGE_SCRIPT: &str = r#"#!/usr/bin/env python3
+import sys, os, time, json, subprocess, re
+
+def query_bus_modem_path():
+    try:
+        r = subprocess.run(
+            ['busctl', 'tree', 'org.freedesktop.ModemManager1', '--list'],
+            capture_output=True, text=True, timeout=2
+        )
+        for line in r.stdout.splitlines():
+            line = line.strip()
+            if line.startswith('/org/freedesktop/ModemManager1/Modem/'):
+                return line
+    except:
+        pass
+    return '/org/freedesktop/ModemManager1/Modem/0'
+
+def get_modem_path():
+    env_path = os.environ.get('MM_MODEM_PATH')
+    if env_path and env_path.startswith('/org/freedesktop/ModemManager1/Modem/'):
+        return env_path
+    return query_bus_modem_path()
+
+modem_path = get_modem_path()
+
+def send_csim(apdu):
+    global modem_path
+    cmd = f'AT+CSIM={len(apdu)},{apdu}'
+    for attempt in range(2):
+        r = subprocess.run([
+            'busctl', 'call',
+            'org.freedesktop.ModemManager1',
+            modem_path,
+            'org.freedesktop.ModemManager1.Modem',
+            'Command', 'su', cmd, '5'
+        ], capture_output=True, text=True)
+        out = r.stdout.strip()
+        m = re.search(r'\"([0-9A-Fa-f]+)\"', out)
+        if m:
+            return m.group(1).upper()
+        m2 = re.search(r'([0-9A-Fa-f]{4,})', out)
+        if m2:
+            return m2.group(1).upper()
+        if attempt == 0:
+            modem_path = query_bus_modem_path()
+    return ''
+
+lpac_path = sys.argv[1]
+lpac_args = sys.argv[2:]
+
+env = {
+    'LPAC_APDU': 'stdio',
+    'LPAC_HTTP': 'curl',
+    'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+    'LD_LIBRARY_PATH': os.path.join(os.path.dirname(lpac_path), 'lib'),
+}
+
+proc = subprocess.Popen(
+    [lpac_path] + lpac_args,
+    env=env,
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True
+)
+
+channel = 1
+while True:
+    line = proc.stdout.readline()
+    if not line: break
+    line = line.strip()
+    try:
+        msg = json.loads(line)
+        if msg.get('type') == 'apdu':
+            p = msg['payload']
+            func = p.get('func')
+            param = p.get('param')
+            if func in ('connect', 'disconnect'):
+                reply = {'type': 'apdu', 'payload': {'ecode': 0}}
+            elif func == 'logic_channel_open':
+                rx = send_csim('0070000001')
+                chan = 1
+                if len(rx) >= 6 and rx.endswith('9000'):
+                    try:
+                        chan = int(rx[:2], 16)
+                    except:
+                        chan = 1
+                channel = chan
+                if param:
+                    param = param.upper()
+                    aid_len = len(param) // 2
+                    select_apdu = f'{chan:02X}A40400{aid_len:02X}{param}'
+                    send_csim(select_apdu)
+                reply = {'type': 'apdu', 'payload': {'ecode': chan}}
+            elif func == 'logic_channel_close':
+                chan = int(param, 16) if param else channel
+                send_csim(f'{chan:02X}7080{chan:02X}00')
+                reply = {'type': 'apdu', 'payload': {'ecode': 0}}
+            elif func == 'transmit':
+                rx = send_csim(param.upper())
+                reply = {'type': 'apdu', 'payload': {'ecode': 0, 'data': rx}}
+            else:
+                reply = {'type': 'apdu', 'payload': {'ecode': -1}}
+            proc.stdin.write(json.dumps(reply) + '\n')
+            proc.stdin.flush()
+        else:
+            print(line)
+    except Exception as e:
+        sys.stderr.write(f'ERR: {e}\n')
+
+proc.wait()
+sys.exit(proc.returncode)
+"#;
+
+fn has_qmi_device() -> bool {
+    #[cfg(unix)]
+    {
+        if let Ok(entries) = fs::read_dir("/dev") {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("cdc-wdm")
+                    || (name_str.starts_with("wwan") && name_str.contains("qmi"))
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn ensure_lpac_csim_bridge_script() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let bridge_path = Path::new(PRIVATE_LPAC_CSIM_BRIDGE);
+        if let Some(parent) = bridge_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let needs_write = match fs::read_to_string(bridge_path) {
+            Ok(content) => content != LPAC_CSIM_BRIDGE_SCRIPT,
+            Err(_) => true,
+        };
+        if needs_write {
+            if fs::write(bridge_path, LPAC_CSIM_BRIDGE_SCRIPT).is_ok() {
+                let _ = fs::set_permissions(bridge_path, fs::Permissions::from_mode(0o755));
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct LpacAssetCandidate {
@@ -1077,9 +1232,22 @@ async fn run_lpac_command(
     timeout_seconds: u64,
 ) -> Result<EsimCommandResponse, EsimApiError> {
     let command_path = resolve_lpac_path(lpac_path);
-    let mut command = tokio::process::Command::new(&command_path);
-    command.args(args);
-    configure_lpac_environment(&mut command, &command_path);
+    let is_driver_query = args.first().copied() == Some("driver");
+    let use_qmi = has_qmi_device();
+
+    let mut command = if is_driver_query || use_qmi {
+        let mut cmd = tokio::process::Command::new(&command_path);
+        cmd.args(args);
+        configure_lpac_environment(&mut cmd, &command_path);
+        cmd
+    } else {
+        ensure_lpac_csim_bridge_script();
+        let mut cmd = tokio::process::Command::new("python3");
+        cmd.arg(PRIVATE_LPAC_CSIM_BRIDGE);
+        cmd.arg(&command_path);
+        cmd.args(args);
+        cmd
+    };
 
     let output = tokio::time::timeout(Duration::from_secs(timeout_seconds), command.output())
         .await

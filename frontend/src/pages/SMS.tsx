@@ -48,7 +48,7 @@ interface ConversationGroup {
   phoneNumber: string
   messages: SmsMessage[]
   lastMessage: SmsMessage
-  unreadCount: number
+  // unreadCount?: number // 预留未读统计字段，后续若需恢复未读数量展示可解开
 }
 
 type ConversationSearchResult = ConversationGroup & {
@@ -78,7 +78,8 @@ function buildConversations(msgs: SmsMessage[]): ConversationGroup[] {
       phoneNumber,
       messages: groupMessages,
       lastMessage: groupMessages[0],
-      unreadCount: groupMessages.filter((m) => m.direction === 'incoming' && m.status === 'received').length,
+      // 预留未读统计逻辑，后续若需恢复未读数量展示可解开：
+      // unreadCount: groupMessages.filter((m) => m.direction === 'incoming' && m.status === 'received').length,
     })
   })
 
@@ -685,7 +686,7 @@ export default function SMSPage() {
                 lastMessageContent={conv.lastMessage.content}
                 timestamp={conv.lastMessage.timestamp}
                 messageCount={conv.messages.length}
-                unreadCount={conv.unreadCount}
+                // unreadCount={conv.unreadCount} // 预留未读数量传递，后续开发若需展示可解开
                 isSelected={selectedConversation === conv.phoneNumber}
                 onClick={() => handleSelectConversation(conv.phoneNumber)}
                 searchQuery={searchQuery}

@@ -21,11 +21,21 @@ interface NetworkSpeedProps {
   speedHistory: Record<string, InterfaceSpeedHistory>
 }
 
+function interfacePriority(name: string): number {
+  if (name.startsWith('wwan')) return 0
+  if (name.startsWith('usb')) return 1
+  if (name.startsWith('wlan')) return 2
+  if (name.startsWith('eth') || name.startsWith('en')) return 3
+  if (name.startsWith('docker') || name.startsWith('veth') || name.startsWith('br-')) return 10
+  return 5
+}
+
 function preferredInterfaces(systemStats: SystemStatsResponse | null) {
   const interfaces = systemStats?.network_speed?.interfaces ?? []
   return [...interfaces].sort((a, b) => {
-    if (a.interface === 'wlan0') return -1
-    if (b.interface === 'wlan0') return 1
+    const prioA = interfacePriority(a.interface)
+    const prioB = interfacePriority(b.interface)
+    if (prioA !== prioB) return prioA - prioB
     return a.interface.localeCompare(b.interface)
   })
 }
@@ -33,7 +43,7 @@ function preferredInterfaces(systemStats: SystemStatsResponse | null) {
 export function NetworkSpeed({ systemStats, speedHistory }: NetworkSpeedProps) {
   const theme = useTheme<Theme>()
   const interfaces = useMemo(() => preferredInterfaces(systemStats), [systemStats])
-  const [selectedInterface, setSelectedInterface] = useState('wlan0')
+  const [selectedInterface, setSelectedInterface] = useState('')
 
   const effectiveSelectedInterface = interfaces.some((iface) => iface.interface === selectedInterface)
     ? selectedInterface

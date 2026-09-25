@@ -286,7 +286,14 @@ fn active_interfaces() -> Vec<String> {
                 return None;
             }
             let status = read_trimmed(entry.path().join("operstate")).unwrap_or_default();
-            matches!(status.as_str(), "up" | "unknown").then_some(name)
+            if matches!(status.as_str(), "up" | "unknown")
+                || name.starts_with("wwan")
+                || name.starts_with("usb")
+            {
+                Some(name)
+            } else {
+                None
+            }
         })
         .collect::<Vec<_>>();
     interfaces.sort();
@@ -453,6 +460,7 @@ fn temperature_label(sensor_type: &str, zone: &str) -> String {
     };
     let normalized = value.to_ascii_lowercase();
     for (patterns, label) in [
+        (&["baseband-chip", "modem-chip", "bb-chip", "基带芯片"][..], "基带芯片"),
         (&["modem", "baseband", "wwan", "qmi", "mhi"][..], "基带"),
         (&["gpu", "adreno"][..], "GPU"),
         (&["camera", "cam", "isp"][..], "摄像头"),

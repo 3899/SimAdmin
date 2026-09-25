@@ -905,6 +905,25 @@ impl<E: AgentExecutor> AgentRuntime<E> {
                     .clone()
                     .ok_or(AgentError::MissingCredentials)?;
                 let command: CommandPayload = envelope.decode_payload()?;
+                if command.expires_at <= Utc::now() {
+                    tracing::warn!(command_id = %command.command_id, "skipping expired command from server");
+                    let ack = Envelope::new(
+                        "command_ack",
+                        agent_id,
+                        Some(device_id),
+                        Some(envelope.message_id),
+                        CommandAckPayload {
+                            command_id: command.command_id.clone(),
+                            accepted: false,
+                            acknowledged_at: Utc::now(),
+                            error_code: Some("expired".to_string()),
+                            message: Some("command expired before execution".to_string()),
+                        },
+                    )?;
+                    self.store.enqueue(&ack)?;
+                    self.flush_outbox(sink).await?;
+                    return Ok(());
+                }
                 let ack = Envelope::new(
                     "command_ack",
                     agent_id,
