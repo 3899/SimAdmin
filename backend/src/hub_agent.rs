@@ -40,8 +40,9 @@ use crate::{
     handlers::{read_temperature_sensors, run_safe_os_reboot_sequence},
     models::{RadioMode, WorkMode},
     modem_manager::{
-        apply_roaming_policy, get_airplane_mode, get_data_connection_status, get_device_info_data,
-        get_network_info_data, get_radio_mode, get_sim_info_data_with_cache, hangup_all_calls,
+        apply_roaming_policy, get_airplane_mode, get_cellular_data_path_health,
+        get_data_connection_status, get_device_info_data, get_network_info_data, get_radio_mode,
+        get_sim_info_data_with_cache, hangup_all_calls,
         make_call, restart_baseband, send_sms, set_airplane_mode, set_data_connection_with_apn,
         set_radio_mode,
     },
@@ -130,11 +131,12 @@ impl SimAdminExecutor {
 
     async fn snapshot(&self, device_id: &str) -> DeviceStatusItem {
         let observed_at = Utc::now();
-        let (device, sim, network, data_active, airplane, radio) = tokio::join!(
+        let (device, sim, network, data_active, data_path_health, airplane, radio) = tokio::join!(
             get_device_info_data(&self.app.dbus_conn),
             get_sim_info_data_with_cache(&self.app.dbus_conn, Some(&self.app.database)),
             get_network_info_data(&self.app.dbus_conn),
             get_data_connection_status(&self.app.dbus_conn),
+            get_cellular_data_path_health(&self.app.dbus_conn),
             get_airplane_mode(&self.app.dbus_conn),
             get_radio_mode(&self.app.dbus_conn),
         );
@@ -142,6 +144,7 @@ impl SimAdminExecutor {
         let sim = sim.ok();
         let network = network.ok();
         let data_active = data_active.ok();
+        let data_path_health = data_path_health.ok();
         let airplane = airplane.ok();
         let radio = radio.ok();
         let (uptime, _) = read_uptime().unwrap_or_default();
@@ -229,7 +232,14 @@ impl SimAdminExecutor {
                 LayerStatus::Warning
             },
             data_connection_status: match data_active {
-                Some(true) => LayerStatus::Ok,
+                Some(true)
+                    if data_path_health
+                        .as_ref()
+                        .is_some_and(|value| value.data_plane_ready) =>
+                {
+                    LayerStatus::Ok
+                }
+                Some(true) => LayerStatus::Warning,
                 Some(false) => LayerStatus::Warning,
                 None => LayerStatus::Unknown,
             },
@@ -287,6 +297,7 @@ impl SimAdminExecutor {
                     "network": network,
                     "data_enabled": self.app.config_manager.get_data_enabled(),
                     "data_active": data_active,
+                    "data_path_health": data_path_health,
                     "roaming_enabled": self.app.config_manager.get_roaming_allowed(),
                     "airplane_mode": airplane.as_ref().map(|value| value.enabled),
                     "radio_mode": radio.as_ref().map(|value| value.mode.clone()),

@@ -224,6 +224,17 @@ export interface ThermalZone {
 
 export interface DataConnectionStatus {
   active: boolean
+  health?: DataPathHealth
+}
+
+export interface DataPathHealth {
+  control_plane_connected: boolean
+  data_plane_ready: boolean
+  profile_active: boolean
+  interface?: string
+  has_address: boolean
+  has_default_route: boolean
+  reason?: string
 }
 
 export interface DataConnectionRequest {

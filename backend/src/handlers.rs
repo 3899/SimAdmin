@@ -28,8 +28,9 @@ use crate::{
         self, answer_call, apply_roaming_policy, cached_own_numbers_for_identity,
         cached_smsc_for_identity, current_sim_identity, find_nm_modem_connection_pub,
         get_airplane_mode, get_band_lock_status, get_baseband_restart_progress, get_call_by_path,
-        get_call_settings, get_cell_location, get_cells_data, get_data_connection_status,
-        get_device_info_data, get_is_roaming_mm, get_network_info_data, get_operators_list,
+        get_call_settings, get_cell_location, get_cells_data, get_cellular_data_path_health,
+        get_data_connection_status, get_device_info_data, get_is_roaming_mm,
+        get_network_info_data, get_operators_list,
         get_radio_mode, get_signal_strength, get_sim_info_data_with_cache, hangup_all_calls,
         hangup_call, list_apn_contexts, list_current_calls, make_call, nm_set_autoconnect_pub,
         power_cycle_sim_for_profile_switch, refresh_sim_details_background, register_operator_auto,
@@ -2684,19 +2685,25 @@ pub async fn get_data_status(State(app): State<AppState>) -> impl IntoResponse {
             StatusCode::OK,
             Json(ApiResponse::success_with_message(
                 "Success",
-                DataConnectionResponse { active: false },
+                DataConnectionResponse {
+                    active: false,
+                    health: None,
+                },
             )),
         );
     }
 
     match get_data_connection_status(&app.dbus_conn).await {
-        Ok(active) => (
-            StatusCode::OK,
-            Json(ApiResponse::success_with_message(
-                "Success",
-                DataConnectionResponse { active },
-            )),
-        ),
+        Ok(active) => {
+            let health = get_cellular_data_path_health(&app.dbus_conn).await.ok();
+            (
+                StatusCode::OK,
+                Json(ApiResponse::success_with_message(
+                    "Success",
+                    DataConnectionResponse { active, health },
+                )),
+            )
+        }
         Err(e) => (
             StatusCode::OK,
             Json(ApiResponse::<DataConnectionResponse>::error(format!(
@@ -2762,6 +2769,11 @@ pub async fn set_data_status(
                     "Data connection updated",
                     DataConnectionResponse {
                         active: payload.active,
+                        health: if payload.active {
+                            get_cellular_data_path_health(&app.dbus_conn).await.ok()
+                        } else {
+                            None
+                        },
                     },
                 )),
             )

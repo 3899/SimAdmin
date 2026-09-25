@@ -23,8 +23,9 @@ use crate::{
         AirplaneModeResponse, ApnContext, ApnListResponse, BandLockRequest, BandLockStatus,
         BasebandRestartResponse, BasebandRestartStep, CallInfo, CallListResponse,
         CallSettingsResponse, CellInfo, CellLocationInfo, CellLocationResponse, CellsResponse,
-        DeviceInfoResponse, NetworkInfoResponse, OperatorInfo, OperatorListResponse, RadioMode,
-        RadioModeResponse, ServingCell, SetApnRequest, SignalStrengthResponse, SimInfoResponse,
+        DataPathHealth, DeviceInfoResponse, NetworkInfoResponse, NetworkInterfaceInfo,
+        OperatorInfo, OperatorListResponse, RadioMode, RadioModeResponse, ServingCell,
+        SetApnRequest, SignalStrengthResponse, SimInfoResponse,
     },
     serial::with_serial,
     system_event::{
@@ -63,6 +64,8 @@ const NETWORK_REGISTER_TIMEOUT_SECS: u64 = 45;
 const SEARCHING_REGISTER_THRESHOLD: u32 = 4;
 const SEARCHING_RADIO_RESET_THRESHOLD: u32 = 8;
 const DATA_CONNECT_RETRY_COOLDOWN_SECS: u64 = 120;
+const DATA_PATH_HEALTH_RETRY_COUNT: usize = 6;
+const DATA_PATH_HEALTH_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 const NM_CREATED_PROFILE_NAME: &str = "simadmin-modem";
 const MM_MODEM_STATE_REGISTERED: i32 = 8;
 const MM_MODEM_STATE_DISCONNECTING: i32 = 9;
@@ -2360,6 +2363,101 @@ async fn get_cells_data_qmicli(
 mod tests {
     use super::*;
 
+    fn data_interface(
+        name: &str,
+        status: &str,
+        addresses: Vec<crate::models::IpAddress>,
+    ) -> NetworkInterfaceInfo {
+        NetworkInterfaceInfo {
+            name: name.to_string(),
+            status: status.to_string(),
+            ip_addresses: addresses,
+            ..NetworkInterfaceInfo::default()
+        }
+    }
+
+    fn private_ipv4_address() -> crate::models::IpAddress {
+        crate::models::IpAddress {
+            address: "10.0.0.2".to_string(),
+            prefix_len: 24,
+            ip_type: "ipv4".to_string(),
+            scope: "private".to_string(),
+        }
+    }
+
+    #[test]
+    fn data_path_is_healthy_only_when_profile_device_is_up_with_an_address() {
+        let interfaces = vec![data_interface("wwan0", "up", vec![private_ipv4_address()])];
+
+        let health =
+            data_path_health_from_interfaces(true, true, &["wwan0".to_string()], &interfaces);
+
+        assert!(health.control_plane_connected);
+        assert!(health.profile_active);
+        assert!(health.data_plane_ready);
+        assert_eq!(health.interface.as_deref(), Some("wwan0"));
+        assert!(health.has_address);
+    }
+
+    #[test]
+    fn data_path_rejects_a_down_interface_even_if_a_stale_address_is_visible() {
+        let interfaces = vec![data_interface(
+            "wwan0",
+            "down",
+            vec![private_ipv4_address()],
+        )];
+
+        let health =
+            data_path_health_from_interfaces(true, true, &["wwan0".to_string()], &interfaces);
+
+        assert!(!health.data_plane_ready);
+        assert!(health.has_address);
+        assert_eq!(
+            health.reason.as_deref(),
+            Some("Cellular data interface wwan0 is down")
+        );
+    }
+
+    #[test]
+    fn data_path_requires_an_active_networkmanager_profile() {
+        let interfaces = vec![data_interface("wwan0", "up", vec![private_ipv4_address()])];
+
+        let health =
+            data_path_health_from_interfaces(true, false, &["wwan0".to_string()], &interfaces);
+
+        assert!(!health.data_plane_ready);
+        assert_eq!(
+            health.reason.as_deref(),
+            Some("NetworkManager cellular data profile is not active")
+        );
+    }
+
+    #[test]
+    fn data_path_uses_only_the_networkmanager_profile_device() {
+        let interfaces = vec![
+            data_interface("wwan0", "down", vec![private_ipv4_address()]),
+            data_interface("wwan1", "up", vec![private_ipv4_address()]),
+        ];
+
+        let health =
+            data_path_health_from_interfaces(true, true, &["wwan0".to_string()], &interfaces);
+
+        assert!(!health.data_plane_ready);
+        assert_eq!(health.interface.as_deref(), Some("wwan0"));
+    }
+
+    #[test]
+    fn parses_networkmanager_profile_runtime_state_without_matching_deactivated() {
+        assert_eq!(
+            parse_nm_connection_runtime_state("activated\nwwan0\n"),
+            (true, vec!["wwan0".to_string()])
+        );
+        assert_eq!(
+            parse_nm_connection_runtime_state("deactivated\n--\n"),
+            (false, Vec::<String>::new())
+        );
+    }
+
     #[test]
     fn treats_only_data_attach_transitions_as_connection_in_progress() {
         assert!(!data_connection_transition_in_progress(
@@ -3945,6 +4043,159 @@ pub async fn set_data_connection_with_apn(
     set_data_connection_inner(conn, active, allow_roaming, configured_apn).await
 }
 
+fn has_usable_data_address(interface: &NetworkInterfaceInfo) -> bool {
+    interface.ip_addresses.iter().any(|address| {
+        !address.address.trim().is_empty()
+            && !matches!(address.scope.as_str(), "link-local" | "loopback")
+    })
+}
+
+fn data_path_health_from_interfaces(
+    control_plane_connected: bool,
+    profile_active: bool,
+    profile_interfaces: &[String],
+    interfaces: &[NetworkInterfaceInfo],
+) -> DataPathHealth {
+    let mut health = DataPathHealth {
+        control_plane_connected,
+        profile_active,
+        ..DataPathHealth::default()
+    };
+
+    if !control_plane_connected {
+        health.reason = Some("ModemManager control plane is not connected".to_string());
+        return health;
+    }
+    if !profile_active {
+        health.reason = Some("NetworkManager cellular data profile is not active".to_string());
+        return health;
+    }
+    if profile_interfaces.is_empty() {
+        health.reason = Some("NetworkManager cellular data profile has no device".to_string());
+        return health;
+    }
+
+    let matched_interfaces = interfaces
+        .iter()
+        .filter(|interface| profile_interfaces.iter().any(|name| name == &interface.name))
+        .collect::<Vec<_>>();
+    let selected = matched_interfaces
+        .iter()
+        .copied()
+        .find(|interface| {
+            interface.status.eq_ignore_ascii_case("up") && has_usable_data_address(interface)
+        })
+        .or_else(|| matched_interfaces.first().copied());
+
+    let Some(interface) = selected else {
+        health.reason = Some(format!(
+            "NetworkManager data device is not present: {}",
+            profile_interfaces.join(", ")
+        ));
+        return health;
+    };
+
+    health.interface = Some(interface.name.clone());
+    health.has_address = has_usable_data_address(interface);
+    health.has_default_route = interface.is_default_ipv4 || interface.is_default_ipv6;
+    if !interface.status.eq_ignore_ascii_case("up") {
+        health.reason = Some(format!(
+            "Cellular data interface {} is {}",
+            interface.name, interface.status
+        ));
+        return health;
+    }
+    if !health.has_address {
+        health.reason = Some(format!(
+            "Cellular data interface {} has no usable address",
+            interface.name
+        ));
+        return health;
+    }
+
+    health.data_plane_ready = true;
+    health
+}
+
+fn data_path_health_with_reason(
+    control_plane_connected: bool,
+    reason: impl Into<String>,
+) -> DataPathHealth {
+    DataPathHealth {
+        control_plane_connected,
+        reason: Some(reason.into()),
+        ..DataPathHealth::default()
+    }
+}
+
+/// Returns the health of the normal cellular-data connection owned by
+/// NetworkManager. `active` and this health are deliberately distinct: the
+/// former reports ModemManager's control plane while this validates that the
+/// profile has an up interface and an assigned address in Linux.
+pub async fn get_cellular_data_path_health(conn: &Connection) -> zbus::Result<DataPathHealth> {
+    let modem_path = find_modem_path(conn).await?;
+    let state = modem_state(conn, &modem_path).await.unwrap_or(0);
+    let control_plane_connected = state >= MM_MODEM_STATE_CONNECTED;
+
+    let profile = match find_nm_modem_connection().await {
+        Ok(profile) => profile,
+        Err(err) => {
+            return Ok(data_path_health_with_reason(
+                control_plane_connected,
+                format!("NetworkManager cellular data profile is unavailable: {err}"),
+            ));
+        }
+    };
+    let (profile_active, profile_interfaces) = match nm_connection_runtime_state(&profile).await {
+        Ok(state) => state,
+        Err(err) => {
+            return Ok(data_path_health_with_reason(
+                control_plane_connected,
+                format!("Failed to inspect NetworkManager cellular data profile: {err}"),
+            ));
+        }
+    };
+    let interfaces = match crate::utils::read_network_interfaces(None).await {
+        Ok(interfaces) => interfaces,
+        Err(err) => {
+            return Ok(data_path_health_with_reason(
+                control_plane_connected,
+                format!("Failed to inspect network interfaces: {err}"),
+            ));
+        }
+    };
+
+    Ok(data_path_health_from_interfaces(
+        control_plane_connected,
+        profile_active,
+        &profile_interfaces,
+        &interfaces,
+    ))
+}
+
+async fn wait_for_cellular_data_path_health(conn: &Connection) -> zbus::Result<DataPathHealth> {
+    let mut last_health = DataPathHealth::default();
+    for attempt in 0..DATA_PATH_HEALTH_RETRY_COUNT {
+        let health = get_cellular_data_path_health(conn).await?;
+        if health.data_plane_ready {
+            return Ok(health);
+        }
+        last_health = health;
+        if attempt + 1 < DATA_PATH_HEALTH_RETRY_COUNT {
+            tokio::time::sleep(DATA_PATH_HEALTH_RETRY_INTERVAL).await;
+        }
+    }
+
+    Err(zbus::fdo::Error::Failed(format!(
+        "NetworkManager reported the cellular data profile active, but its data path is unhealthy: {}",
+        last_health
+            .reason
+            .as_deref()
+            .unwrap_or("no usable interface or address")
+    ))
+    .into())
+}
+
 async fn set_data_connection_inner(
     conn: &Connection,
     active: bool,
@@ -3959,15 +4210,46 @@ async fn set_data_connection_inner(
             )))?;
 
         if active {
-            // 检查 modem 状态，避免重复连接
+            // Do not equate ModemManager's Connected state with a working
+            // Linux data path. A stale bearer can leave the modem connected
+            // while the profile device is down, which requires a controlled
+            // NetworkManager reactivation rather than a duplicate no-op.
             if let Ok(modem_path) = find_modem_path(conn).await {
                 let state = modem_state(conn, &modem_path).await.unwrap_or(0);
                 if state >= MM_MODEM_STATE_CONNECTED {
-                    info!(
-                        state = mm_state_to_string(state),
-                        "Data connection already active, skipping duplicate connect"
-                    );
-                    return Ok(());
+                    match get_cellular_data_path_health(conn).await {
+                        Ok(health) if health.data_plane_ready => {
+                            info!(
+                                state = mm_state_to_string(state),
+                                interface = health.interface.as_deref().unwrap_or("unknown"),
+                                "Cellular data connection and data path are already healthy"
+                            );
+                            return Ok(());
+                        }
+                        Ok(health) => {
+                            warn!(
+                                state = mm_state_to_string(state),
+                                profile_active = health.profile_active,
+                                interface = health.interface.as_deref().unwrap_or("unknown"),
+                                reason = health.reason.as_deref().unwrap_or("unknown"),
+                                "Cellular data control plane is connected but the data path is unhealthy; recovering through NetworkManager"
+                            );
+                            if health.profile_active {
+                                nm_deactivate_connection(&profile).await.map_err(|err| {
+                                    zbus::fdo::Error::Failed(format!(
+                                        "NM cellular data path recovery could not deactivate the stale profile: {err}"
+                                    ))
+                                })?;
+                            }
+                        }
+                        Err(err) => {
+                            warn!(
+                                state = mm_state_to_string(state),
+                                error = %err,
+                                "Could not verify the existing cellular data path; requesting NetworkManager activation"
+                            );
+                        }
+                    }
                 }
                 if data_connection_transition_in_progress(state) {
                     info!(
@@ -4004,18 +4286,30 @@ async fn set_data_connection_inner(
                 apn_source = connect_settings.source.unwrap_or("none"),
                 "Data connection activated via NetworkManager"
             );
+            let health = wait_for_cellular_data_path_health(conn).await?;
+            info!(
+                interface = health.interface.as_deref().unwrap_or("unknown"),
+                has_default_route = health.has_default_route,
+                "Cellular data path verified after NetworkManager activation"
+            );
         } else {
             // 通过 NM 停用连接
             if let Err(err) = nm_deactivate_connection(&profile).await {
-                // 如果已经断开，忽略错误
-                if !get_data_connection_status(conn).await.unwrap_or(false) {
-                    warn!(error = %err, "NM deactivation returned error but data is already disconnected");
-                } else {
+                // Only the NetworkManager profile belongs to normal cellular
+                // data. Its state, not the modem-wide state, decides whether
+                // a failed deactivation was merely an already-disconnected
+                // profile.
+                let profile_active = nm_connection_runtime_state(&profile)
+                    .await
+                    .map(|(active, _)| active)
+                    .unwrap_or(true);
+                if profile_active {
                     return Err(zbus::fdo::Error::Failed(format!(
                         "NM 连接停用失败: {err}"
                     ))
                     .into());
                 }
+                warn!(error = %err, "NM deactivation returned error but the cellular data profile is already inactive");
             }
             info!("Data connection disconnected via NetworkManager");
         }
@@ -5805,7 +6099,27 @@ pub async fn init_data_connection(
         return format!("Modem not registered (state: {state_text}), skipping auto-connect");
     }
     if state >= MM_MODEM_STATE_CONNECTED {
-        return format!("Data connection already active (state: {state_text})");
+        match get_cellular_data_path_health(conn).await {
+            Ok(health) if health.data_plane_ready => {
+                return format!("Cellular data path already healthy (state: {state_text})");
+            }
+            Ok(health) => {
+                warn!(
+                    state = %state_text,
+                    profile_active = health.profile_active,
+                    interface = health.interface.as_deref().unwrap_or("unknown"),
+                    reason = health.reason.as_deref().unwrap_or("unknown"),
+                    "Startup found a connected modem with an unhealthy cellular data path; requesting NetworkManager recovery"
+                );
+            }
+            Err(err) => {
+                warn!(
+                    state = %state_text,
+                    error = %err,
+                    "Startup could not verify the existing cellular data path; requesting NetworkManager activation"
+                );
+            }
+        }
     }
     if data_connection_transition_in_progress(state) {
         return format!("Data connection transition in progress (state: {state_text}), waiting");
@@ -5910,6 +6224,49 @@ async fn find_nm_modem_connection() -> Result<String, String> {
     }
 
     Err("no gsm connection profile found in NetworkManager".to_string())
+}
+
+fn nm_connection_state_is_activated(value: &str) -> bool {
+    let value = value.trim().to_ascii_lowercase();
+    value == "activated"
+        || value.starts_with("100 ")
+        || value.starts_with("100(")
+        || value.starts_with("100 (")
+        || value.ends_with("(activated)")
+}
+
+fn parse_nm_connection_runtime_state(output: &str) -> (bool, Vec<String>) {
+    let mut values = output
+        .lines()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let profile_active = values
+        .next()
+        .is_some_and(nm_connection_state_is_activated);
+    let devices = values
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "--")
+        .map(str::to_string)
+        .collect();
+    (profile_active, devices)
+}
+
+async fn nm_connection_runtime_state(profile: &str) -> Result<(bool, Vec<String>), String> {
+    let output = run_recovery_command_owned(
+        "nmcli",
+        &[
+            "--terse".into(),
+            "--get-values".into(),
+            "GENERAL.STATE,GENERAL.DEVICES".into(),
+            "connection".into(),
+            "show".into(),
+            profile.into(),
+        ],
+        Duration::from_secs(10),
+    )
+    .await?;
+    Ok(parse_nm_connection_runtime_state(&output))
 }
 
 async fn create_nm_modem_connection() -> Result<String, String> {
@@ -6744,21 +7101,85 @@ pub async fn data_connection_watchdog(
                             mm_state_to_string(state)
                         )
                     } else if state >= MM_MODEM_STATE_CONNECTED {
-                        last_data_activation_attempt_at = None;
-                        data_activation_failure_active = false;
-                        if cellular_problem_active {
-                            system_events
-                                .emit_code(
-                                    system_event_codes::CELLULAR_CONNECTION_RECOVERED,
-                                    system_event_severity::INFO,
-                                    system_event_status::RECOVERED,
-                                    modem_path.to_string(),
-                                    "蜂窝数据连接已恢复",
+                        match get_cellular_data_path_health(&conn).await {
+                            Ok(health) if health.data_plane_ready => {
+                                last_data_activation_attempt_at = None;
+                                data_activation_failure_active = false;
+                                if cellular_problem_active {
+                                    system_events
+                                        .emit_code(
+                                            system_event_codes::CELLULAR_CONNECTION_RECOVERED,
+                                            system_event_severity::INFO,
+                                            system_event_status::RECOVERED,
+                                            modem_path.to_string(),
+                                            "蜂窝数据连接已恢复",
+                                        )
+                                        .await;
+                                    cellular_problem_active = false;
+                                }
+                                format!(
+                                    "Connected (data path: {})",
+                                    health.interface.as_deref().unwrap_or("ready")
                                 )
-                                .await;
-                            cellular_problem_active = false;
+                            }
+                            Ok(health) => {
+                                let cooldown_active = last_data_activation_attempt_at
+                                    .map(|at| {
+                                        at.elapsed()
+                                            < Duration::from_secs(DATA_CONNECT_RETRY_COOLDOWN_SECS)
+                                    })
+                                    .unwrap_or(false);
+                                let reason = health
+                                    .reason
+                                    .as_deref()
+                                    .unwrap_or("no usable interface or address");
+                                if cooldown_active {
+                                    format!(
+                                        "Connected control plane but unhealthy data path ({reason}); recovery cooldown active"
+                                    )
+                                } else {
+                                    last_data_activation_attempt_at = Some(Instant::now());
+                                    cellular_problem_active = true;
+                                    warn!(
+                                        interface = health.interface.as_deref().unwrap_or("unknown"),
+                                        profile_active = health.profile_active,
+                                        reason,
+                                        "Watchdog detected a connected modem with an unhealthy cellular data path; requesting NetworkManager recovery"
+                                    );
+                                    let allow_roaming = config.get_roaming_allowed();
+                                    let apn_config = config.get_apn_config();
+                                    match set_data_connection_with_apn(
+                                        &conn,
+                                        true,
+                                        allow_roaming,
+                                        Some(&apn_config),
+                                    )
+                                    .await
+                                    {
+                                        Ok(_) => "Recovered cellular data path through NetworkManager".to_string(),
+                                        Err(err) => {
+                                            if !data_activation_failure_active {
+                                                system_events
+                                                    .emit_code(
+                                                        system_event_codes::CELLULAR_ACTIVATION_FAILED,
+                                                        system_event_severity::WARNING,
+                                                        system_event_status::FAILED,
+                                                        modem_path.to_string(),
+                                                        format!("蜂窝数据通路恢复失败: {err}"),
+                                                    )
+                                                    .await;
+                                                data_activation_failure_active = true;
+                                            }
+                                            format!("Cellular data path recovery failed: {err}")
+                                        }
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                warn!(error = %err, "Watchdog could not inspect the cellular data path");
+                                format!("Connected but data path health check failed: {err}")
+                            }
                         }
-                        "Connected".to_string()
                     } else if data_connection_transition_in_progress(state) {
                         transition_stuck_count += 1;
                         if transition_stuck_count >= TRANSITION_STUCK_THRESHOLD {

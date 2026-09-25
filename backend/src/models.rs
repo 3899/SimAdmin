@@ -6,8 +6,8 @@ use serde_json::Value;
 use crate::db::{CallRecord, CallStats, SmsMessage, SmsStats};
 
 pub use simadmin_device_runtime::{
-    AirplaneModeResponse, DataConnectionResponse, DeviceInfoResponse, NetworkInfoResponse,
-    RadioModeResponse, SimInfoResponse,
+    AirplaneModeResponse, DataConnectionResponse, DataPathHealth, DeviceInfoResponse,
+    NetworkInfoResponse, RadioModeResponse, SimInfoResponse,
 };
 pub use simadmin_device_runtime::{
     ConnectionAddressesResponse, ConnectivityCheckResponse, CpuLoadInfo, DiskInfo, IpAddress,

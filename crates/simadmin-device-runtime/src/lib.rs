@@ -315,6 +315,7 @@ impl<'a> ModemContext<'a> {
             .unwrap_or(0);
         Ok(DataConnectionResponse {
             active: state >= 11,
+            ..DataConnectionResponse::default()
         })
     }
 
@@ -617,7 +618,10 @@ impl<'a> ModemContext<'a> {
     pub async fn set_data_active(&self, active: bool) -> RuntimeResult<DataConnectionResponse> {
         let proxy = Proxy::new(self.connection, MM_SERVICE, self.modem_path, MM_MODEM).await?;
         let _ = proxy.call::<_, _, ()>("Enable", &(active,)).await;
-        Ok(DataConnectionResponse { active })
+        Ok(DataConnectionResponse {
+            active,
+            ..DataConnectionResponse::default()
+        })
     }
 
     pub async fn set_airplane_mode(&self, enabled: bool) -> RuntimeResult<AirplaneModeResponse> {
@@ -888,7 +892,27 @@ pub struct NetworkInfoResponse {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DataConnectionResponse {
+    /// Control-plane connection state reported by ModemManager. This remains
+    /// intentionally separate from the operating-system data-path health.
     pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health: Option<DataPathHealth>,
+}
+
+/// Health of the operating-system path owned by the normal cellular-data
+/// connection profile. It deliberately contains no service-specific policy so
+/// it can be consumed by local UI, Hub, and higher-level features alike.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct DataPathHealth {
+    pub control_plane_connected: bool,
+    pub data_plane_ready: bool,
+    pub profile_active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interface: Option<String>,
+    pub has_address: bool,
+    pub has_default_route: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
