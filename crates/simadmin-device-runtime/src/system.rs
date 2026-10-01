@@ -274,6 +274,23 @@ fn api_envelope(data: Value) -> Value {
     json!({ "status": "ok", "message": "Success", "data": data })
 }
 
+fn should_include_interface(name: &str, operstate: &str, rx_bytes: u64, tx_bytes: u64) -> bool {
+    if name == "lo" {
+        return false;
+    }
+    // 正常活动接口：operstate 为 "up" 或 "unknown"（蜂窝 wwan0/rmnet 等无传统以太网载波探测，常为 unknown）
+    if matches!(operstate, "up" | "unknown") {
+        return true;
+    }
+    // 当接口状态为 down 时：
+    // 1. 明确排除高通 BAM-DMUX 等驱动在启动时预分配的闲置虚拟通道（wwan1~wwan7）
+    if name.starts_with("wwan") && name != "wwan0" {
+        return false;
+    }
+    // 2. 主蜂窝网卡（wwan0）或 USB 模组（usb*）：仅在有过实际收发流量时保留，避免未插载波的 dummy/gadget usb0 进驻首页
+    (name == "wwan0" || name.starts_with("usb")) && (rx_bytes + tx_bytes > 0)
+}
+
 fn active_interfaces() -> Vec<String> {
     let mut interfaces = fs::read_dir("/sys/class/net")
         .ok()
@@ -282,18 +299,10 @@ fn active_interfaces() -> Vec<String> {
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name == "lo" {
-                return None;
-            }
             let status = read_trimmed(entry.path().join("operstate")).unwrap_or_default();
-            if matches!(status.as_str(), "up" | "unknown")
-                || name.starts_with("wwan")
-                || name.starts_with("usb")
-            {
-                Some(name)
-            } else {
-                None
-            }
+            let rx = interface_stat(&name, "rx_bytes");
+            let tx = interface_stat(&name, "tx_bytes");
+            should_include_interface(&name, &status, rx, tx).then_some(name)
         })
         .collect::<Vec<_>>();
     interfaces.sort();
@@ -918,5 +927,32 @@ mod tests {
         assert_eq!(ip_scope(&"169.254.1.1".parse().unwrap()), "link-local");
         assert_eq!(ip_scope(&"192.168.1.2".parse().unwrap()), "private");
         assert_eq!(ip_scope(&"2408:8000::1".parse().unwrap()), "public");
+    }
+
+    #[test]
+    fn filters_active_interfaces_properly() {
+        // lo 永远排除
+        assert!(!should_include_interface("lo", "unknown", 0, 0));
+        assert!(!should_include_interface("lo", "up", 100, 100));
+
+        // up 和 unknown 状态正常保留
+        assert!(should_include_interface("wlan0", "up", 100, 100));
+        assert!(should_include_interface("wwan0", "unknown", 0, 0));
+        assert!(should_include_interface("eth0", "up", 0, 0));
+
+        // 高通 BAM-DMUX 预分配闲置虚拟通道（wwan1~wwan7 为 down 状态）必须排除
+        assert!(!should_include_interface("wwan1", "down", 0, 0));
+        assert!(!should_include_interface("wwan2", "down", 0, 0));
+        assert!(!should_include_interface("wwan7", "down", 0, 0));
+
+        // 闲置/未连接且无流量的 usb0 为 down 状态必须排除
+        assert!(!should_include_interface("usb0", "down", 0, 0));
+
+        // 具有收发流量的模组接口（如已使用过的 usb0 / wwan0）在休眠/down 态可保留
+        assert!(should_include_interface("usb0", "down", 1024, 2048));
+        assert!(should_include_interface("wwan0", "down", 512, 1024));
+
+        // 普通网卡断开 (down) 且无流量应排除
+        assert!(!should_include_interface("eth1", "down", 0, 0));
     }
 }

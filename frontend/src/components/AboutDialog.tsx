@@ -265,21 +265,26 @@ export default function AboutDialog({
           <Stack spacing={1.75}>
             <Box>
               <Stack
-                direction={{ xs: 'column', sm: 'row' }}
-                spacing={2}
+                direction="row"
+                spacing={{ xs: 1.5, sm: 2 }}
                 justifyContent="center"
-                alignItems="center"
+                alignItems="stretch"
+                sx={{ width: '100%' }}
               >
                 <Card
                   variant="outlined"
                   sx={{
-                    p: 1.5,
-                    pb: 1,
+                    p: { xs: 1, sm: 1.5 },
+                    pb: { xs: 0.75, sm: 1 },
                     textAlign: 'center',
                     flex: '1 1 0',
-                    width: { xs: '100%', sm: 'auto' },
-                    maxWidth: 220,
+                    minWidth: 0,
+                    maxWidth: { xs: 170, sm: 220 },
                     borderRadius: 1.5,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                   }}
                 >
                   <Box
@@ -288,19 +293,24 @@ export default function AboutDialog({
                     alt="微信赞助"
                     sx={{
                       width: '100%',
-                      height: 'auto',
-                      maxHeight: 168,
-                      maxWidth: 168,
+                      maxWidth: { xs: 136, sm: 168 },
+                      aspectRatio: '1 / 1',
                       objectFit: 'contain',
                       borderRadius: 1,
                       bgcolor: '#fff',
-                      display: 'inline-block',
+                      display: 'block',
                     }}
                   />
                   <Typography
                     variant="caption"
                     fontWeight={600}
-                    sx={{ color: '#07c160', display: 'block', mt: 0.5 }}
+                    sx={{
+                      color: '#07c160',
+                      display: 'block',
+                      mt: 0.5,
+                      fontSize: { xs: '0.75rem', sm: '0.8rem' },
+                      whiteSpace: 'nowrap',
+                    }}
                   >
                     微信赞助
                   </Typography>
@@ -309,13 +319,17 @@ export default function AboutDialog({
                 <Card
                   variant="outlined"
                   sx={{
-                    p: 1.5,
-                    pb: 1,
+                    p: { xs: 1, sm: 1.5 },
+                    pb: { xs: 0.75, sm: 1 },
                     textAlign: 'center',
                     flex: '1 1 0',
-                    width: { xs: '100%', sm: 'auto' },
-                    maxWidth: 220,
+                    minWidth: 0,
+                    maxWidth: { xs: 170, sm: 220 },
                     borderRadius: 1.5,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                   }}
                 >
                   <Box
@@ -324,19 +338,24 @@ export default function AboutDialog({
                     alt="支付宝赞助"
                     sx={{
                       width: '100%',
-                      height: 'auto',
-                      maxHeight: 168,
-                      maxWidth: 168,
+                      maxWidth: { xs: 136, sm: 168 },
+                      aspectRatio: '1 / 1',
                       objectFit: 'contain',
                       borderRadius: 1,
                       bgcolor: '#fff',
-                      display: 'inline-block',
+                      display: 'block',
                     }}
                   />
                   <Typography
                     variant="caption"
                     fontWeight={600}
-                    sx={{ color: '#1677ff', display: 'block', mt: 0.5 }}
+                    sx={{
+                      color: '#1677ff',
+                      display: 'block',
+                      mt: 0.5,
+                      fontSize: { xs: '0.75rem', sm: '0.8rem' },
+                      whiteSpace: 'nowrap',
+                    }}
                   >
                     支付宝赞助
                   </Typography>
