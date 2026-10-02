@@ -89,6 +89,9 @@ type ManagedObjects = HashMap<OwnedObjectPath, HashMap<String, InterfaceProperti
 static MODEM_DISCOVERY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static MODEM_DISCOVERY_FAILURE: std::sync::Mutex<Option<(Instant, String)>> =
     std::sync::Mutex::new(None);
+static LAST_MODEM_AUTO_RECOVERY: std::sync::Mutex<Option<Instant>> =
+    std::sync::Mutex::new(None);
+const MODEM_AUTO_RECOVERY_COOLDOWN_SECS: u64 = 180;
 static BASEBAND_RESTART_STEPS: std::sync::Mutex<Vec<BasebandRestartStep>> =
     std::sync::Mutex::new(Vec::new());
 static BASEBAND_RESTART_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -1098,6 +1101,89 @@ fn clear_modem_discovery_failure() {
         *guard = None;
     }
 }
+
+#[cfg(unix)]
+pub async fn try_recover_stuck_modem(reason: &str) -> bool {
+    let should_run = {
+        let Ok(mut guard) = LAST_MODEM_AUTO_RECOVERY.lock() else {
+            return false;
+        };
+        if let Some(last) = *guard {
+            if last.elapsed() < Duration::from_secs(MODEM_AUTO_RECOVERY_COOLDOWN_SECS) {
+                return false;
+            }
+        }
+        *guard = Some(Instant::now());
+        true
+    };
+
+    if !should_run {
+        return false;
+    }
+
+    warn!(reason = %reason, "Triggering active modem recovery pipeline");
+
+    if let Some(qmi_path) = find_qmi_device_path() {
+        if let Ok(mode_out) = run_recovery_command_owned(
+            "qmicli",
+            &[
+                "-d".to_string(),
+                qmi_path.clone(),
+                "--device-open-proxy".to_string(),
+                "--dms-get-operating-mode".to_string(),
+            ],
+            Duration::from_secs(5),
+        )
+        .await
+        {
+            let lower = mode_out.to_lowercase();
+            if lower.contains("shutting-down")
+                || lower.contains("low-power")
+                || lower.contains("offline")
+            {
+                warn!(
+                    qmi_device = %qmi_path,
+                    mode = %mode_out,
+                    "QMI operating mode is restricted; restoring online mode"
+                );
+                let _ = run_recovery_command_owned(
+                    "qmicli",
+                    &[
+                        "-d".to_string(),
+                        qmi_path.clone(),
+                        "--device-open-proxy".to_string(),
+                        "--dms-set-operating-mode=online".to_string(),
+                    ],
+                    Duration::from_secs(10),
+                )
+                .await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+
+    info!("Restarting ModemManager to re-enumerate modem devices");
+    let restart_res = run_recovery_command_owned(
+        "systemctl",
+        &["restart".to_string(), "ModemManager.service".to_string()],
+        Duration::from_secs(15),
+    )
+    .await;
+    if let Err(e) = restart_res {
+        warn!(error = %e, "Failed to restart ModemManager during recovery");
+        return false;
+    }
+
+    clear_modem_discovery_failure();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    true
+}
+
+#[cfg(not(unix))]
+pub async fn try_recover_stuck_modem(_reason: &str) -> bool {
+    false
+}
+
 
 pub async fn find_modem_path(conn: &Connection) -> zbus::Result<String> {
     if let Some(path) = list_modem_paths(conn).await?.into_iter().next() {

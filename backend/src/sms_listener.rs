@@ -5,7 +5,9 @@
 use crate::db::{
     beijing_sms_now_string, normalize_sms_timestamp_for_display, Database, SmsMessage,
 };
-use crate::modem_manager::{cache_smsc_for_identity, current_sim_identity, find_modem_path};
+use crate::modem_manager::{
+    cache_smsc_for_identity, current_sim_identity, find_modem_path, try_recover_stuck_modem,
+};
 use crate::notification::NotificationSender;
 use futures_util::StreamExt;
 use simadmin_device_runtime::{ModemContext, ReceivedSms as IncomingSms};
@@ -330,16 +332,27 @@ pub async fn start_sms_listener(
     mut resync_receiver: SmsResyncReceiver,
 ) -> zbus::Result<()> {
     info!("Starting SMS listener (ModemManager mode)");
+    let mut consecutive_failures: u32 = 0;
     loop {
         let modem_path = loop {
             match find_modem_path(&conn).await {
-                Ok(path) => break path,
+                Ok(path) => {
+                    consecutive_failures = 0;
+                    break path;
+                }
                 Err(e) => {
+                    consecutive_failures += 1;
                     warn!(
                         error = %e,
+                        consecutive_failures,
                         retry_after_secs = MODEM_RETRY_DELAY_SECS,
                         "SMS listener waiting for modem"
                     );
+                    if consecutive_failures >= 6 {
+                        if try_recover_stuck_modem("SMS listener persistently missing modem").await {
+                            consecutive_failures = 0;
+                        }
+                    }
                     tokio::time::sleep(Duration::from_secs(MODEM_RETRY_DELAY_SECS)).await;
                 }
             }

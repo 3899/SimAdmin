@@ -22,11 +22,17 @@ pub const SCRIPT_PATH: &str = "/usr/local/bin/simadmin-modem-recovery.sh";
 pub const SERVICE_PATH: &str = "/etc/systemd/system/simadmin-modem-recovery.service";
 #[cfg(unix)]
 pub const SERVICE_NAME: &str = "simadmin-modem-recovery.service";
+#[cfg(unix)]
+pub const TIMER_PATH: &str = "/etc/systemd/system/simadmin-modem-recovery.timer";
+#[cfg(unix)]
+pub const TIMER_NAME: &str = "simadmin-modem-recovery.timer";
 
 pub const EMBEDDED_SCRIPT: &str =
     include_str!("../../scripts/system/simadmin-modem-recovery.sh");
 pub const EMBEDDED_SERVICE: &str =
     include_str!("../../scripts/system/simadmin-modem-recovery.service");
+pub const EMBEDDED_TIMER: &str =
+    include_str!("../../scripts/system/simadmin-modem-recovery.timer");
 
 #[cfg(unix)]
 fn atomic_write_file(target_path: &Path, content: &str, mode: u32) -> std::io::Result<()> {
@@ -53,7 +59,7 @@ fn atomic_write_file(target_path: &Path, content: &str, mode: u32) -> std::io::R
     Ok(())
 }
 
-/// 检查并确保宿主机上的开机看门狗脚本与 systemd 单元已同步最新内嵌版本并处于启用状态
+/// 检查并确保宿主机上的开机看门狗脚本、systemd 单元与定时器已同步最新内嵌版本并处于启用状态
 #[cfg(unix)]
 pub fn ensure_modem_recovery_assets_installed() {
     let script_target = Path::new(SCRIPT_PATH);
@@ -121,8 +127,36 @@ pub fn ensure_modem_recovery_assets_installed() {
         }
     }
 
-    // 若服务单元被创建或更新，触发 systemd 重载配置
-    if service_updated {
+    let timer_target = Path::new(TIMER_PATH);
+    let mut timer_updated = false;
+
+    if timer_target.exists() {
+        match fs::read_to_string(timer_target) {
+            Ok(current) => {
+                if current != EMBEDDED_TIMER {
+                    match atomic_write_file(timer_target, EMBEDDED_TIMER, 0o644) {
+                        Ok(()) => {
+                            info!("Updated {} with latest embedded timer unit", TIMER_PATH);
+                            timer_updated = true;
+                        }
+                        Err(e) => warn!(error = %e, "Failed to update {}", TIMER_PATH),
+                    }
+                }
+            }
+            Err(e) => warn!(error = %e, "Failed to read {}", TIMER_PATH),
+        }
+    } else {
+        match atomic_write_file(timer_target, EMBEDDED_TIMER, 0o644) {
+            Ok(()) => {
+                info!("Installed embedded recovery timer unit to {}", TIMER_PATH);
+                timer_updated = true;
+            }
+            Err(e) => warn!(error = %e, "Failed to install {}", TIMER_PATH),
+        }
+    }
+
+    // 若服务或定时器单元被创建或更新，触发 systemd 重载配置
+    if service_updated || timer_updated {
         let reload_status = Command::new("systemctl")
             .arg("daemon-reload")
             .status();
@@ -157,6 +191,22 @@ pub fn ensure_modem_recovery_assets_installed() {
             }
         }
     }
+
+    // 确保定时器被启用并正在运行
+    if timer_updated || script_updated {
+        let is_timer_active = Command::new("systemctl")
+            .args(["is-active", "--quiet", TIMER_NAME])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if !is_timer_active || timer_updated {
+            let _ = Command::new("systemctl")
+                .args(["enable", "--now", TIMER_NAME])
+                .status();
+            info!("Ensured {} is enabled and running", TIMER_NAME);
+        }
+    }
 }
 
 /// 非 Unix 平台空实现
@@ -170,6 +220,7 @@ mod tests {
         use super::*;
         assert!(!EMBEDDED_SCRIPT.trim().is_empty(), "Recovery script should not be empty");
         assert!(!EMBEDDED_SERVICE.trim().is_empty(), "Recovery service should not be empty");
+        assert!(!EMBEDDED_TIMER.trim().is_empty(), "Recovery timer should not be empty");
 
         assert!(
             EMBEDDED_SCRIPT.contains("SimAdmin-ModemRecovery"),
@@ -187,6 +238,10 @@ mod tests {
         assert!(
             EMBEDDED_SERVICE.contains("WantedBy=multi-user.target"),
             "Recovery service must install into multi-user.target"
+        );
+        assert!(
+            EMBEDDED_TIMER.contains("WantedBy=timers.target"),
+            "Recovery timer must install into timers.target"
         );
     }
 
@@ -211,3 +266,4 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
     }
 }
+

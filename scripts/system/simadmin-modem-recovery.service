@@ -4,8 +4,8 @@ After=network.target ModemManager.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/simadmin-modem-recovery.sh
-RemainAfterExit=yes
+ExecStart=/usr/local/bin/simadmin-modem-recovery.sh --auto
+RemainAfterExit=no
 
 [Install]
 WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=SimAdmin Modem Recovery Periodic Timer
+After=network.target ModemManager.service
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=2min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
