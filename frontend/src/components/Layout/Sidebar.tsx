@@ -26,7 +26,9 @@ import {
   AutoMode as AutomationIcon,
   Shield as SecurityIcon,
   SettingsBackupRestore as BackupRestoreIcon,
+  InfoOutlined as InfoIcon,
 } from '@mui/icons-material'
+import { useAboutDialog } from '../../contexts/AboutDialogContext'
 
 const SIDEBAR_TRANSITION = '300ms cubic-bezier(0.4, 0, 0.2, 1)'
 
@@ -101,6 +103,7 @@ export default function Sidebar({
 }: SidebarProps) {
   const navigate = useNavigate()
   const location = useLocation()
+  const { openAbout } = useAboutDialog()
 
   const directItems = useMemo(() => {
     return menuGroups.filter((item): item is DirectMenuItem => item.type === 'direct')
@@ -452,21 +455,61 @@ export default function Sidebar({
             3899/SimAdmin
           </Typography>
         </Box>
-        <Box
-          sx={{
-            opacity: compact ? 0 : 1,
-            maxHeight: compact ? 0 : 48,
-            overflow: 'hidden',
-            transition: `opacity ${SIDEBAR_TRANSITION}, max-height ${SIDEBAR_TRANSITION}`,
-          }}
-        >
-          <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 0.5 }}>
-            v{__APP_VERSION__} ({__GIT_BRANCH__}/{__GIT_COMMIT__})
-          </Typography>
-          <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 0.5 }}>
-            Copyright © 2026 @3899
-          </Typography>
-        </Box>
+        {compact ? (
+          <Tooltip title="关于与致谢" placement="right">
+            <Box
+              component="button"
+              type="button"
+              onClick={() => openAbout(0)}
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                bgcolor: 'transparent',
+                border: 'none',
+                p: 0.5,
+                mt: 0.5,
+                cursor: 'pointer',
+                color: 'text.secondary',
+                '&:hover': { color: 'primary.main' },
+              }}
+            >
+              <InfoIcon sx={{ fontSize: 18 }} />
+            </Box>
+          </Tooltip>
+        ) : (
+          <Box
+            sx={{
+              opacity: compact ? 0 : 1,
+              maxHeight: compact ? 0 : 54,
+              overflow: 'hidden',
+              transition: `opacity ${SIDEBAR_TRANSITION}, max-height ${SIDEBAR_TRANSITION}`,
+              width: '100%',
+            }}
+          >
+            <Tooltip title="关于与致谢" placement="top">
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                onClick={() => openAbout(0)}
+                sx={{
+                  display: 'block',
+                  mt: 0.5,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  '&:hover': { color: 'primary.main', textDecoration: 'underline' },
+                }}
+              >
+                v{__APP_VERSION__} ({__GIT_BRANCH__}/{__GIT_COMMIT__})
+              </Typography>
+            </Tooltip>
+            <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 0.5 }}>
+              Copyright © 2026 @3899
+            </Typography>
+          </Box>
+        )}
       </Box>
     </Box>
   )

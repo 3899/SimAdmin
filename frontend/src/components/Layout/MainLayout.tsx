@@ -4,6 +4,8 @@ import { Box, useMediaQuery, useTheme, type Theme } from '@mui/material'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
 import { RefreshContext } from '../../contexts/RefreshContext'
+import { AboutDialogProvider, useAboutDialog } from '../../contexts/AboutDialogContext'
+import AboutDialog from '../AboutDialog'
 import { LAYOUT_BOTTOM_ACTION_BAR_HEIGHT, LAYOUT_BOTTOM_ACTION_BAR_ID } from './layoutConstants'
 
 const DRAWER_WIDTH = 224
@@ -14,13 +16,15 @@ interface MainLayoutProps {
   showLogout?: boolean
 }
 
-export default function MainLayout({ showLogout = false }: MainLayoutProps) {
+function MainLayoutContent({ showLogout = false }: MainLayoutProps) {
   const theme = useTheme<Theme>()
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
   const [mobileOpen, setMobileOpen] = useState(false)
   const [desktopOpen, setDesktopOpen] = useState(true) // 桌面端侧边栏状态，默认展开
   const [refreshInterval, setRefreshInterval] = useState(3000) // 默认 3 秒（移动端友好）
   const [refreshKey, setRefreshKey] = useState(0)
+
+  const { isOpen, activeTab, closeAbout, setActiveTab } = useAboutDialog()
 
   const handleDrawerToggle = () => {
     if (isMobile) {
@@ -134,7 +138,23 @@ export default function MainLayout({ showLogout = false }: MainLayoutProps) {
             })}
           />
         </Box>
+
+        {/* 关于与致谢模态弹窗 */}
+        <AboutDialog
+          open={isOpen}
+          activeTab={activeTab}
+          onClose={closeAbout}
+          onTabChange={setActiveTab}
+        />
       </Box>
     </RefreshContext.Provider>
+  )
+}
+
+export default function MainLayout({ showLogout = false }: MainLayoutProps) {
+  return (
+    <AboutDialogProvider>
+      <MainLayoutContent showLogout={showLogout} />
+    </AboutDialogProvider>
   )
 }

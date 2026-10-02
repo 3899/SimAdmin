@@ -50,8 +50,11 @@ import {
   Download,
   Bolt,
   Memory,
+  Coffee,
+  Favorite,
 } from '@mui/icons-material'
 import { useSimAdminApi } from '../contexts/ApiContext'
+import { useAboutDialog } from '../contexts/AboutDialogContext'
 import type {
   OtaLatestReleaseResponse,
   OtaReleaseAsset,
@@ -992,6 +995,7 @@ function UploadUpdateCard({
 
 export default function OtaUpdate() {
   const api = useSimAdminApi()
+  const { openAbout } = useAboutDialog()
   const supportsOtaUpload = api.supportsOtaUpload
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
@@ -1840,6 +1844,82 @@ export default function OtaUpdate() {
           </Stack>
         )}
 
+        {/* 支持与赞助卡片 */}
+        <Card
+          onClick={() => openAbout(0)}
+          sx={{
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+            '&:hover': {
+              borderColor: 'primary.main',
+              bgcolor: (theme) =>
+                theme.palette.mode === 'light' ? 'rgba(18, 150, 219, 0.02)' : 'rgba(18, 150, 219, 0.04)',
+              boxShadow: (theme) =>
+                theme.palette.mode === 'light'
+                  ? '0 6px 20px -8px rgba(18, 150, 219, 0.25)'
+                  : '0 6px 20px -8px rgba(0, 0, 0, 0.5)',
+              transform: 'translateY(-1px)',
+              '& .sponsor-card-icon': {
+                bgcolor: 'primary.main',
+                color: '#fff',
+              },
+              '& .sponsor-card-btn': {
+                bgcolor: 'primary.main',
+                color: '#fff',
+              },
+            },
+          }}
+        >
+          <CardContent sx={{ p: { xs: 2, sm: 2.5 }, '&:last-child': { pb: { xs: 2, sm: 2.5 } } }}>
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={2}
+              alignItems={{ xs: 'flex-start', sm: 'center' }}
+              justifyContent="space-between"
+            >
+              <Stack direction="row" spacing={1.75} alignItems="center">
+                <Box
+                  className="sponsor-card-icon"
+                  sx={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 1,
+                    bgcolor: 'action.hover',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'primary.main',
+                    flexShrink: 0,
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <Coffee />
+                </Box>
+                <Box>
+                  <Typography variant="subtitle2" fontWeight={600} sx={{ lineHeight: 1.3 }}>
+                    支持 SimAdmin 持续进化
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, lineHeight: 1.5 }}>
+                    SimAdmin 由开发者利用业余时间持续开发和维护，开发不易，若它对您有所帮助，欢迎请作者喝杯咖啡，您的支持将帮助我们更好地维护和发展项目！
+                  </Typography>
+                </Box>
+              </Stack>
+
+              <Stack direction="row" spacing={1.5} sx={{ alignSelf: { xs: 'flex-end', sm: 'center' }, flexShrink: 0 }}>
+                <Button
+                  className="sponsor-card-btn"
+                  variant="outlined"
+                  size="small"
+                  color="primary"
+                  startIcon={<Favorite sx={{ fontSize: 16 }} />}
+                  sx={{ pointerEvents: 'none', transition: 'all 0.2s ease' }}
+                >
+                  赞助与致谢榜
+                </Button>
+              </Stack>
+            </Stack>
+          </CardContent>
+        </Card>
       </Stack>
 
       <Dialog open={confirmDialog === 'apply'} onClose={() => setConfirmDialog(null)}>

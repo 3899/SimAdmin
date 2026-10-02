@@ -223,6 +223,35 @@ SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的
 
 ---
 
+## ☕ 支持与赞助
+
+`SimAdmin` 是一款由开源社区爱好者利用业余时间持续开发与维护的嵌入式 SIM/eSIM 设备管理中枢。
+
+如果您觉得这个项目对您有帮助，欢迎请作者喝杯咖啡，您的支持将帮助我们更好地维护和发展项目，让 `SimAdmin` 持续为社区创造价值。
+
+<table>
+  <thead>
+    <tr>
+      <th width="50%" align="center">微信赞助</th>
+      <th width="50%" align="center">支付宝赞助</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td align="center">
+        <img src="./static/Sponsor/wechat.png" width="200" alt="微信赞助" />
+      </td>
+      <td align="center">
+        <img src="./static/Sponsor/alipay.png" width="200" alt="支付宝赞助" />
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+> 💡 赞助时欢迎备注您的 GitHub ID 或昵称，赞助名单将同步收录于项目文档中。
+
+---
+
 ## 🎖️ 鸣谢
 
 ### 👥 贡献者

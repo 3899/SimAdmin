@@ -31,9 +31,11 @@ import {
   Refresh as RefreshIcon,
   Router as RouterIcon,
   Speed as SpeedIcon,
+  InfoOutlined as InfoIcon,
 } from '@mui/icons-material'
 import { useTheme } from '../../contexts/ThemeContext'
 import { useRefreshInterval } from '../../contexts/RefreshContext'
+import { useAboutDialog } from '../../contexts/AboutDialogContext'
 import { api } from '../../api/current'
 import type { BasebandRestartResponse, BasebandRestartStep } from '../../api/types'
 
@@ -74,6 +76,7 @@ export default function TopBar({
 }: TopBarProps) {
   const { mode, toggleTheme } = useTheme()
   const { triggerRefresh } = useRefreshInterval()
+  const { openAbout } = useAboutDialog()
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const [refreshMenuAnchor, setRefreshMenuAnchor] = useState<null | HTMLElement>(null)
   const [basebandRestarting, setBasebandRestarting] = useState(false)
@@ -373,6 +376,16 @@ export default function TopBar({
           <MenuItem onClick={(event) => setRefreshMenuAnchor(event.currentTarget)}>
             <ListItemIcon><SpeedIcon fontSize="small" /></ListItemIcon>
             <ListItemText primary="刷新频率" secondary={getRefreshLabel()} secondaryTypographyProps={{ variant: 'caption' }} />
+          </MenuItem>
+          <Divider />
+          <MenuItem
+            onClick={() => {
+              setAnchorEl(null)
+              openAbout(0)
+            }}
+          >
+            <ListItemIcon><InfoIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>关于与致谢</ListItemText>
           </MenuItem>
           {showLogout && (
             <MenuItem

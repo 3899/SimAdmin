@@ -32,6 +32,8 @@ import {
 } from '../lib/passwordPolicy'
 import qqQrUrl from '../../../static/Community/QQGroup_Light.png'
 import tgQrUrl from '../../../static/Community/TG_Chat.png'
+import wechatQrUrl from '../../../static/Sponsor/wechat.png'
+import alipayQrUrl from '../../../static/Sponsor/alipay.png'
 
 type AuthMode = 'login' | 'setup'
 
@@ -51,6 +53,7 @@ export interface SingleAdminLoginBrand {
   version: string
   copyright: string
   community?: ReactNode
+  sponsor?: ReactNode
   recovery?: {
     description: string
     resetCommand: string
@@ -174,6 +177,87 @@ function CommunityTooltip() {
     >
       <Link component="button" type="button" underline="none" color="inherit" sx={{ font: 'inherit' }}>
         社区
+      </Link>
+    </Tooltip>
+  )
+}
+
+function SponsorTooltip() {
+  return (
+    <Tooltip
+      arrow
+      placement="top"
+      slotProps={{
+        tooltip: {
+          sx: {
+            p: 0,
+            maxWidth: 'none',
+            bgcolor: 'rgba(255,255,255,0.94)',
+            color: '#334155',
+            border: '1px solid rgba(226,232,240,0.9)',
+            boxShadow: '0 18px 48px -24px rgba(15,23,42,0.38)',
+            backdropFilter: 'blur(18px)',
+            WebkitBackdropFilter: 'blur(18px)',
+          },
+        },
+        arrow: {
+          sx: {
+            color: 'rgba(255,255,255,0.94)',
+            '&::before': {
+              border: '1px solid rgba(226,232,240,0.9)',
+              boxSizing: 'border-box',
+            },
+          },
+        },
+      }}
+      title={(
+        <Stack spacing={1} sx={{ p: 1.5, alignItems: 'center' }}>
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Stack spacing={0.75} alignItems="center">
+              <Box
+                component="img"
+                src={wechatQrUrl}
+                alt="微信赞助"
+                sx={{
+                  height: 132,
+                  width: 'auto',
+                  maxWidth: 240,
+                  objectFit: 'contain',
+                  borderRadius: 1,
+                  bgcolor: '#fff',
+                }}
+              />
+              <Typography variant="caption" sx={{ color: 'text.secondary', whiteSpace: 'nowrap', fontWeight: 600 }}>
+                微信赞助
+              </Typography>
+            </Stack>
+            <Stack spacing={0.75} alignItems="center">
+              <Box
+                component="img"
+                src={alipayQrUrl}
+                alt="支付宝赞助"
+                sx={{
+                  height: 132,
+                  width: 'auto',
+                  maxWidth: 240,
+                  objectFit: 'contain',
+                  borderRadius: 1,
+                  bgcolor: '#fff',
+                }}
+              />
+              <Typography variant="caption" sx={{ color: 'text.secondary', whiteSpace: 'nowrap', fontWeight: 600 }}>
+                支付宝赞助
+              </Typography>
+            </Stack>
+          </Stack>
+          <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
+            开源不易，感谢支持 ☕
+          </Typography>
+        </Stack>
+      )}
+    >
+      <Link component="button" type="button" underline="none" color="inherit" sx={{ font: 'inherit' }}>
+        赞助
       </Link>
     </Tooltip>
   )
@@ -578,6 +662,8 @@ export function SingleAdminLogin({ auth, brand }: { auth: SingleAdminAuthClient;
           </Link>
           {brand.community && <Typography component="span" color="text.disabled">|</Typography>}
           {brand.community}
+          {brand.sponsor && <Typography component="span" color="text.disabled">|</Typography>}
+          {brand.sponsor}
           <Typography component="span" color="text.disabled">|</Typography>
           <Typography component="span" sx={{ font: 'inherit' }}>v{brand.version}</Typography>
         </Stack>
@@ -614,6 +700,7 @@ export default function Login() {
         version: __APP_VERSION__,
         copyright: 'Copyright © 2026 GitHub 3899',
         community: <CommunityTooltip />,
+        sponsor: <SponsorTooltip />,
         recovery: {
           description: '忘记密码可通过 ADB/SSH 登录设备执行命令操作',
           resetCommand: '/opt/simadmin/simadmin auth reset-password',
