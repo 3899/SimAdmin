@@ -39,8 +39,10 @@ export function SmsMessageBubble({
   const [copied, setCopied] = useState(false)
   const isOutgoing = message.direction === 'outgoing'
 
-  // 验证码检测（仅对收件短信检测）
-  const verificationCode = !isOutgoing ? extractVerificationCode(message.content) : null
+  // 验证码检测（仅对收件短信检测）：优先采用后端权威识别结果，缺失时通过客户端安全兜底
+  const verificationCode = !isOutgoing
+    ? (message.verification_code ?? extractVerificationCode(message.content))
+    : null
 
   // 传输链路检测（VoLTE / VoWiFi）
   const isVolte = message.transport === 'volte_ims' || message.transport === 'volte'

@@ -187,6 +187,7 @@ async fn process_sms_path(
         Some(&marker),
     ) {
         Ok(id) => {
+            let verification_code = simadmin_sms_core::extract_verification_code(&incoming.content);
             let sms = SmsMessage {
                 id,
                 direction: "incoming".to_string(),
@@ -195,6 +196,7 @@ async fn process_sms_path(
                 timestamp,
                 status: "received".to_string(),
                 pdu: Some(marker),
+                verification_code,
             };
             if should_forward_after_insert(mode, forward_reconciled_new_sms) {
                 let notification_sender = Arc::clone(notification_sender);

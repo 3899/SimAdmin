@@ -3175,6 +3175,7 @@ mod tests {
             timestamp: "2026-05-23 18:30:12".to_string(),
             status: "received".to_string(),
             pdu: None,
+            verification_code: None,
         };
         let context = NotificationTemplateContext::default();
         let event = NotificationEvent::Sms {
@@ -3285,6 +3286,7 @@ mod tests {
             timestamp: "2026-05-14T16:30:45Z".to_string(),
             status: "received".to_string(),
             pdu: None,
+            verification_code: None,
         };
         let context = NotificationTemplateContext::default();
 
@@ -3304,6 +3306,7 @@ mod tests {
             timestamp: "2026-05-14T16:30:45Z".to_string(),
             status: "received".to_string(),
             pdu: None,
+            verification_code: None,
         };
         let context = NotificationTemplateContext {
             own_number: "+10001".to_string(),
@@ -3331,6 +3334,7 @@ mod tests {
             timestamp: "2026-05-14T16:30:45Z".to_string(),
             status: "received".to_string(),
             pdu: None,
+            verification_code: None,
         };
         let context = NotificationTemplateContext {
             own_number: "+10001".to_string(),
@@ -3358,6 +3362,7 @@ mod tests {
             timestamp: "2026-05-14T16:30:45Z".to_string(),
             status: "received".to_string(),
             pdu: None,
+            verification_code: None,
         };
         let context = NotificationTemplateContext::default();
 
@@ -3521,6 +3526,7 @@ mod tests {
             timestamp: "2026-05-14T17:00:00Z".to_string(),
             status: "received".to_string(),
             pdu: None,
+            verification_code: None,
         };
         let sms_event = NotificationEvent::Sms {
             message: &sms_with_code,

@@ -9,6 +9,7 @@ export interface BaseSmsMessage {
   pdu?: string
   device_id?: string
   device_name?: string
+  verification_code?: string | null
 }
 
 export interface BaseConversation {

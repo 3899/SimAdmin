@@ -442,6 +442,7 @@ export interface SmsMessage {
   status: string
   pdu?: string
   transport?: SmsTransport
+  verification_code?: string | null
 }
 
 export type SmsTransport = 'modem' | 'volte_ims' | 'vowifi_ims'

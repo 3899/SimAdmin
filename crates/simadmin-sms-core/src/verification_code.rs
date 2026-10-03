@@ -76,7 +76,7 @@ pub fn extract_verification_code(content: &str) -> Option<String> {
             continue;
         };
 
-        let score = score_candidate(&chars, start, end, code.chars().count());
+        let score = score_candidate(&chars, start, end, &code);
         if score < SCORE_THRESHOLD {
             index = end;
             continue;
@@ -143,8 +143,8 @@ fn normalize_digits(content: &str) -> String {
         .collect()
 }
 
-fn score_candidate(chars: &[char], start: usize, end: usize, len: usize) -> i32 {
-    let mut score = match len {
+fn score_candidate(chars: &[char], start: usize, end: usize, code: &str) -> i32 {
+    let mut score = match code.chars().count() {
         6 => 60,
         4 => 42,
         5 => 24,
@@ -183,7 +183,13 @@ fn score_candidate(chars: &[char], start: usize, end: usize, len: usize) -> i32 
     if keyword_touches_candidate(&before, &after) {
         score += 15;
     }
-    if negative_keyword_touches_candidate(&before) {
+    if negative_keyword_touches_candidate(&before)
+        || negative_suffix_touches_candidate(&after)
+        || is_in_url_or_domain(&before, &after)
+    {
+        score -= 80;
+    }
+    if !strong_immediate && SERVICE_HOTLINES.contains(&code) {
         score -= 80;
     }
     if contains_any(&near, NEGATIVE_KEYWORDS) {
@@ -191,6 +197,34 @@ fn score_candidate(chars: &[char], start: usize, end: usize, len: usize) -> i32 
     }
 
     score
+}
+
+const NEGATIVE_SUFFIXES: &[&str] = &[
+    "年", "月", "日", "号", "时", "分", "秒", "点", "元", "角", "分", "块", "次", "折", "%",
+    "gb", "mb", "kb", "tb", "g", "m", "k", "t", "bps",
+];
+
+const SERVICE_HOTLINES: &[&str] = &[
+    "10086", "10010", "10000", "10001", "12306", "12315", "12345", "95588", "95533", "95566",
+    "95599", "95555", "95559", "95511",
+];
+
+fn negative_suffix_touches_candidate(after: &str) -> bool {
+    let trimmed = after.trim_start();
+    NEGATIVE_SUFFIXES.iter().any(|suffix| {
+        if suffix.is_ascii() {
+            trimmed.to_ascii_lowercase().starts_with(suffix)
+        } else {
+            trimmed.starts_with(suffix)
+        }
+    })
+}
+
+fn is_in_url_or_domain(before: &str, after: &str) -> bool {
+    before.ends_with('.')
+        || after.starts_with('.')
+        || before.ends_with('/')
+        || after.starts_with('/')
 }
 
 fn candidate_rank(candidate: &Candidate) -> (i32, i32, std::cmp::Reverse<usize>) {
@@ -348,6 +382,8 @@ mod tests {
             "您的订单号123-456已发货",
             "手机号13800138000登录成功",
             "今天温度1234，湿度5678",
+            "【流量周提醒】尊敬的客户，您好！截至09月29日11时32分，您本月移动数据流量已使用0.00MB，国内通用流量剩余0.00MB，定向流量剩余200.00GB。具体以月结账单为准。查询详情登录中国移动APP请点击 https://dx.10086.cn/A/5sstHA。上中国移动APP，查看网龄权益，至高3GB通用月包流量、热门视频会员等，请点击 https://dx.10086.cn/A/ceMnEA。我们百倍努力，只为您10分满意【中国移动】",
+            "尊敬的客户,截止2026年10月04日00时01分您的当前账户余额是25.70元。您还可以关注微信公众号“上海电信”、登录中国电信网站(www.189.cn)或“中国电信”APP(http://a.189.cn/ulymab) 查询使用规则等详情。[中国电信]",
         ];
 
         for content in cases {

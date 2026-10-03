@@ -21,6 +21,8 @@ pub struct SmsMessage {
     pub timestamp: String,    // ISO 8601 格式时间
     pub status: String,       // "pending", "sent", "failed", "received"
     pub pdu: Option<String>,  // 原始 PDU（如果有）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_code: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -330,14 +332,22 @@ fn notification_log_end_bound(value: &str) -> String {
 
 fn sms_message_from_row(row: &Row<'_>) -> Result<SmsMessage> {
     let timestamp: String = row.get(4)?;
+    let direction: String = row.get(1)?;
+    let content: String = row.get(3)?;
+    let verification_code = if direction == "incoming" {
+        simadmin_sms_core::extract_verification_code(&content)
+    } else {
+        None
+    };
     Ok(SmsMessage {
         id: row.get(0)?,
-        direction: row.get(1)?,
+        direction,
         phone_number: row.get(2)?,
-        content: row.get(3)?,
+        content,
         timestamp: sms_timestamp_for_display(timestamp),
         status: row.get(5)?,
         pdu: row.get(6)?,
+        verification_code,
     })
 }
 
