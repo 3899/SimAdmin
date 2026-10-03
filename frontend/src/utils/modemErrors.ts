@@ -27,6 +27,10 @@ const TRANSIENT_PATTERNS: string[] = [
   'request timed out',
   'timed out',
   'timeout',
+  'failed to fetch',
+  'network error',
+  'networkerror',
+  'load failed',
 ]
 
 /**

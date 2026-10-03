@@ -93,6 +93,7 @@ export function useDashboardData(refreshInterval: number, refreshKey: number) {
   const lastSlowRefreshRef = useRef(0)
   const latestStatsRef = useRef<SystemStatsResponse | null>(null)
   const latestDataActiveRef = useRef<boolean>(false)
+  const consecutiveFailuresRef = useRef<number>(0)
 
   const updateSpeedHistory = useCallback((stats: SystemStatsResponse | null) => {
     if (!stats?.network_speed?.interfaces) return
@@ -240,18 +241,28 @@ export function useDashboardData(refreshInterval: number, refreshKey: number) {
 
       setInitialLoading(false)
 
-      // 错误处理：过滤所有开机/搜网/暂态错误，仅真实故障向用户弹窗
+      // 错误处理：过滤所有开机/搜网/暂态/网络微抖动错误，仅真实故障或持续失联向用户弹窗
       if (failures.length > 0) {
         const nonTransient = failures.filter((f) => !isTransientModemError(f))
         if (nonTransient.length > 0) {
           setError(nonTransient[0])
         } else {
+          // 全部为暂态/网络抖动错误：仅在手动刷新（!background）或连续失败 3 次以上（持续失联）时才向用户弹窗
+          consecutiveFailuresRef.current += 1
           throttledWarn('Dashboard', failures.join('; '))
+          if (!background || consecutiveFailuresRef.current >= 3) {
+            setError(failures[0])
+          }
         }
+      } else {
+        // 本轮请求全部成功，清空连续失败计数，并自动清除之前的瞬态/网络错误
+        consecutiveFailuresRef.current = 0
+        setError(null)
       }
     } catch (err) {
+      consecutiveFailuresRef.current += 1
       const nonTransient = !isTransientModemError(err)
-      if (nonTransient) {
+      if (nonTransient || !background || consecutiveFailuresRef.current >= 3) {
         setError(err instanceof Error ? err.message : String(err))
       } else {
         throttledWarn('Dashboard', String(err))
