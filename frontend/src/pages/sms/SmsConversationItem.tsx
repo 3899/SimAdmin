@@ -122,7 +122,7 @@ export function SmsConversationItem({
               color="text.secondary"
               noWrap
               display="block"
-              sx={{ maxWidth: 210 }}
+              sx={{ maxWidth: '100%' }}
             >
               {renderHighlightedText(lastMessageContent, searchQuery)}
             </Typography>

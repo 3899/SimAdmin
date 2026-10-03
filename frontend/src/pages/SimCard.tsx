@@ -40,6 +40,7 @@ import {
 } from '@mui/icons-material'
 import { useSearchParams } from 'react-router-dom'
 import { useSimAdminApi } from '../contexts/ApiContext'
+import { useLocalSensitiveToggle } from '../contexts/SensitiveInfoContext'
 import type { SimInfo, WorkMode } from '../api/types'
 import ErrorSnackbar from '../components/ErrorSnackbar'
 import EsimManagerPage from './EsimManager'
@@ -144,7 +145,7 @@ function InfoField({ label, value, sensitive = false, showSensitive, extra }: {
       </Typography>
       <Box display="flex" alignItems="center" gap={0.5} mt={0.25} minHeight="20px">
         <Typography
-          data-sensitive={sensitive ? 'true' : undefined}
+          data-sensitive={sensitive ? (showSensitive ? 'false' : 'true') : undefined}
           variant="body2"
           component="div"
           sx={{
@@ -168,7 +169,7 @@ function SimBasicInfo({ readOnly = false }: { readOnly?: boolean }) {
   const { mode, esimSupported, refreshWorkMode } = useWorkMode()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [showSensitive, setShowSensitive] = useState(false)
+  const [showSensitive, toggleSensitive] = useLocalSensitiveToggle()
   const [simInfo, setSimInfo] = useState<SimInfo | null>(null)
   const [pendingMode, setPendingMode] = useState<WorkMode | null>(null)
   const [modeSwitching, setModeSwitching] = useState(false)
@@ -347,7 +348,7 @@ function SimBasicInfo({ readOnly = false }: { readOnly?: boolean }) {
                     <Tooltip title={showSensitive ? '隐藏敏感信息' : '显示完整信息'}>
                       <IconButton
                         size="small"
-                        onClick={() => setShowSensitive((value) => !value)}
+                        onClick={toggleSensitive}
                         color="primary"
                       >
                         {showSensitive ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}

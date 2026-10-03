@@ -26,7 +26,7 @@ import {
   AutoMode as AutomationIcon,
   Shield as SecurityIcon,
   SettingsBackupRestore as BackupRestoreIcon,
-  InfoOutlined as InfoIcon,
+  WorkspacePremium as MedalIcon,
 } from '@mui/icons-material'
 import { useAboutDialog } from '../../contexts/AboutDialogContext'
 
@@ -85,9 +85,9 @@ const menuGroups: MenuConfigItem[] = [
     type: 'group',
     label: '系统',
     items: [
-      { path: '/config/security', label: '安全性', icon: SecurityIcon },
       { path: '/config', label: '基本配置', icon: SettingsIcon },
       { path: '/config/backup', label: '备份与恢复', icon: BackupRestoreIcon },
+      { path: '/config/security', label: '安全设置', icon: SecurityIcon },
       { path: '/ota', label: 'OTA 更新', icon: OtaIcon },
     ],
   },
@@ -474,7 +474,7 @@ export default function Sidebar({
                 '&:hover': { color: 'primary.main' },
               }}
             >
-              <InfoIcon sx={{ fontSize: 18 }} />
+              <MedalIcon sx={{ fontSize: 18 }} />
             </Box>
           </Tooltip>
         ) : (

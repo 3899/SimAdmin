@@ -31,11 +31,14 @@ import {
   Refresh as RefreshIcon,
   Router as RouterIcon,
   Speed as SpeedIcon,
-  InfoOutlined as InfoIcon,
+  Visibility as VisibilityIcon,
+  VisibilityOff as VisibilityOffIcon,
+  WorkspacePremium as MedalIcon,
 } from '@mui/icons-material'
 import { useTheme } from '../../contexts/ThemeContext'
 import { useRefreshInterval } from '../../contexts/RefreshContext'
 import { useAboutDialog } from '../../contexts/AboutDialogContext'
+import { useSensitiveInfo } from '../../contexts/SensitiveInfoContext'
 import { api } from '../../api/current'
 import type { BasebandRestartResponse, BasebandRestartStep } from '../../api/types'
 
@@ -77,6 +80,7 @@ export default function TopBar({
   const { mode, toggleTheme } = useTheme()
   const { triggerRefresh } = useRefreshInterval()
   const { openAbout } = useAboutDialog()
+  const { showSensitive, toggleSensitive } = useSensitiveInfo()
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const [refreshMenuAnchor, setRefreshMenuAnchor] = useState<null | HTMLElement>(null)
   const [basebandRestarting, setBasebandRestarting] = useState(false)
@@ -313,9 +317,15 @@ export default function TopBar({
         </Typography>
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1 } }}>
-          <Tooltip title="刷新页面">
-            <IconButton color="default" onClick={triggerRefresh}>
-              <RefreshIcon sx={{ fontSize: 22 }} />
+          <Tooltip title={showSensitive ? '隐藏敏感信息' : '显示完整信息'}>
+            <IconButton
+              size="small"
+              color="default"
+              aria-label={showSensitive ? '隐藏敏感信息' : '显示敏感信息'}
+              onClick={toggleSensitive}
+              sx={{ p: 0.75 }}
+            >
+              {showSensitive ? <VisibilityOffIcon sx={{ fontSize: 22 }} /> : <VisibilityIcon sx={{ fontSize: 22 }} />}
             </IconButton>
           </Tooltip>
           <Tooltip title="重启基带">
@@ -338,6 +348,11 @@ export default function TopBar({
                 {systemActionLoading === 'device' ? <CircularProgress size={18} color="inherit" /> : <DeviceRebootIcon />}
               </IconButton>
             </span>
+          </Tooltip>
+          <Tooltip title="关于与致谢">
+            <IconButton size="small" color="default" aria-label="关于与致谢" onClick={() => openAbout(0)} sx={{ p: 0.75 }}>
+              <MedalIcon sx={{ fontSize: 22 }} />
+            </IconButton>
           </Tooltip>
           <IconButton color="default" onClick={(event) => setAnchorEl(event.currentTarget)} title="更多选项">
             <MoreVertIcon />
@@ -373,33 +388,35 @@ export default function TopBar({
             <ListItemText>{mode === 'dark' ? '浅色模式' : '深色模式'}</ListItemText>
           </MenuItem>
           <Divider />
+          <MenuItem
+            onClick={() => {
+              setAnchorEl(null)
+              triggerRefresh()
+            }}
+          >
+            <ListItemIcon><RefreshIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>刷新页面</ListItemText>
+          </MenuItem>
           <MenuItem onClick={(event) => setRefreshMenuAnchor(event.currentTarget)}>
             <ListItemIcon><SpeedIcon fontSize="small" /></ListItemIcon>
             <ListItemText primary="刷新频率" secondary={getRefreshLabel()} secondaryTypographyProps={{ variant: 'caption' }} />
           </MenuItem>
-          <Divider />
-          <MenuItem
-            onClick={() => {
-              setAnchorEl(null)
-              openAbout(0)
-            }}
-          >
-            <ListItemIcon><InfoIcon fontSize="small" /></ListItemIcon>
-            <ListItemText>关于与致谢</ListItemText>
-          </MenuItem>
           {showLogout && (
-            <MenuItem
-              disabled={logoutLoading}
-              onClick={() => void handleLogout()}
-              sx={{ display: { xs: 'flex', sm: 'none' } }}
-            >
-              <ListItemIcon>
-                {logoutLoading
-                  ? <CircularProgress size={18} color="inherit" />
-                  : <LogoutIcon fontSize="small" />}
-              </ListItemIcon>
-              <ListItemText>退出登录</ListItemText>
-            </MenuItem>
+            <>
+              <Divider sx={{ display: { xs: 'block', sm: 'none' } }} />
+              <MenuItem
+                disabled={logoutLoading}
+                onClick={() => void handleLogout()}
+                sx={{ display: { xs: 'flex', sm: 'none' } }}
+              >
+                <ListItemIcon>
+                  {logoutLoading
+                    ? <CircularProgress size={18} color="inherit" />
+                    : <LogoutIcon fontSize="small" />}
+                </ListItemIcon>
+                <ListItemText>退出登录</ListItemText>
+              </MenuItem>
+            </>
           )}
         </Menu>
 

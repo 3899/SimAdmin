@@ -55,6 +55,7 @@ export function ConnectionStatus({ qosInfo, connectivity, connectionAddresses }:
               fontWeight="medium"
               fontFamily="monospace"
               textAlign="right"
+              data-sensitive="true"
               sx={{ maxWidth: '65%', wordBreak: 'break-all' }}
             >
               {connectionAddresses.ipv4[0] || '-'}
@@ -68,6 +69,7 @@ export function ConnectionStatus({ qosInfo, connectivity, connectionAddresses }:
               fontWeight="medium"
               fontFamily="monospace"
               textAlign="right"
+              data-sensitive="true"
               sx={{ maxWidth: '65%', wordBreak: 'break-all' }}
             >
               {connectionAddresses.ipv6[0] || '-'}

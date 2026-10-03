@@ -19,6 +19,7 @@ import {
 } from '@mui/material'
 import { alpha } from '@/utils/theme'
 import { CellTower, Visibility, VisibilityOff, ExpandMore, ExpandLess, Info } from '@mui/icons-material'
+import { useLocalSensitiveToggle } from '@/contexts/SensitiveInfoContext'
 import { getSensitiveStyle, formatSignalValue, getSignalChipColor } from '../utils'
 import type { CellsResponse } from '@/api/types'
 
@@ -28,7 +29,7 @@ interface CellInfoProps {
 
 export function CellInfo({ cellsInfo }: CellInfoProps) {
   const [expanded, setExpanded] = useState(true)
-  const [showInfo, setShowInfo] = useState(false)
+  const [showInfo, toggleShowInfo] = useLocalSensitiveToggle()
 
   return (
     <Card>
@@ -51,7 +52,7 @@ export function CellInfo({ cellsInfo }: CellInfoProps) {
               size="small"
               onClick={(e: MouseEvent) => {
                 e.stopPropagation()
-                setShowInfo(!showInfo)
+                toggleShowInfo()
               }}
             >
               {showInfo ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
@@ -72,6 +73,7 @@ export function CellInfo({ cellsInfo }: CellInfoProps) {
           {/* Serving Cell 摘要 */}
           {cellsInfo?.serving_cell && (
             <Box 
+              data-sensitive={showInfo ? 'false' : 'true'}
               sx={{ 
                 display: 'flex', 
                 flexWrap: 'wrap', 

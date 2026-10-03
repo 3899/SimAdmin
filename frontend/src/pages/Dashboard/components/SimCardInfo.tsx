@@ -21,6 +21,7 @@ import {
   Check,
   Close,
 } from '@mui/icons-material'
+import { useLocalSensitiveToggle } from '@/contexts/SensitiveInfoContext'
 import { getSensitiveStyle } from '../utils'
 import type { SimInfo } from '@/api/types'
 import { useSimAdminApi } from '@/contexts/ApiContext'
@@ -33,7 +34,7 @@ interface SimCardInfoProps {
 
 export function SimCardInfo({ simInfo, onRefresh, readOnly = false }: SimCardInfoProps) {
   const api = useSimAdminApi()
-  const [showInfo, setShowInfo] = useState(false)
+  const [showInfo, toggleShowInfo] = useLocalSensitiveToggle()
   const [editingPhone, setEditingPhone] = useState(false)
   const [editingSmsc, setEditingSmsc] = useState(false)
   const [phoneInput, setPhoneInput] = useState('')
@@ -119,7 +120,7 @@ export function SimCardInfo({ simInfo, onRefresh, readOnly = false }: SimCardInf
               sx={{ ml: 'auto' }}
             />
             <Tooltip title={showInfo ? '隐藏敏感信息' : '显示完整信息'}>
-              <IconButton size="small" onClick={() => setShowInfo(!showInfo)}>
+              <IconButton size="small" onClick={toggleShowInfo}>
                 {showInfo ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
               </IconButton>
             </Tooltip>
@@ -128,7 +129,7 @@ export function SimCardInfo({ simInfo, onRefresh, readOnly = false }: SimCardInf
           <Stack spacing={1.5}>
             <Box display="flex" justifyContent="space-between" alignItems="center" gap={2}>
               <Typography variant="caption" color="text.secondary">ICCID</Typography>
-              <Typography data-sensitive="true" variant="body2" sx={{ ...valueTextSx, ...getSensitiveStyle(showInfo) }}>
+              <Typography data-sensitive={showInfo ? 'false' : 'true'} variant="body2" sx={{ ...valueTextSx, ...getSensitiveStyle(showInfo) }}>
                 {simInfo?.iccid || (simInfo === null ? '读取中...' : 'N/A')}
               </Typography>
             </Box>
@@ -155,7 +156,7 @@ export function SimCardInfo({ simInfo, onRefresh, readOnly = false }: SimCardInf
                 </Box>
               ) : (
                 <Box display="flex" alignItems="center" gap={0.5}>
-                  <Typography data-sensitive="true" variant="body2" sx={{ ...valueTextSx, ...getSensitiveStyle(showInfo) }}>
+                  <Typography data-sensitive={showInfo ? 'false' : 'true'} variant="body2" sx={{ ...valueTextSx, ...getSensitiveStyle(showInfo) }}>
                     {!isPhoneEmpty ? simInfo.phone_numbers[0] : (simInfo === null ? '读取中...' : 'N/A')}
                   </Typography>
                   {!readOnly && showInfo && (isPhoneEmpty || simInfo?.phone_number_is_manual) && simInfo?.present && (
@@ -189,7 +190,7 @@ export function SimCardInfo({ simInfo, onRefresh, readOnly = false }: SimCardInf
                 </Box>
               ) : (
                 <Box display="flex" alignItems="center" gap={0.5}>
-                  <Typography data-sensitive="true" variant="body2" sx={{ ...valueTextSx, ...getSensitiveStyle(showInfo) }}>
+                  <Typography data-sensitive={showInfo ? 'false' : 'true'} variant="body2" sx={{ ...valueTextSx, ...getSensitiveStyle(showInfo) }}>
                     {!isSmscEmpty ? simInfo.sms_center : (simInfo === null ? '读取中...' : '未读取到')}
                   </Typography>
                   {!readOnly && showInfo && (isSmscEmpty || simInfo?.sms_center_is_manual) && simInfo?.present && (

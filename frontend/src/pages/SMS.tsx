@@ -794,10 +794,10 @@ export default function SMSPage() {
             )
           ) : (
             <>
-              <Box sx={{ width: { sm: '40%', md: '35%' }, borderRight: 1, borderColor: 'divider', height: '100%' }}>
+              <Box sx={{ width: 320, flexShrink: 0, borderRight: 1, borderColor: 'divider', height: '100%' }}>
                 {conversationListContent}
               </Box>
-              <Box sx={{ flex: 1, height: '100%' }}>
+              <Box sx={{ flex: 1, minWidth: 0, height: '100%' }}>
                 {selectedConversation ? (
                   chatAreaContent
                 ) : (

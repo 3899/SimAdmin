@@ -143,7 +143,7 @@ function StatusBar({ data }: { data: DashboardData }) {
       <Stack spacing={0.75} sx={{ minWidth: { xs: '100%', md: 360 }, ml: { md: 'auto' } }}>
         <Box display="flex" alignItems="center" justifyContent="flex-end" gap={1}>
           <Typography variant="body2" sx={ipLabelSx}>IPv4：</Typography>
-          <Typography variant="body2" sx={ipValueSx}>
+          <Typography variant="body2" sx={ipValueSx} data-sensitive="true">
             {data.connectionAddresses.ipv4[0] || '-'}
           </Typography>
           <Box display="flex" alignItems="center" gap={0.35} color={data.connectivity?.ipv4?.success ? 'success.main' : 'text.disabled'}>
@@ -155,7 +155,7 @@ function StatusBar({ data }: { data: DashboardData }) {
         </Box>
         <Box display="flex" alignItems="center" justifyContent="flex-end" gap={1}>
           <Typography variant="body2" sx={ipLabelSx}>IPv6：</Typography>
-          <Typography variant="body2" sx={ipValueSx}>
+          <Typography variant="body2" sx={ipValueSx} data-sensitive="true">
             {data.connectionAddresses.ipv6[0] || '-'}
           </Typography>
           <Box display="flex" alignItems="center" gap={0.35} color={data.connectivity?.ipv6?.success ? 'success.main' : 'text.disabled'}>

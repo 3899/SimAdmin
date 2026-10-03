@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { QueryClientProvider } from '@tanstack/react-query'
 import { Box, CircularProgress } from '@mui/material'
 import { ThemeProvider } from './contexts/ThemeContext'
+import { SensitiveInfoProvider } from './contexts/SensitiveInfoContext'
 import { WorkModeProvider, useWorkMode } from './contexts/WorkModeContext'
 import { queryClient } from './lib/queryClient'
 import MainLayout from './components/Layout/MainLayout'
@@ -126,29 +127,31 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/login" element={<Suspense fallback={<PageLoading />}><Login /></Suspense>} />
-            <Route path="/" element={<ProtectedShell />}>
-              <Route index element={<Suspense fallback={<PageLoading />}><Dashboard /></Suspense>} />
-              <Route path="sim" element={<Suspense fallback={<PageLoading />}><SimCard /></Suspense>} />
-              <Route path="esim" element={<EsimRouteRedirect />} />
-              <Route path="network" element={<Suspense fallback={<PageLoading />}><Network /></Suspense>} />
-              <Route path="device-network" element={<Suspense fallback={<PageLoading />}><DeviceNetwork /></Suspense>} />
-              {/* 旧路由重定向到网络状态页面 */}
-              <Route path="network-interfaces" element={<Navigate to="/network" replace />} />
-              <Route path="band-lock" element={<Navigate to="/network" replace />} />
-              <Route path="sms" element={<Suspense fallback={<PageLoading />}><SMS /></Suspense>} />
-              <Route path="notifications" element={<Suspense fallback={<PageLoading />}><NotificationCenter /></Suspense>} />
-              <Route path="automation" element={<Suspense fallback={<PageLoading />}><AutomationCenter /></Suspense>} />
-              <Route path="phone" element={<Suspense fallback={<PageLoading />}><Phone /></Suspense>} />
-              <Route path="config" element={<Suspense fallback={<PageLoading />}><Configuration /></Suspense>} />
-              <Route path="config/security" element={<Suspense fallback={<PageLoading />}><Configuration /></Suspense>} />
-              <Route path="config/backup" element={<Suspense fallback={<PageLoading />}><BackupRestore /></Suspense>} />
-              <Route path="ota" element={<Suspense fallback={<PageLoading />}><OtaUpdate /></Suspense>} />
-            </Route>
-          </Routes>
-        </BrowserRouter>
+        <SensitiveInfoProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/login" element={<Suspense fallback={<PageLoading />}><Login /></Suspense>} />
+              <Route path="/" element={<ProtectedShell />}>
+                <Route index element={<Suspense fallback={<PageLoading />}><Dashboard /></Suspense>} />
+                <Route path="sim" element={<Suspense fallback={<PageLoading />}><SimCard /></Suspense>} />
+                <Route path="esim" element={<EsimRouteRedirect />} />
+                <Route path="network" element={<Suspense fallback={<PageLoading />}><Network /></Suspense>} />
+                <Route path="device-network" element={<Suspense fallback={<PageLoading />}><DeviceNetwork /></Suspense>} />
+                {/* 旧路由重定向到网络状态页面 */}
+                <Route path="network-interfaces" element={<Navigate to="/network" replace />} />
+                <Route path="band-lock" element={<Navigate to="/network" replace />} />
+                <Route path="sms" element={<Suspense fallback={<PageLoading />}><SMS /></Suspense>} />
+                <Route path="notifications" element={<Suspense fallback={<PageLoading />}><NotificationCenter /></Suspense>} />
+                <Route path="automation" element={<Suspense fallback={<PageLoading />}><AutomationCenter /></Suspense>} />
+                <Route path="phone" element={<Suspense fallback={<PageLoading />}><Phone /></Suspense>} />
+                <Route path="config" element={<Suspense fallback={<PageLoading />}><Configuration /></Suspense>} />
+                <Route path="config/security" element={<Suspense fallback={<PageLoading />}><Configuration /></Suspense>} />
+                <Route path="config/backup" element={<Suspense fallback={<PageLoading />}><BackupRestore /></Suspense>} />
+                <Route path="ota" element={<Suspense fallback={<PageLoading />}><OtaUpdate /></Suspense>} />
+              </Route>
+            </Routes>
+          </BrowserRouter>
+        </SensitiveInfoProvider>
       </ThemeProvider>
     </QueryClientProvider>
   )

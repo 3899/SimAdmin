@@ -1,6 +1,6 @@
-import { useState } from 'react'
 import { Box, Card, CardContent, Typography, IconButton, Tooltip, Chip } from '@mui/material'
 import { Router, Visibility, VisibilityOff } from '@mui/icons-material'
+import { useLocalSensitiveToggle } from '@/contexts/SensitiveInfoContext'
 import { getSensitiveStyle } from '../utils'
 import type { DeviceInfo, SystemStatsResponse } from '@/api/types'
 
@@ -10,7 +10,7 @@ interface DeviceInfoCardProps {
 }
 
 export function DeviceInfoCard({ deviceInfo, systemStats }: DeviceInfoCardProps) {
-  const [showInfo, setShowInfo] = useState(false)
+  const [showInfo, toggleShowInfo] = useLocalSensitiveToggle()
 
   return (
     <Card>
@@ -21,7 +21,7 @@ export function DeviceInfoCard({ deviceInfo, systemStats }: DeviceInfoCardProps)
             <Typography fontSize="16px" fontWeight={600}>设备信息</Typography>
           </Box>
           <Tooltip title={showInfo ? '隐藏 IMEI' : '显示 IMEI'}>
-            <IconButton size="small" onClick={() => setShowInfo(!showInfo)}>
+            <IconButton size="small" onClick={toggleShowInfo}>
               {showInfo ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
             </IconButton>
           </Tooltip>
@@ -39,7 +39,7 @@ export function DeviceInfoCard({ deviceInfo, systemStats }: DeviceInfoCardProps)
         >
           <Box>
             <Typography variant="caption" color="text.secondary">IMEI</Typography>
-            <Typography data-sensitive="true" variant="body2" fontFamily="monospace" fontSize="0.75rem" sx={getSensitiveStyle(showInfo)}>
+            <Typography data-sensitive={showInfo ? 'false' : 'true'} variant="body2" fontFamily="monospace" fontSize="0.75rem" sx={getSensitiveStyle(showInfo)}>
               {deviceInfo?.imei || (deviceInfo === null ? '读取中...' : 'N/A')}
             </Typography>
           </Box>

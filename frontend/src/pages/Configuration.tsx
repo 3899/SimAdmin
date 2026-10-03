@@ -482,7 +482,7 @@ export default function ConfigurationPage({ embedded = false }: { embedded?: boo
       >
         <Box minWidth={0}>
           <Typography variant="h5" gutterBottom fontWeight={700}>
-            {isSecurity ? '安全性设置' : '基本配置'}
+            {isSecurity ? '安全设置' : '基本配置'}
           </Typography>
           <Typography variant="body2" color="text.secondary">
             {isSecurity ? '管理账户安全及密码强度策略' : '管理设备连接和其他系统参数'}
