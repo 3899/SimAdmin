@@ -2036,6 +2036,19 @@ pub async fn get_network_info_data(conn: &Connection) -> zbus::Result<NetworkInf
         data.mnc.as_deref().unwrap_or_default(),
         &data.operator_name,
     );
+
+    let modem_props = get_all_properties(conn, &modem_path, MM_MODEM)
+        .await
+        .unwrap_or_default();
+    let dbus_quality = modem_props
+        .get("SignalQuality")
+        .and_then(|value| <(u32, bool)>::try_from(value.clone()).ok())
+        .map(|(q, _)| q)
+        .unwrap_or(0);
+    if dbus_quality == 0 && matches!(data.registration_status.as_str(), "registered" | "roaming") {
+        poke_signal_quality_if_needed();
+    }
+
     Ok(data)
 }
 
@@ -3180,6 +3193,36 @@ pub async fn stop_cell_monitoring() -> Result<(), String> {
 
 async fn send_mm_at_command(proxy: &Proxy<'_>, cmd: &str) -> Option<String> {
     proxy.call("Command", &(cmd, 3u32)).await.ok()
+}
+
+static LAST_SIGNAL_POKE_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn poke_signal_quality_if_needed() {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let last = LAST_SIGNAL_POKE_SECS.load(std::sync::atomic::Ordering::Relaxed);
+    if now.saturating_sub(last) < 30 {
+        return;
+    }
+    if LAST_SIGNAL_POKE_SECS
+        .compare_exchange(
+            last,
+            now,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::Relaxed,
+        )
+        .is_err()
+    {
+        return;
+    }
+
+    tokio::spawn(async move {
+        let _ = run_recovery_command("mmcli", &["-m", "any", "--signal-setup=1"]).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+        let _ = run_recovery_command("mmcli", &["-m", "any", "--signal-setup=0"]).await;
+    });
 }
 
 pub fn lte_band_from_earfcn(earfcn: u32) -> Option<&'static str> {
@@ -4778,7 +4821,7 @@ pub async fn get_airplane_mode(conn: &Connection) -> zbus::Result<AirplaneModeRe
 pub async fn get_signal_strength(conn: &Connection) -> zbus::Result<SignalStrengthResponse> {
     let modem_path = find_modem_path(conn).await?;
     let modem_props = get_all_properties(conn, &modem_path, MM_MODEM).await?;
-    let strength = modem_props
+    let mut strength = modem_props
         .get("SignalQuality")
         .and_then(|value| {
             <(u32, bool)>::try_from(value.clone())
@@ -4786,6 +4829,31 @@ pub async fn get_signal_strength(conn: &Connection) -> zbus::Result<SignalStreng
                 .map(|(q, _)| q as i32)
         })
         .unwrap_or(0);
+
+    if strength == 0 {
+        let gpp_props = get_all_properties(conn, &modem_path, MM_MODEM_3GPP)
+            .await
+            .unwrap_or_default();
+        let reg_state = gpp_props
+            .get("RegistrationState")
+            .map(extract_u32)
+            .unwrap_or(0);
+        if matches!(reg_state, 1 | 5) {
+            poke_signal_quality_if_needed();
+            let proxy = Proxy::new(
+                conn,
+                MM_SERVICE,
+                modem_path.as_str(),
+                MM_MODEM,
+            )
+            .await?;
+            if let Some(resp) = send_mm_at_command(&proxy, "AT+CSQ").await {
+                if let Some(pct) = simadmin_device_runtime::parse_csq_percentage(&resp) {
+                    strength = pct as i32;
+                }
+            }
+        }
+    }
 
     Ok(SignalStrengthResponse { strength })
 }

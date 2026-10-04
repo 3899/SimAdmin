@@ -295,12 +295,21 @@ impl<'a> ModemContext<'a> {
         let raw_operator = property_string(&gpp, "OperatorName");
         let operator_name = friendly_carrier_name(Some(&raw_operator), Some(&operator_code))
             .unwrap_or(raw_operator);
+        let reg_state = modem_u32(&gpp, "RegistrationState");
+        let mut strength = signal_quality(&modem);
+        if strength == 0 && matches!(reg_state, 1 | 5) {
+            if let Ok(csq_resp) = self.send_at_command("AT+CSQ", 2).await {
+                if let Some(csq_pct) = parse_csq_percentage(&csq_resp) {
+                    strength = csq_pct;
+                }
+            }
+        }
         Ok(NetworkInfoResponse {
             operator_name,
-            registration_status: registration_label(modem_u32(&gpp, "RegistrationState"))
+            registration_status: registration_label(reg_state)
                 .to_owned(),
             technology_preference: access_technology_label(modem_u32(&modem, "AccessTechnologies")),
-            signal_strength: signal_quality(&modem),
+            signal_strength: strength,
             mcc,
             mnc,
         })
@@ -1149,6 +1158,20 @@ fn signal_quality(properties: &InterfaceProperties) -> u8 {
         .unwrap_or_default()
 }
 
+pub fn parse_csq_percentage(resp: &str) -> Option<u8> {
+    for line in resp.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("+CSQ:") {
+            let rssi_str = rest.split(',').next()?.trim();
+            let rssi = rssi_str.parse::<u8>().ok()?;
+            if rssi <= 31 {
+                return Some(((u16::from(rssi) * 100 + 15) / 31).min(100) as u8);
+            }
+        }
+    }
+    None
+}
+
 fn extract_string_list(value: &OwnedValue) -> Vec<String> {
     Vec::<String>::try_from(value.clone()).unwrap_or_else(|_| {
         let value = extract_string(value);
@@ -1948,5 +1971,15 @@ mod tests {
 
         let cnum_resp = "+CNUM: \"\",\"+447000000002\",145\r\nOK";
         assert_eq!(extract_own_number_from_cnum_output(cnum_resp), "+447000000002");
+    }
+
+    #[test]
+    fn parses_csq_percentage() {
+        assert_eq!(parse_csq_percentage("+CSQ: 17,99\r\nOK"), Some(55));
+        assert_eq!(parse_csq_percentage("+CSQ: 16,99\r\nOK"), Some(52));
+        assert_eq!(parse_csq_percentage("+CSQ: 0,99\r\nOK"), Some(0));
+        assert_eq!(parse_csq_percentage("+CSQ: 31,99\r\nOK"), Some(100));
+        assert_eq!(parse_csq_percentage("+CSQ: 99,99\r\nOK"), None);
+        assert_eq!(parse_csq_percentage("ERROR\r\n"), None);
     }
 }
