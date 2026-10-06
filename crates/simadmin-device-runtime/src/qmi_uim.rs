@@ -27,6 +27,8 @@ const TLV_CTL_ALLOCATION_INFO: u8 = 0x01;
 const TLV_UIM_SLOT: u8 = 0x01;
 const TLV_UIM_APDU: u8 = 0x02;
 const TLV_UIM_CHANNEL_ID: u8 = 0x10;
+// Logical Channel (0x003f) 关闭请求的通道号字段为 0x11；0x10 是 AID。
+const TLV_UIM_CLOSE_CHANNEL_ID: u8 = 0x11;
 const TLV_UIM_PROCEDURE_BYTES: u8 = 0x11;
 const TLV_UIM_OPEN_AID: u8 = 0x10;
 const TLV_UIM_OPEN_FCI: u8 = 0x11;
@@ -356,7 +358,7 @@ pub fn build_close_logical_channel_frame(
         message_id: QMI_UIM_LOGICAL_CHANNEL,
         tlvs: vec![
             tlv(TLV_UIM_SLOT, vec![slot]),
-            tlv(TLV_UIM_CHANNEL_ID, vec![channel_id]),
+            tlv(TLV_UIM_CLOSE_CHANNEL_ID, vec![channel_id]),
             tlv(0x13, vec![0x01]),
         ],
     })
@@ -1048,6 +1050,18 @@ fn tlv(tlv_type: u8, value: Vec<u8>) -> QmiTlv {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn closes_logical_channel_with_channel_id_tlv_0x11() {
+        let frame = build_close_logical_channel_frame(3, 7, 1, 2).expect("close frame");
+        let message = decode_qmi_frame(&frame).expect("decode close frame");
+
+        assert_eq!(message.service, QMUX_UIM_SERVICE);
+        assert_eq!(message.message_id, 0x003f);
+        assert_eq!(find_tlv(&message, 0x01), Some(&[1][..]));
+        assert_eq!(find_tlv(&message, 0x11), Some(&[2][..]));
+        assert_eq!(find_tlv(&message, 0x10), None);
+    }
 
     #[test]
     fn encodes_ctl_proxy_and_allocate_cid_frames() {
