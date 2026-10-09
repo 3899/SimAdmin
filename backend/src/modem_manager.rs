@@ -4779,6 +4779,19 @@ async fn set_modem_enabled(
     wait_for_modem_state(conn, modem_path, Duration::from_secs(15), desired_ready).await
 }
 
+async fn cycle_modem_radio_deep(conn: &Connection, modem_path: &str) -> Result<(), String> {
+    if let Ok(proxy) = Proxy::new(conn, MM_SERVICE, modem_path, MM_MODEM).await {
+        let _ = send_mm_at_command(&proxy, "AT+CFUN=0").await;
+    }
+    let _ = set_modem_enabled(conn, modem_path, false).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let res = set_modem_enabled(conn, modem_path, true).await;
+    if let Ok(proxy) = Proxy::new(conn, MM_SERVICE, modem_path, MM_MODEM).await {
+        let _ = send_mm_at_command(&proxy, "AT+CFUN=1").await;
+    }
+    res.map(|_| ())
+}
+
 async fn recover_after_registration_failure(
     conn: &Connection,
     modem_path: &str,
@@ -7118,13 +7131,6 @@ pub async fn data_connection_watchdog(
                         } else {
                             "Airplane mode requested, not reconnecting".to_string()
                         }
-                    } else if user_disabled.load(Ordering::SeqCst) {
-                        last_data_activation_attempt_at = None;
-                        enabled_idle_count = 0;
-                        searching_count = 0;
-                        auto_register_requested_for_search = false;
-                        transition_stuck_count = 0;
-                        "User disabled cellular data, not reconnecting".to_string()
                     } else if state == 6 {
                         enabled_idle_count += 1;
                         if enabled_idle_count < ENABLED_IDLE_RECOVERY_THRESHOLD {
@@ -7134,27 +7140,22 @@ pub async fn data_connection_watchdog(
                             )
                         } else {
                             enabled_idle_count = 0;
-                            match set_modem_enabled(&conn, &modem_path, false).await {
-                                Ok(_) => match set_modem_enabled(&conn, &modem_path, true).await {
-                                    Ok(_) => {
-                                        cellular_problem_active = true;
-                                        system_events
-                                            .emit_code(
-                                                system_event_codes::CELLULAR_RADIO_CYCLE_TRIGGERED,
-                                                system_event_severity::WARNING,
-                                                system_event_status::TRIGGERED,
-                                                modem_path.to_string(),
-                                                "Modem enabled but idle, watchdog cycled radio state",
-                                            )
-                                            .await;
-                                        "Modem enabled but idle, cycled radio state".to_string()
-                                    }
-                                    Err(err) => {
-                                        format!("Modem enabled but idle, re-enable failed: {err}")
-                                    }
-                                },
+                            match cycle_modem_radio_deep(&conn, &modem_path).await {
+                                Ok(_) => {
+                                    cellular_problem_active = true;
+                                    system_events
+                                        .emit_code(
+                                            system_event_codes::CELLULAR_RADIO_CYCLE_TRIGGERED,
+                                            system_event_severity::WARNING,
+                                            system_event_status::TRIGGERED,
+                                            modem_path.to_string(),
+                                            "Modem enabled but idle, watchdog cycled radio state",
+                                        )
+                                        .await;
+                                    "Modem enabled but idle, cycled radio state".to_string()
+                                }
                                 Err(err) => {
-                                    format!("Modem enabled but idle, disable failed: {err}")
+                                    format!("Modem enabled but idle, radio cycle failed: {err}")
                                 }
                             }
                         }
@@ -7173,32 +7174,24 @@ pub async fn data_connection_watchdog(
                             last_searching_recovery_at = Some(Instant::now());
                             searching_count = 0;
                             auto_register_requested_for_search = false;
-                            match set_modem_enabled(&conn, &modem_path, false).await {
+                            match cycle_modem_radio_deep(&conn, &modem_path).await {
                                 Ok(_) => {
-                                    tokio::time::sleep(Duration::from_secs(3)).await;
-                                    match set_modem_enabled(&conn, &modem_path, true).await {
-                                        Ok(_) => {
-                                            cellular_problem_active = true;
-                                            system_events
-                                                .emit_code(
-                                                    system_event_codes::CELLULAR_RADIO_CYCLE_TRIGGERED,
-                                                    system_event_severity::WARNING,
-                                                    system_event_status::TRIGGERED,
-                                                    modem_path.to_string(),
-                                                    "长时间 searching，watchdog 已循环射频状态",
-                                                )
-                                                .await;
-                                            "Searching for too long, cycled radio state".to_string()
-                                        }
-                                        Err(err) => {
-                                            format!(
-                                                "Searching for too long, re-enable failed: {err}"
-                                            )
-                                        }
-                                    }
+                                    cellular_problem_active = true;
+                                    system_events
+                                        .emit_code(
+                                            system_event_codes::CELLULAR_RADIO_CYCLE_TRIGGERED,
+                                            system_event_severity::WARNING,
+                                            system_event_status::TRIGGERED,
+                                            modem_path.to_string(),
+                                            "长时间 searching，watchdog 已执行深度射频复位",
+                                        )
+                                        .await;
+                                    "Searching for too long, cycled radio state (deep reset)".to_string()
                                 }
                                 Err(err) => {
-                                    format!("Searching for too long, disable failed: {err}")
+                                    format!(
+                                        "Searching for too long, radio reset failed: {err}"
+                                    )
                                 }
                             }
                         } else if searching_count >= SEARCHING_REGISTER_THRESHOLD
@@ -7342,32 +7335,26 @@ pub async fn data_connection_watchdog(
                                 state = mm_state_to_string(state),
                                 "Modem stuck in transition state, cycling radio"
                             );
-                            match set_modem_enabled(&conn, &modem_path, false).await {
+                            match cycle_modem_radio_deep(&conn, &modem_path).await {
                                 Ok(_) => {
-                                    tokio::time::sleep(Duration::from_secs(3)).await;
-                                    match set_modem_enabled(&conn, &modem_path, true).await {
-                                        Ok(_) => {
-                                            cellular_problem_active = true;
-                                            system_events
-                                                .emit_code(
-                                                    system_event_codes::CELLULAR_RADIO_CYCLE_TRIGGERED,
-                                                    system_event_severity::WARNING,
-                                                    system_event_status::TRIGGERED,
-                                                    modem_path.to_string(),
-                                                    format!(
-                                                        "数据连接状态卡住，已循环射频状态: {}",
-                                                        mm_state_to_string(state)
-                                                    ),
-                                                )
-                                                .await;
-                                            "Transition stuck, cycled radio state".to_string()
-                                        }
-                                        Err(err) => {
-                                            format!("Transition stuck, re-enable failed: {err}")
-                                        }
-                                    }
+                                    cellular_problem_active = true;
+                                    system_events
+                                        .emit_code(
+                                            system_event_codes::CELLULAR_RADIO_CYCLE_TRIGGERED,
+                                            system_event_severity::WARNING,
+                                            system_event_status::TRIGGERED,
+                                            modem_path.to_string(),
+                                            format!(
+                                                "数据连接状态卡住，已循环射频状态: {}",
+                                                mm_state_to_string(state)
+                                            ),
+                                        )
+                                        .await;
+                                    "Transition stuck, cycled radio state".to_string()
                                 }
-                                Err(err) => format!("Transition stuck, disable failed: {err}"),
+                                Err(err) => {
+                                    format!("Transition stuck, radio cycle failed: {err}")
+                                }
                             }
                         } else {
                             format!(
