@@ -1593,6 +1593,58 @@ mod tests {
             preferred_interface_for_family(&interfaces, NetworkAddressFamily::Ipv6).unwrap();
 
         assert_eq!(selected.name, "wwan0");
+    #[test]
+    fn ddns_interface_selection_prefers_wireless_ipv6_over_cellular_default_route() {
+        let interfaces = vec![
+            test_interface(
+                "wwan0",
+                false,
+                true,
+                false,
+                true,
+                vec![public_ipv6("2408::cell")],
+            ),
+            test_interface(
+                "wlan0",
+                true,
+                false,
+                false,
+                false,
+                vec![public_ipv6("240e::wifi")],
+            ),
+        ];
+
+        let selected =
+            preferred_interface_for_family(&interfaces, NetworkAddressFamily::Ipv6).unwrap();
+
+        assert_eq!(selected.name, "wlan0");
+    }
+
+    #[test]
+    fn ddns_interface_selection_excludes_volte_ims_interface() {
+        let interfaces = vec![
+            test_interface(
+                "rmnet_data1",
+                false,
+                true,
+                false,
+                true,
+                vec![public_ipv6("2409::ims")],
+            ),
+            test_interface(
+                "wwan0",
+                false,
+                true,
+                false,
+                false,
+                vec![public_ipv6("2408::cell")],
+            ),
+        ];
+
+        let selected =
+            preferred_interface_for_family(&interfaces, NetworkAddressFamily::Ipv6).unwrap();
+
+        assert_eq!(selected.name, "wwan0");
     }
 
     #[test]

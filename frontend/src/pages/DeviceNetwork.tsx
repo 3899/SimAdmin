@@ -55,7 +55,7 @@ import { type DdnsConfig, type DdnsLogEntry, type DdnsStatusResponse, type Netwo
 import { useSimAdminApi } from '../contexts/ApiContext'
 import ErrorSnackbar from '../components/ErrorSnackbar'
 import { useRefreshInterval } from '../contexts/RefreshContext'
-import { publicIpv6AddressEntries } from '@/utils/ip'
+import { publicIpv6AddressEntries, isVolteOrImsInterface } from '@/utils/ip'
 
 const CONFIRM_CLOSE_WLAN = '确认关闭 WLAN'
 const CARD_TITLE_TYPOGRAPHY = { variant: 'subtitle1', fontWeight: 700 } as const
@@ -215,13 +215,18 @@ function interfaceAddressesForFamily(iface: NetworkInterfaceInfo, family: 'ipv4'
 }
 
 function ddnsInterfacePriority(iface: NetworkInterfaceInfo, family: 'ipv4' | 'ipv6') {
+  const isVolte = isVolteOrImsInterface(iface.name)
   const isDefault = family === 'ipv4' ? iface.is_default_ipv4 : iface.is_default_ipv6
+  if (isVolte) return 99
   if (iface.is_wireless && isDefault) return 0
-  if (isDefault) return 1
-  if (iface.is_wireless) return 2
-  if (iface.is_cellular) return 3
-  if (iface.status.toLowerCase() === 'up') return 4
-  return 5
+  if (iface.is_wireless) return 1
+  if (!iface.is_cellular && !iface.is_wireless && isDefault) return 2
+  if (!iface.is_cellular && !iface.is_wireless) return 3
+  if (iface.is_cellular && isDefault) return 4
+  if (iface.is_cellular) return 5
+  if (isDefault) return 6
+  if (iface.status.toLowerCase() === 'up') return 7
+  return 8
 }
 
 function ddnsInterfaceOptions(interfaces: NetworkInterfaceInfo[], family: 'ipv4' | 'ipv6') {
@@ -236,7 +241,9 @@ function ddnsInterfaceOptions(interfaces: NetworkInterfaceInfo[], family: 'ipv4'
 
 function interfaceOptionLabel(iface: NetworkInterfaceInfo, family: 'ipv4' | 'ipv6') {
   const addresses = interfaceAddressesForFamily(iface, family).map((addr) => addr.address)
-  return addresses.length > 0 ? `${iface.name}(${addresses.join(', ')})` : iface.name
+  const isVolte = isVolteOrImsInterface(iface.name)
+  const tag = isVolte ? ' (VoLTE/IMS专网)' : ''
+  return addresses.length > 0 ? `${iface.name}${tag} (${addresses.join(', ')})` : `${iface.name}${tag}`
 }
 
 function applyDefaultDdnsInterfaces(config: DdnsConfig, interfaces: NetworkInterfaceInfo[]): DdnsConfig {

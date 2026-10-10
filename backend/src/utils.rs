@@ -1104,35 +1104,66 @@ pub fn preferred_interface_for_family(
     interfaces: &[NetworkInterfaceInfo],
     family: NetworkAddressFamily,
 ) -> Option<&NetworkInterfaceInfo> {
-    interfaces
+    let candidates: Vec<&NetworkInterfaceInfo> = interfaces
         .iter()
         .filter(|iface| {
             iface.name != "lo"
                 && !iface.status.eq_ignore_ascii_case("down")
                 && !interface_addresses_for_family(&iface.ip_addresses, family).is_empty()
         })
-        .min_by_key(|iface| preferred_interface_priority(iface, family))
+        .collect();
+
+    let non_volte: Vec<&NetworkInterfaceInfo> = candidates
+        .iter()
+        .copied()
+        .filter(|iface| !simadmin_device_runtime::is_volte_or_ims_interface(&iface.name))
+        .collect();
+
+    let pool = if !non_volte.is_empty() {
+        non_volte
+    } else {
+        // 排除 VoLTE/IMS 专网接口作为 DDNS / 公网地址自动选取
+        return None;
+    };
+
+    pool.into_iter().min_by_key(|iface| preferred_interface_priority(iface, family))
 }
 
 fn preferred_interface_priority(
     iface: &NetworkInterfaceInfo,
     family: NetworkAddressFamily,
 ) -> (u8, &str) {
+    let is_volte = simadmin_device_runtime::is_volte_or_ims_interface(&iface.name);
     let is_default = match family {
         NetworkAddressFamily::Ipv4 => iface.is_default_ipv4,
         NetworkAddressFamily::Ipv6 => iface.is_default_ipv6,
     };
 
-    let priority = if iface.is_wireless && is_default {
+    let priority = if is_volte {
+        // VoLTE/IMS 专网承载置于最低优先级
+        if is_default { 98 } else { 99 }
+    } else if iface.is_wireless && is_default {
+        // WLAN 默认出口 -> 最高优先级
         0
-    } else if is_default {
-        1
     } else if iface.is_wireless {
+        // WLAN 虽非默认出口，但具有有效 IP -> 次高优先级 (优先于蜂窝数据)
+        1
+    } else if !iface.is_cellular && !iface.is_wireless && is_default {
+        // 有线网卡默认出口
         2
-    } else if iface.is_cellular {
+    } else if !iface.is_cellular && !iface.is_wireless {
+        // 有线网卡
         3
-    } else {
+    } else if iface.is_cellular && is_default {
+        // 主蜂窝数据网卡默认出口
         4
+    } else if iface.is_cellular {
+        // 主蜂窝数据网卡
+        5
+    } else if is_default {
+        6
+    } else {
+        7
     };
 
     (priority, iface.name.as_str())
@@ -1297,7 +1328,8 @@ pub async fn read_network_interfaces(
             name: interface_name,
             status,
             is_wireless,
-            is_cellular: bearer_stats.is_some(),
+            is_cellular: bearer_stats.is_some()
+                || simadmin_device_runtime::is_cellular_interface(&interface_name),
             is_default_ipv4,
             is_default_ipv6,
             mac_address,

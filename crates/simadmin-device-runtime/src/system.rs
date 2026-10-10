@@ -636,38 +636,129 @@ pub fn network_interfaces() -> NetworkInterfacesResponse {
     }
 }
 
+pub fn is_volte_or_ims_interface(name: &str) -> bool {
+    let value = name.to_ascii_lowercase();
+    if value.contains("ims") || value.contains("volte") || value.contains("sip") {
+        return true;
+    }
+    if let Some((base, sub)) = value.split_once('.') {
+        if is_cellular_interface(base) && sub.chars().all(|c| c.is_ascii_digit()) {
+            return true;
+        }
+    }
+    let prefixes = ["rmnet_data", "rmnet_mhi", "rmnet", "wwan", "mbim"];
+    for prefix in prefixes {
+        if let Some(suffix) = value.strip_prefix(prefix) {
+            if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) {
+                if let Ok(idx) = suffix.parse::<u32>() {
+                    if idx > 0 {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+fn connection_interface_priority<'a>(iface: &'a NetworkInterfaceInfo, family: &str) -> (u8, &'a str) {
+    let is_volte = is_volte_or_ims_interface(&iface.name);
+    let is_default = if family.eq_ignore_ascii_case("ipv4") {
+        iface.is_default_ipv4
+    } else {
+        iface.is_default_ipv6
+    };
+
+    let priority = if is_volte {
+        // VoLTE/IMS 专网承载置于最低优先级
+        if is_default { 98 } else { 99 }
+    } else if iface.is_wireless && is_default {
+        // WLAN 默认出口 -> 最高优先级
+        0
+    } else if iface.is_wireless {
+        // WLAN 虽非默认出口，但具有有效 IP -> 次高优先级 (优先于蜂窝数据)
+        1
+    } else if !iface.is_cellular && !iface.is_wireless && is_default {
+        // 有线网卡默认出口
+        2
+    } else if !iface.is_cellular && !iface.is_wireless {
+        // 有线网卡
+        3
+    } else if iface.is_cellular && is_default {
+        // 主蜂窝数据网卡默认出口
+        4
+    } else if iface.is_cellular {
+        // 主蜂窝数据网卡
+        5
+    } else if is_default {
+        6
+    } else {
+        7
+    };
+
+    (priority, iface.name.as_str())
+}
+
+pub fn preferred_connection_interface<'a>(
+    interfaces: &'a [NetworkInterfaceInfo],
+    family: &str,
+) -> Option<&'a NetworkInterfaceInfo> {
+    let candidates: Vec<&NetworkInterfaceInfo> = interfaces
+        .iter()
+        .filter(|iface| {
+            iface.name != "lo"
+                && !iface.status.eq_ignore_ascii_case("down")
+                && iface.ip_addresses.iter().any(|addr| {
+                    addr.ip_type.eq_ignore_ascii_case(family)
+                        && !matches!(addr.scope.as_str(), "loopback" | "link-local")
+                })
+        })
+        .collect();
+
+    let non_volte: Vec<&NetworkInterfaceInfo> = candidates
+        .iter()
+        .copied()
+        .filter(|iface| !is_volte_or_ims_interface(&iface.name))
+        .collect();
+
+    let pool = if !non_volte.is_empty() {
+        non_volte
+    } else {
+        // 排除 VoLTE/IMS 专网承载作为公网连接地址自动展示
+        return None;
+    };
+
+    pool.into_iter().min_by_key(|iface| connection_interface_priority(iface, family))
+}
+
 pub fn connection_addresses() -> ConnectionAddressesResponse {
     let interfaces = network_interfaces().interfaces;
-    let ipv4_interface = default_ipv4_interface();
-    let ipv6_interface = default_ipv6_interface();
-    let addresses = |family: &str, preferred: Option<&str>| {
-        let selected = interfaces
-            .iter()
-            .filter(|interface| preferred.is_none_or(|name| interface.name == name))
-            .flat_map(|interface| interface.ip_addresses.iter())
-            .filter(|address| {
-                address.ip_type == family
-                    && !matches!(address.scope.as_str(), "loopback" | "link-local")
-            })
-            .map(|address| address.address.clone())
-            .collect::<Vec<_>>();
-        if selected.is_empty() && preferred.is_some() {
-            interfaces
+    let ipv4_pref = preferred_connection_interface(&interfaces, "ipv4");
+    let ipv6_pref = preferred_connection_interface(&interfaces, "ipv6");
+
+    let ipv4_interface = ipv4_pref.map(|iface| iface.name.clone()).or_else(default_ipv4_interface);
+    let ipv6_interface = ipv6_pref.map(|iface| iface.name.clone()).or_else(default_ipv6_interface);
+
+    let get_addrs = |pref: Option<&NetworkInterfaceInfo>, family: &str| -> Vec<String> {
+        if let Some(iface) = pref {
+            let mut list: Vec<String> = iface
+                .ip_addresses
                 .iter()
-                .flat_map(|interface| interface.ip_addresses.iter())
-                .filter(|address| {
-                    address.ip_type == family
-                        && !matches!(address.scope.as_str(), "loopback" | "link-local")
+                .filter(|addr| {
+                    addr.ip_type.eq_ignore_ascii_case(family)
+                        && !matches!(addr.scope.as_str(), "loopback" | "link-local")
                 })
-                .map(|address| address.address.clone())
-                .collect()
-        } else {
-            selected
+                .map(|addr| addr.address.clone())
+                .collect();
+            list.dedup();
+            return list;
         }
+        Vec::new()
     };
+
     ConnectionAddressesResponse {
-        ipv4: addresses("ipv4", ipv4_interface.as_deref()),
-        ipv6: addresses("ipv6", ipv6_interface.as_deref()),
+        ipv4: get_addrs(ipv4_pref, "ipv4"),
+        ipv6: get_addrs(ipv6_pref, "ipv6"),
         ipv4_interface,
         ipv6_interface,
     }
@@ -813,7 +904,7 @@ fn parse_default_ipv6_interface(content: &str) -> Option<String> {
         .map(|(interface, _)| interface)
 }
 
-fn is_cellular_interface(name: &str) -> bool {
+pub fn is_cellular_interface(name: &str) -> bool {
     let value = name.to_ascii_lowercase();
     ["wwan", "wwp", "rmnet", "mbim", "mhi"]
         .iter()
@@ -821,48 +912,71 @@ fn is_cellular_interface(name: &str) -> bool {
 }
 
 pub async fn connectivity() -> ConnectivityCheckResponse {
+    let interfaces = network_interfaces().interfaces;
+    let ipv6_iface = preferred_connection_interface(&interfaces, "ipv6")
+        .map(|iface| iface.name.clone());
     let (ipv4, ipv6) = tokio::join!(
         ping_host("223.5.5.5", false),
-        ping_host("2400:3200::1", true)
+        ping_host_target("2400:3200::1", true, ipv6_iface.as_deref())
     );
     ConnectivityCheckResponse { ipv4, ipv6 }
 }
 
 pub async fn ping_host(target: &str, ipv6: bool) -> PingResult {
-    let mut command = tokio::process::Command::new("ping");
-    #[cfg(windows)]
-    command.args(if ipv6 {
-        vec!["-6", "-n", "1", "-w", "1000", target]
-    } else {
-        vec!["-4", "-n", "1", "-w", "1000", target]
-    });
-    #[cfg(not(windows))]
-    command.args(if ipv6 {
-        vec!["-6", "-c", "1", "-W", "1", target]
-    } else {
-        vec!["-4", "-c", "1", "-W", "1", target]
-    });
-    match command.output().await {
-        Ok(output) => {
-            let text = format!(
-                "{}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            PingResult {
-                success: output.status.success(),
-                latency_ms: parse_ping_latency(&text),
-                target: target.into(),
-                error: (!output.status.success()).then(|| text.trim().to_owned()),
+    ping_host_target(target, ipv6, None).await
+}
+
+pub async fn ping_host_target(target: &str, ipv6: bool, iface: Option<&str>) -> PingResult {
+    let run = |_bind_iface: Option<&str>| async move {
+        let mut command = tokio::process::Command::new("ping");
+        #[cfg(windows)]
+        command.args(if ipv6 {
+            vec!["-6", "-n", "1", "-w", "1000", target]
+        } else {
+            vec!["-4", "-n", "1", "-w", "1000", target]
+        });
+        #[cfg(not(windows))]
+        {
+            let mut args = if ipv6 {
+                vec!["-6", "-c", "1", "-W", "1"]
+            } else {
+                vec!["-4", "-c", "1", "-W", "1"]
+            };
+            if let Some(i) = _bind_iface {
+                args.push("-I");
+                args.push(i);
             }
+            args.push(target);
+            command.args(args);
         }
-        Err(error) => PingResult {
-            success: false,
-            latency_ms: None,
-            target: target.into(),
-            error: Some(error.to_string()),
-        },
+        match command.output().await {
+            Ok(output) => {
+                let text = format!(
+                    "{}\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                PingResult {
+                    success: output.status.success(),
+                    latency_ms: parse_ping_latency(&text),
+                    target: target.into(),
+                    error: (!output.status.success()).then(|| text.trim().to_owned()),
+                }
+            }
+            Err(error) => PingResult {
+                success: false,
+                latency_ms: None,
+                target: target.into(),
+                error: Some(error.to_string()),
+            },
+        }
+    };
+
+    let result = run(iface).await;
+    if !result.success && iface.is_some() {
+        return run(None).await;
     }
+    result
 }
 
 fn parse_ping_latency(output: &str) -> Option<f64> {
@@ -916,8 +1030,69 @@ mod tests {
         assert!(is_cellular_interface("wwan0"));
         assert!(is_cellular_interface("rmnet_data0"));
         assert!(!is_cellular_interface("wlan0"));
+        assert!(is_volte_or_ims_interface("rmnet_data1"));
+        assert!(is_volte_or_ims_interface("wwan1"));
+        assert!(is_volte_or_ims_interface("wwan0.1"));
+        assert!(is_volte_or_ims_interface("qmi_ims"));
+        assert!(is_volte_or_ims_interface("volte0"));
+        assert!(!is_volte_or_ims_interface("wwan0"));
+        assert!(!is_volte_or_ims_interface("rmnet_data0"));
+        assert!(!is_volte_or_ims_interface("wlan0"));
         assert_eq!(temperature_label("modem-thermal", "thermal_zone0"), "基带");
         assert_eq!(temperature_label("gpu0", "thermal_zone1"), "GPU");
+    }
+
+    #[test]
+    fn prefers_wireless_ipv6_over_cellular_and_excludes_volte() {
+        let interfaces = vec![
+            NetworkInterfaceInfo {
+                name: "rmnet_data1".into(),
+                status: "up".into(),
+                is_wireless: false,
+                is_cellular: true,
+                is_default_ipv4: false,
+                is_default_ipv6: true,
+                mac_address: None,
+                mtu: 1500,
+                ip_addresses: vec![IpAddress {
+                    address: "2409:8000::1".into(),
+                    prefix_len: 64,
+                    ip_type: "ipv6".into(),
+                    scope: "public".into(),
+                }],
+                rx_bytes: 0,
+                tx_bytes: 0,
+                rx_packets: 0,
+                tx_packets: 0,
+                rx_errors: 0,
+                tx_errors: 0,
+            },
+            NetworkInterfaceInfo {
+                name: "wlan0".into(),
+                status: "up".into(),
+                is_wireless: true,
+                is_cellular: false,
+                is_default_ipv4: true,
+                is_default_ipv6: false,
+                mac_address: None,
+                mtu: 1500,
+                ip_addresses: vec![IpAddress {
+                    address: "240e:1234::1".into(),
+                    prefix_len: 64,
+                    ip_type: "ipv6".into(),
+                    scope: "public".into(),
+                }],
+                rx_bytes: 0,
+                tx_bytes: 0,
+                rx_packets: 0,
+                tx_packets: 0,
+                rx_errors: 0,
+                tx_errors: 0,
+            },
+        ];
+
+        let selected = preferred_connection_interface(&interfaces, "ipv6").unwrap();
+        assert_eq!(selected.name, "wlan0");
     }
 
     #[cfg(unix)]
