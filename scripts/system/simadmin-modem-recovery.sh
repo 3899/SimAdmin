@@ -80,8 +80,21 @@ resolve_qmi_device() {
   return 1
 }
 
+ensure_uim_powered() {
+  qmi_dev="$(resolve_qmi_device)" || return 1
+  uim_output="$($TIMEOUT_BIN "$QMI_TIMEOUT_SECONDS" "$QMICLI_BIN" \
+    -d "$qmi_dev" --device-open-proxy --uim-get-card-status 2>&1 || true)"
+  if printf '%s\n' "$uim_output" | grep -Eqi "Card state:[[:space:]]*'error:[[:space:]]*power-down"; then
+    log "QMI USIM card is powered down; restoring power for $qmi_dev"
+    "$TIMEOUT_BIN" "$QMI_TIMEOUT_SECONDS" "$QMICLI_BIN" \
+      -d "$qmi_dev" --device-open-proxy --uim-sim-power-on=1 >/dev/null 2>&1 || true
+    "$SLEEP_BIN" 2
+  fi
+}
+
 ensure_qmi_online() {
   qmi_dev="$(resolve_qmi_device)" || return 1
+  ensure_uim_powered
   mode_output="$($TIMEOUT_BIN "$QMI_TIMEOUT_SECONDS" "$QMICLI_BIN" \
     -d "$qmi_dev" --device-open-proxy --dms-get-operating-mode 2>&1 || true)"
   if printf '%s\n' "$mode_output" | grep -Eqi "Mode:[[:space:]]*'(shutting-down|low-power|offline)'"; then
@@ -94,6 +107,7 @@ ensure_qmi_online() {
 
 uim_is_ready() {
   qmi_device="$(resolve_qmi_device)" || return 1
+  ensure_uim_powered
   output="$($TIMEOUT_BIN "$QMI_TIMEOUT_SECONDS" "$QMICLI_BIN" \
     -d "$qmi_device" --device-open-proxy --uim-get-card-status 2>&1 || true)"
   printf '%s\n' "$output" | grep -Eq \

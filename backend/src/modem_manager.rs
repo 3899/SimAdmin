@@ -4780,11 +4780,13 @@ async fn set_modem_enabled(
 }
 
 async fn cycle_modem_radio_deep(conn: &Connection, modem_path: &str) -> Result<(), String> {
+    // 使用 3GPP 标准飞行模式（AT+CFUN=4）：仅关闭/复发射频收发电路与网络协议栈，清除基带搜网死锁与退避缓存，
+    // 且严格保持 UIM/SIM 卡物理电源在线，彻底避免高通等基带固件在 AT+CFUN=0 时切断 SIM 卡电源导致 modem 判定为 sim-missing 崩溃。
     if let Ok(proxy) = Proxy::new(conn, MM_SERVICE, modem_path, MM_MODEM).await {
-        let _ = send_mm_at_command(&proxy, "AT+CFUN=0").await;
+        let _ = send_mm_at_command(&proxy, "AT+CFUN=4").await;
     }
     let _ = set_modem_enabled(conn, modem_path, false).await;
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
     let res = set_modem_enabled(conn, modem_path, true).await;
     if let Ok(proxy) = Proxy::new(conn, MM_SERVICE, modem_path, MM_MODEM).await {
         let _ = send_mm_at_command(&proxy, "AT+CFUN=1").await;
@@ -7058,10 +7060,12 @@ pub async fn data_connection_watchdog(
     let mut last_data_activation_attempt_at: Option<Instant> = None;
     let mut transition_stuck_count = 0u32;
     let mut enabled_idle_count = 0u32;
+    let mut failed_state_count = 0u32;
     let mut cellular_problem_active = false;
     let mut data_activation_failure_active = false;
     const TRANSITION_STUCK_THRESHOLD: u32 = 6;
     const ENABLED_IDLE_RECOVERY_THRESHOLD: u32 = 8;
+    const FAILED_STATE_RECOVERY_THRESHOLD: u32 = 6;
 
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)).await;
@@ -7116,6 +7120,9 @@ pub async fn data_connection_watchdog(
                     }
                     if state != 6 {
                         enabled_idle_count = 0;
+                    }
+                    if state != -1 {
+                        failed_state_count = 0;
                     }
                     if !data_connection_transition_in_progress(state) {
                         transition_stuck_count = 0;
@@ -7240,6 +7247,40 @@ pub async fn data_connection_watchdog(
                             format!(
                                 "Waiting for registration (state: searching, registration: {}, attempts: {searching_count})",
                                 mm_registration_to_string(registration)
+                            )
+                        }
+                    } else if state == -1 {
+                        failed_state_count += 1;
+                        if failed_state_count >= FAILED_STATE_RECOVERY_THRESHOLD {
+                            failed_state_count = 0;
+                            warn!(
+                                "Modem permanently stuck in failed state, triggering recovery"
+                            );
+                            // 若存在 QMI 设备，尝试确保 SIM 卡处于上电状态
+                            if let Some(qmi_dev) = find_qmi_device_path() {
+                                let _ = qmicli_sim_power(&qmi_dev, true).await;
+                            }
+                            match run_recovery_command("systemctl", &["restart", "ModemManager"]).await {
+                                Ok(_) => {
+                                    cellular_problem_active = true;
+                                    system_events
+                                        .emit_code(
+                                            system_event_codes::BASEBAND_MODEMMANAGER_RESTARTED,
+                                            system_event_severity::WARNING,
+                                            system_event_status::TRIGGERED,
+                                            modem_path.to_string(),
+                                            "Modem 状态处于 failed，watchdog 已重启 ModemManager 恢复",
+                                        )
+                                        .await;
+                                    "Modem in failed state, restarted ModemManager".to_string()
+                                }
+                                Err(err) => {
+                                    format!("Modem in failed state, restart ModemManager failed: {err}")
+                                }
+                            }
+                        } else {
+                            format!(
+                                "Waiting for registration (state: failed, attempts: {failed_state_count}/{FAILED_STATE_RECOVERY_THRESHOLD})"
                             )
                         }
                     } else if state < MM_MODEM_STATE_REGISTERED {
