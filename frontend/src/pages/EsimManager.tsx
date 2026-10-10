@@ -826,14 +826,16 @@ export default function EsimManagerPage() {
     }
 
     try {
-      let hasProfiles = profiles.length > 0
-
       if (!forceLive) {
-        setProfilesLoading(true)
-        const cachedProfilesRes = await requestOrNull(api.getCachedEsimProfiles(), 'profiles-cache', false)
+        const cachedEuiccRes = await requestOrNull(api.getEsimEuicc(false), 'euicc-cache', false)
+        if (cachedEuiccRes?.data) {
+          setEuicc(cachedEuiccRes.data)
+          updateEsimPageSnapshot({ euicc: cachedEuiccRes.data })
+        }
+        const knownEid = cachedEuiccRes?.data?.eid
+        const cachedProfilesRes = await requestOrNull(api.getCachedEsimProfiles(knownEid), 'profiles-cache', false)
         const cachedProfiles = cachedProfilesRes?.data?.profiles ?? []
         if (cachedProfiles.length > 0) {
-          hasProfiles = true
           setProfiles(cachedProfiles)
           setSelectedIccid((current) => {
             const nextSelectedIccid = preferredProfileIccid(cachedProfiles, current)
@@ -844,7 +846,6 @@ export default function EsimManagerPage() {
             return nextSelectedIccid
           })
         }
-        setProfilesLoading(false)
       }
 
       const statusRes = await requestOrNull(api.getEsimLpacStatus(), 'lpac')
@@ -869,26 +870,23 @@ export default function EsimManagerPage() {
         return
       }
 
-      const shouldLoadLiveProfiles = forceLive || !hasProfiles
-      if (shouldLoadLiveProfiles) {
-        setProfilesLoading(true)
-        const profilesRes = await requestOrNull(api.getEsimProfiles(), 'profiles')
-        setProfilesLoading(false)
-        if (profilesRes?.data) {
-          const nextProfiles = profilesRes.data.profiles ?? []
-          setProfiles(nextProfiles)
-          setSelectedIccid((current) => {
-            const nextSelectedIccid = preferredProfileIccid(nextProfiles, current)
-            updateEsimPageSnapshot({
-              profiles: nextProfiles,
-              selectedIccid: nextSelectedIccid,
-            })
-            return nextSelectedIccid
+      setProfilesLoading(profiles.length === 0)
+      const profilesRes = await requestOrNull(api.getEsimProfiles(), 'profiles')
+      setProfilesLoading(false)
+      if (profilesRes?.data) {
+        const nextProfiles = profilesRes.data.profiles ?? []
+        setProfiles(nextProfiles)
+        setSelectedIccid((current) => {
+          const nextSelectedIccid = preferredProfileIccid(nextProfiles, current)
+          updateEsimPageSnapshot({
+            profiles: nextProfiles,
+            selectedIccid: nextSelectedIccid,
           })
-        }
+          return nextSelectedIccid
+        })
       }
 
-      setEuiccLoading(true)
+      setEuiccLoading(euicc === null)
       const euiccRes = await requestOrNull(api.getEsimEuicc(forceLive), 'euicc')
       setEuiccLoading(false)
       if (euiccRes?.data) {

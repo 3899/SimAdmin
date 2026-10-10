@@ -87,12 +87,14 @@ export interface EsimProfile {
   mnc?: string
   disable_allowed?: boolean
   delete_allowed?: boolean
+  eid?: string
   updated_at?: string
   raw: unknown
 }
 
 export interface EsimProfilesResponse {
   profiles: EsimProfile[]
+  eid?: string
 }
 
 export interface EsimLpacStatusResponse {

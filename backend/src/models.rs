@@ -146,6 +146,8 @@ pub struct EsimProfile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delete_allowed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub eid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
     #[serde(default)]
     pub raw: Value,
@@ -154,6 +156,8 @@ pub struct EsimProfile {
 #[derive(Debug, Default, Serialize)]
 pub struct EsimProfilesResponse {
     pub profiles: Vec<EsimProfile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eid: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize)]

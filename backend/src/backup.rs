@@ -1740,11 +1740,12 @@ fn import_esim_cache(tx: &Transaction<'_>, value: Value, mode: ImportMode) -> ru
         }
         tx.execute(
             "INSERT INTO esim_profile_cache (
-                iccid, name, provider, state, profile_class, imsi, msisdn, smsc, smdp,
+                iccid, eid, name, provider, state, profile_class, imsi, msisdn, smsc, smdp,
                 matching_id, isdp_aid, mcc, mnc, disable_allowed, delete_allowed, updated_at
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
              ON CONFLICT(iccid) DO UPDATE SET
+                eid = COALESCE(excluded.eid, esim_profile_cache.eid),
                 name = COALESCE(excluded.name, esim_profile_cache.name),
                 provider = COALESCE(excluded.provider, esim_profile_cache.provider),
                 state = COALESCE(excluded.state, esim_profile_cache.state),
@@ -1762,6 +1763,7 @@ fn import_esim_cache(tx: &Transaction<'_>, value: Value, mode: ImportMode) -> ru
                 updated_at = excluded.updated_at",
             params![
                 iccid,
+                non_empty_optional_string(row, "eid"),
                 non_empty_optional_string(row, "name"),
                 non_empty_optional_string(row, "provider"),
                 non_empty_optional_string(row, "state"),

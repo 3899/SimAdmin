@@ -491,8 +491,9 @@ export class SimAdminCurrentAPI {
     })
   }
 
-  async getCachedEsimProfiles() {
-    return this.request<ApiResponse<EsimProfilesResponse>>('/esim/profiles?cached=1', {
+  async getCachedEsimProfiles(eid?: string) {
+    const path = eid ? `/esim/profiles?cached=1&eid=${encodeURIComponent(eid)}` : '/esim/profiles?cached=1'
+    return this.request<ApiResponse<EsimProfilesResponse>>(path, {
       timeoutMs: 5000,
     })
   }

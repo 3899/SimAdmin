@@ -238,9 +238,10 @@ fn optional_profile_cache_value(value: &Option<String>) -> Option<String> {
     value.as_deref().and_then(profile_cache_value)
 }
 
-fn profile_cache_entry(profile: &EsimProfile) -> EsimProfileCacheEntry {
+fn profile_cache_entry(profile: &EsimProfile, eid: Option<&str>) -> EsimProfileCacheEntry {
     EsimProfileCacheEntry {
         iccid: profile.iccid.trim().to_string(),
+        eid: eid.map(|s| s.trim().to_string()).or_else(|| profile.eid.clone()),
         name: profile_cache_value(&profile.name),
         provider: profile_cache_value(&profile.provider),
         state: profile_cache_value(&profile.state),
@@ -285,6 +286,9 @@ fn hydrate_profile_from_cache(db: &Database, profile: &mut EsimProfile) {
         }
     };
 
+    if profile.eid.is_none() {
+        profile.eid = cache.eid;
+    }
     fill_cached_string(&mut profile.name, cache.name);
     fill_cached_string(&mut profile.provider, cache.provider);
     fill_cached_string(&mut profile.state, cache.state);
@@ -305,9 +309,9 @@ fn hydrate_profiles_from_cache(db: &Database, profiles: &mut [EsimProfile]) {
     }
 }
 
-fn cache_esim_profiles(db: &Database, profiles: &[EsimProfile]) {
+fn cache_esim_profiles(db: &Database, profiles: &[EsimProfile], eid: Option<&str>) {
     for profile in profiles {
-        if let Err(err) = db.upsert_esim_profile_cache(&profile_cache_entry(profile)) {
+        if let Err(err) = db.upsert_esim_profile_cache(&profile_cache_entry(profile, eid)) {
             warn!(iccid = %profile.iccid, error = %err, "Failed to write eSIM profile cache");
         }
     }
@@ -316,6 +320,7 @@ fn cache_esim_profiles(db: &Database, profiles: &[EsimProfile]) {
 fn profile_from_cache_entry(entry: EsimProfileCacheEntry) -> EsimProfile {
     EsimProfile {
         iccid: entry.iccid,
+        eid: entry.eid,
         name: entry.name.unwrap_or_default(),
         provider: entry.provider.unwrap_or_default(),
         state: entry.state.unwrap_or_else(|| "unknown".to_string()),
@@ -1122,7 +1127,25 @@ pub async fn get_esim_profiles_handler(
     }
 
     if cached_profiles_requested(&query) {
-        return match app.database.list_esim_profile_cache() {
+        let target_eid = query
+            .get("eid")
+            .filter(|s| !s.trim().is_empty())
+            .cloned()
+            .or_else(|| {
+                app.database
+                    .latest_esim_euicc_cache()
+                    .ok()
+                    .flatten()
+                    .map(|e| e.eid)
+                    .filter(|s| !s.trim().is_empty())
+            });
+
+        let entries_result = match target_eid.as_deref() {
+            Some(eid) => app.database.list_esim_profile_cache_by_eid(eid),
+            None => app.database.list_esim_profile_cache(),
+        };
+
+        return match entries_result {
             Ok(entries) => {
                 let mut profiles: Vec<EsimProfile> =
                     entries.into_iter().map(profile_from_cache_entry).collect();
@@ -1144,7 +1167,7 @@ pub async fn get_esim_profiles_handler(
                                 &identity,
                                 Some(app.database.as_ref()),
                             );
-                            cache_esim_profiles(&app.database, &profiles);
+                            cache_esim_profiles(&app.database, &profiles, target_eid.as_deref());
                         }
                         Ok(None) => {}
                         Err(_) => warn!(
@@ -1158,7 +1181,10 @@ pub async fn get_esim_profiles_handler(
                     StatusCode::OK,
                     Json(ApiResponse::success_with_message(
                         "Cached profiles",
-                        EsimProfilesResponse { profiles },
+                        EsimProfilesResponse {
+                            profiles,
+                            eid: target_eid,
+                        },
                     )),
                 )
             }
@@ -1171,8 +1197,44 @@ pub async fn get_esim_profiles_handler(
         };
     }
 
+    // Synchronize live eUICC info first so we always know the exact current EID
+    let live_euicc = match app.esim_supervisor.get_euicc_info().await {
+        Ok(mut info) => {
+            info.updated_at = Some(chrono::Utc::now().to_rfc3339());
+            if let Err(err) = app
+                .database
+                .upsert_esim_euicc_cache(&euicc_cache_entry(&info))
+            {
+                warn!(error = %err, "Failed to write eUICC cache during profiles refresh");
+            }
+            Some(info)
+        }
+        Err(err) => {
+            warn!(error = ?err, "Failed to read live eUICC info during profiles refresh");
+            None
+        }
+    };
+
+    let current_eid = live_euicc
+        .as_ref()
+        .map(|info| info.eid.clone())
+        .filter(|eid| !eid.trim().is_empty())
+        .or_else(|| {
+            app.database
+                .latest_esim_euicc_cache()
+                .ok()
+                .flatten()
+                .map(|e| e.eid)
+                .filter(|eid| !eid.trim().is_empty())
+        });
+
     match app.esim_supervisor.get_profiles().await {
         Ok(mut data) => {
+            if let Some(ref eid) = current_eid {
+                for p in &mut data.profiles {
+                    p.eid = Some(eid.clone());
+                }
+            }
             hydrate_profiles_from_cache(&app.database, &mut data.profiles);
             match tokio::time::timeout(
                 std::time::Duration::from_secs(ESIM_SIM_IDENTITY_TIMEOUT_SECS),
@@ -1191,7 +1253,21 @@ pub async fn get_esim_profiles_handler(
                     "Timed out enriching eSIM profiles with current SIM identity"
                 ),
             }
-            cache_esim_profiles(&app.database, &data.profiles);
+
+            if let Some(ref eid) = current_eid {
+                let entries: Vec<EsimProfileCacheEntry> = data
+                    .profiles
+                    .iter()
+                    .map(|p| profile_cache_entry(p, Some(eid)))
+                    .collect();
+                if let Err(err) = app.database.reconcile_esim_profile_cache(eid, &entries) {
+                    warn!(eid = %eid, error = %err, "Failed to reconcile eSIM profile cache");
+                }
+            } else {
+                cache_esim_profiles(&app.database, &data.profiles, None);
+            }
+
+            data.eid = current_eid;
             sort_esim_profiles_for_display(&mut data.profiles);
             (
                 StatusCode::OK,
@@ -1396,11 +1472,19 @@ pub async fn rename_esim_profile_handler(
             )),
         );
     }
-    match app.esim_supervisor.rename_profile(iccid, name).await {
-        Ok(data) => (
-            StatusCode::OK,
-            Json(ApiResponse::success_with_message("Profile renamed", data)),
-        ),
+    match app.esim_supervisor.rename_profile(iccid.clone(), name.clone()).await {
+        Ok(data) => {
+            if esim_command_succeeded(&data) {
+                if let Ok(Some(mut entry)) = app.database.get_esim_profile_cache(&iccid) {
+                    entry.name = Some(name);
+                    let _ = app.database.upsert_esim_profile_cache(&entry);
+                }
+            }
+            (
+                StatusCode::OK,
+                Json(ApiResponse::success_with_message("Profile renamed", data)),
+            )
+        }
         Err(err) => esim_error_response::<EsimCommandResponse>(err),
     }
 }
@@ -1484,6 +1568,7 @@ pub async fn download_esim_profile_handler(
     match app.esim_supervisor.download_profile(payload.clone()).await {
         Ok(data) => {
             if esim_command_succeeded(&data) {
+                let current_eid = app.database.latest_esim_euicc_cache().ok().flatten().map(|e| e.eid);
                 let downloaded_iccid;
                 // Attempt to recursively find the downloaded profile details in lpac's response
                 let profile_val = data.data.clone().unwrap_or(serde_json::Value::Null);
@@ -1504,6 +1589,7 @@ pub async fn download_esim_profile_handler(
 
                     let entry = EsimProfileCacheEntry {
                         iccid: profile.iccid.clone(),
+                        eid: current_eid.clone(),
                         name: Some(profile.name.clone()),
                         provider: Some(profile.provider.clone()),
                         state: Some(profile.state.clone()),
@@ -1581,6 +1667,7 @@ pub async fn download_esim_profile_handler(
                                     if needs_cache {
                                         let entry = EsimProfileCacheEntry {
                                             iccid: p.iccid.clone(),
+                                            eid: current_eid.clone(),
                                             name: Some(p.name.clone()),
                                             provider: Some(p.provider.clone()),
                                             state: Some(p.state.clone()),
@@ -1661,6 +1748,7 @@ pub async fn download_esim_profile_handler(
 
                 if is_refused {
                     info!("MatchingID is refused, attempting to bind matching info to the profile if it exists");
+                    let current_eid = app.database.latest_esim_euicc_cache().ok().flatten().map(|e| e.eid);
                     let mut cached_fallback_iccid = None;
                     if let Ok(profiles_resp) = app.esim_supervisor.get_profiles().await {
                         for p in profiles_resp.profiles {
@@ -1673,6 +1761,7 @@ pub async fn download_esim_profile_handler(
                             if needs_cache {
                                 let entry = EsimProfileCacheEntry {
                                     iccid: p.iccid.clone(),
+                                    eid: current_eid.clone(),
                                     name: Some(p.name.clone()),
                                     provider: Some(p.provider.clone()),
                                     state: Some(p.state.clone()),

@@ -205,6 +205,8 @@ pub struct OwnNumberCacheEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EsimProfileCacheEntry {
     pub iccid: String,
+    #[serde(default)]
+    pub eid: Option<String>,
     pub name: Option<String>,
     pub provider: Option<String>,
     pub state: Option<String>,
@@ -641,6 +643,21 @@ impl Database {
                 [],
             )?;
         }
+        if !table_has_column(&conn, "esim_profile_cache", "eid")? {
+            conn.execute("ALTER TABLE esim_profile_cache ADD COLUMN eid TEXT", [])?;
+        }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_esim_profile_cache_eid ON esim_profile_cache(eid)",
+            [],
+        )?;
+        let _ = conn.execute(
+            "UPDATE esim_profile_cache SET eid = (
+                SELECT eid FROM esim_euicc_cache WHERE eid IS NOT NULL AND eid != '' ORDER BY updated_at DESC LIMIT 1
+             ) WHERE (eid IS NULL OR eid = '') AND EXISTS (
+                SELECT 1 FROM esim_euicc_cache WHERE eid IS NOT NULL AND eid != ''
+             )",
+            [],
+        );
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS esim_euicc_cache (
@@ -1892,6 +1909,7 @@ impl Database {
         }
 
         let has_profile_data = [
+            entry.eid.as_deref(),
             entry.name.as_deref(),
             entry.provider.as_deref(),
             entry.state.as_deref(),
@@ -1917,11 +1935,12 @@ impl Database {
         let updated_at = Utc::now().to_rfc3339();
         conn.execute(
             "INSERT INTO esim_profile_cache (
-                iccid, name, provider, state, profile_class, imsi, msisdn, smsc, smdp,
+                iccid, eid, name, provider, state, profile_class, imsi, msisdn, smsc, smdp,
                 matching_id, isdp_aid, mcc, mnc, disable_allowed, delete_allowed, updated_at
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
              ON CONFLICT(iccid) DO UPDATE SET
+                eid = COALESCE(excluded.eid, esim_profile_cache.eid),
                 name = COALESCE(excluded.name, esim_profile_cache.name),
                 provider = COALESCE(excluded.provider, esim_profile_cache.provider),
                 state = COALESCE(excluded.state, esim_profile_cache.state),
@@ -1939,6 +1958,7 @@ impl Database {
                 updated_at = excluded.updated_at",
             params![
                 &iccid,
+                non_empty_option(entry.eid.as_deref()),
                 non_empty_option(entry.name.as_deref()),
                 non_empty_option(entry.provider.as_deref()),
                 non_empty_option(entry.state.as_deref()),
@@ -1967,7 +1987,7 @@ impl Database {
 
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT iccid, name, provider, state, profile_class, imsi, msisdn, smsc, smdp,
+            "SELECT iccid, eid, name, provider, state, profile_class, imsi, msisdn, smsc, smdp,
                     matching_id, isdp_aid, mcc, mnc, disable_allowed, delete_allowed, updated_at
              FROM esim_profile_cache
              WHERE iccid = ?1",
@@ -1975,21 +1995,22 @@ impl Database {
             |row| {
                 Ok(EsimProfileCacheEntry {
                     iccid: row.get(0)?,
-                    name: row.get(1)?,
-                    provider: row.get(2)?,
-                    state: row.get(3)?,
-                    profile_class: row.get(4)?,
-                    imsi: row.get(5)?,
-                    msisdn: row.get(6)?,
-                    smsc: row.get(7)?,
-                    smdp: row.get(8)?,
-                    matching_id: row.get(9)?,
-                    isdp_aid: row.get(10)?,
-                    mcc: row.get(11)?,
-                    mnc: row.get(12)?,
-                    disable_allowed: row.get(13)?,
-                    delete_allowed: row.get(14)?,
-                    updated_at: row.get(15)?,
+                    eid: row.get(1)?,
+                    name: row.get(2)?,
+                    provider: row.get(3)?,
+                    state: row.get(4)?,
+                    profile_class: row.get(5)?,
+                    imsi: row.get(6)?,
+                    msisdn: row.get(7)?,
+                    smsc: row.get(8)?,
+                    smdp: row.get(9)?,
+                    matching_id: row.get(10)?,
+                    isdp_aid: row.get(11)?,
+                    mcc: row.get(12)?,
+                    mnc: row.get(13)?,
+                    disable_allowed: row.get(14)?,
+                    delete_allowed: row.get(15)?,
+                    updated_at: row.get(16)?,
                 })
             },
         )
@@ -1999,7 +2020,7 @@ impl Database {
     pub fn list_esim_profile_cache(&self) -> Result<Vec<EsimProfileCacheEntry>> {
         let conn = self.conn.lock().unwrap();
         let mut statement = conn.prepare(
-            "SELECT iccid, name, provider, state, profile_class, imsi, msisdn, smsc, smdp,
+            "SELECT iccid, eid, name, provider, state, profile_class, imsi, msisdn, smsc, smdp,
                     matching_id, isdp_aid, mcc, mnc, disable_allowed, delete_allowed, updated_at
              FROM esim_profile_cache
              ORDER BY iccid ASC",
@@ -2007,25 +2028,166 @@ impl Database {
         let rows = statement.query_map([], |row| {
             Ok(EsimProfileCacheEntry {
                 iccid: row.get(0)?,
-                name: row.get(1)?,
-                provider: row.get(2)?,
-                state: row.get(3)?,
-                profile_class: row.get(4)?,
-                imsi: row.get(5)?,
-                msisdn: row.get(6)?,
-                smsc: row.get(7)?,
-                smdp: row.get(8)?,
-                matching_id: row.get(9)?,
-                isdp_aid: row.get(10)?,
-                mcc: row.get(11)?,
-                mnc: row.get(12)?,
-                disable_allowed: row.get(13)?,
-                delete_allowed: row.get(14)?,
-                updated_at: row.get(15)?,
+                eid: row.get(1)?,
+                name: row.get(2)?,
+                provider: row.get(3)?,
+                state: row.get(4)?,
+                profile_class: row.get(5)?,
+                imsi: row.get(6)?,
+                msisdn: row.get(7)?,
+                smsc: row.get(8)?,
+                smdp: row.get(9)?,
+                matching_id: row.get(10)?,
+                isdp_aid: row.get(11)?,
+                mcc: row.get(12)?,
+                mnc: row.get(13)?,
+                disable_allowed: row.get(14)?,
+                delete_allowed: row.get(15)?,
+                updated_at: row.get(16)?,
             })
         })?;
 
         rows.collect()
+    }
+
+    pub fn list_esim_profile_cache_by_eid(&self, eid: &str) -> Result<Vec<EsimProfileCacheEntry>> {
+        let eid = eid.trim();
+        if eid.is_empty() {
+            return self.list_esim_profile_cache();
+        }
+
+        let conn = self.conn.lock().unwrap();
+        let mut statement = conn.prepare(
+            "SELECT iccid, eid, name, provider, state, profile_class, imsi, msisdn, smsc, smdp,
+                    matching_id, isdp_aid, mcc, mnc, disable_allowed, delete_allowed, updated_at
+             FROM esim_profile_cache
+             WHERE eid = ?1
+             ORDER BY iccid ASC",
+        )?;
+        let rows = statement.query_map(params![eid], |row| {
+            Ok(EsimProfileCacheEntry {
+                iccid: row.get(0)?,
+                eid: row.get(1)?,
+                name: row.get(2)?,
+                provider: row.get(3)?,
+                state: row.get(4)?,
+                profile_class: row.get(5)?,
+                imsi: row.get(6)?,
+                msisdn: row.get(7)?,
+                smsc: row.get(8)?,
+                smdp: row.get(9)?,
+                matching_id: row.get(10)?,
+                isdp_aid: row.get(11)?,
+                mcc: row.get(12)?,
+                mnc: row.get(13)?,
+                disable_allowed: row.get(14)?,
+                delete_allowed: row.get(15)?,
+                updated_at: row.get(16)?,
+            })
+        })?;
+
+        rows.collect()
+    }
+
+    /// Reconciles the profile cache for a given EID.
+    /// In a single transaction, upserts all current profiles tagged with `eid` and
+    /// purges any orphan cache entries belonging to this EID (or legacy unassigned entries)
+    /// that are no longer present on the card.
+    pub fn reconcile_esim_profile_cache(
+        &self,
+        eid: &str,
+        entries: &[EsimProfileCacheEntry],
+    ) -> Result<()> {
+        let eid = eid.trim();
+        if eid.is_empty() {
+            for entry in entries {
+                self.upsert_esim_profile_cache(entry)?;
+            }
+            return Ok(());
+        }
+
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+
+        let mut valid_iccids: Vec<String> = Vec::new();
+        let updated_at = Utc::now().to_rfc3339();
+
+        for entry in entries {
+            let iccid = crate::utils::normalize_iccid(&entry.iccid);
+            if iccid.is_empty() {
+                continue;
+            }
+            valid_iccids.push(iccid.clone());
+
+            tx.execute(
+                "INSERT INTO esim_profile_cache (
+                    iccid, eid, name, provider, state, profile_class, imsi, msisdn, smsc, smdp,
+                    matching_id, isdp_aid, mcc, mnc, disable_allowed, delete_allowed, updated_at
+                 )
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+                 ON CONFLICT(iccid) DO UPDATE SET
+                    eid = excluded.eid,
+                    name = COALESCE(excluded.name, esim_profile_cache.name),
+                    provider = COALESCE(excluded.provider, esim_profile_cache.provider),
+                    state = COALESCE(excluded.state, esim_profile_cache.state),
+                    profile_class = COALESCE(excluded.profile_class, esim_profile_cache.profile_class),
+                    imsi = COALESCE(excluded.imsi, esim_profile_cache.imsi),
+                    msisdn = COALESCE(excluded.msisdn, esim_profile_cache.msisdn),
+                    smsc = COALESCE(excluded.smsc, esim_profile_cache.smsc),
+                    smdp = COALESCE(excluded.smdp, esim_profile_cache.smdp),
+                    matching_id = COALESCE(excluded.matching_id, esim_profile_cache.matching_id),
+                    isdp_aid = COALESCE(excluded.isdp_aid, esim_profile_cache.isdp_aid),
+                    mcc = COALESCE(excluded.mcc, esim_profile_cache.mcc),
+                    mnc = COALESCE(excluded.mnc, esim_profile_cache.mnc),
+                    disable_allowed = COALESCE(excluded.disable_allowed, esim_profile_cache.disable_allowed),
+                    delete_allowed = COALESCE(excluded.delete_allowed, esim_profile_cache.delete_allowed),
+                    updated_at = excluded.updated_at",
+                params![
+                    &iccid,
+                    Some(eid),
+                    non_empty_option(entry.name.as_deref()),
+                    non_empty_option(entry.provider.as_deref()),
+                    non_empty_option(entry.state.as_deref()),
+                    non_empty_option(entry.profile_class.as_deref()),
+                    non_empty_option(entry.imsi.as_deref()),
+                    non_empty_option(entry.msisdn.as_deref()),
+                    non_empty_option(entry.smsc.as_deref()),
+                    non_empty_option(entry.smdp.as_deref()),
+                    non_empty_option(entry.matching_id.as_deref()),
+                    non_empty_option(entry.isdp_aid.as_deref()),
+                    non_empty_option(entry.mcc.as_deref()),
+                    non_empty_option(entry.mnc.as_deref()),
+                    entry.disable_allowed,
+                    entry.delete_allowed,
+                    &updated_at
+                ],
+            )?;
+        }
+
+        if valid_iccids.is_empty() {
+            tx.execute(
+                "DELETE FROM esim_profile_cache WHERE eid = ?1 OR eid IS NULL OR eid = ''",
+                params![eid],
+            )?;
+        } else {
+            let placeholders: Vec<String> =
+                (2..=valid_iccids.len() + 1).map(|i| format!("?{i}")).collect();
+            let sql = format!(
+                "DELETE FROM esim_profile_cache WHERE (eid = ?1 OR eid IS NULL OR eid = '') AND iccid NOT IN ({})",
+                placeholders.join(", ")
+            );
+            let mut stmt = tx.prepare(&sql)?;
+            let mut params_vec: Vec<&dyn rusqlite::ToSql> =
+                Vec::with_capacity(valid_iccids.len() + 1);
+            params_vec.push(&eid);
+            for iccid in &valid_iccids {
+                params_vec.push(iccid);
+            }
+            stmt.execute(rusqlite::params_from_iter(params_vec))?;
+        }
+
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn delete_esim_profile_cache(&self, iccid: &str) -> Result<()> {
@@ -2522,6 +2684,77 @@ mod tests {
         assert_eq!(listed[0].state.as_deref(), Some("enabled"));
         assert_eq!(listed[0].disable_allowed, Some(false));
         assert_eq!(listed[0].delete_allowed, Some(true));
+    }
+
+    #[test]
+    fn esim_profile_cache_isolates_by_eid_and_reconciles_orphans() {
+        let db = test_db();
+        let eid_a = "89086030202200000026000052951123";
+        let eid_b = "89044030202200000026000052959999";
+
+        // Card A has profiles 1 and 2
+        db.upsert_esim_profile_cache(&EsimProfileCacheEntry {
+            iccid: "894401".to_string(),
+            eid: Some(eid_a.to_string()),
+            name: Some("Card A Profile 1".to_string()),
+            state: Some("enabled".to_string()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        db.upsert_esim_profile_cache(&EsimProfileCacheEntry {
+            iccid: "894402".to_string(),
+            eid: Some(eid_a.to_string()),
+            name: Some("Card A Profile 2".to_string()),
+            state: Some("disabled".to_string()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        // Card B has profile 3
+        db.upsert_esim_profile_cache(&EsimProfileCacheEntry {
+            iccid: "894403".to_string(),
+            eid: Some(eid_b.to_string()),
+            name: Some("Card B Profile 1".to_string()),
+            state: Some("enabled".to_string()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        // Check isolation
+        let list_a = db.list_esim_profile_cache_by_eid(eid_a).unwrap();
+        assert_eq!(list_a.len(), 2);
+        assert_eq!(list_a[0].iccid, "894401");
+        assert_eq!(list_a[1].iccid, "894402");
+
+        let list_b = db.list_esim_profile_cache_by_eid(eid_b).unwrap();
+        assert_eq!(list_b.len(), 1);
+        assert_eq!(list_b[0].iccid, "894403");
+
+        // Reconcile Card A: profile 894402 was deleted on the card, now only 894401 exists
+        let live_a = vec![EsimProfileCacheEntry {
+            iccid: "894401".to_string(),
+            eid: Some(eid_a.to_string()),
+            name: Some("Card A Profile 1 Updated".to_string()),
+            state: Some("enabled".to_string()),
+            ..Default::default()
+        }];
+        db.reconcile_esim_profile_cache(eid_a, &live_a).unwrap();
+
+        let list_a_after = db.list_esim_profile_cache_by_eid(eid_a).unwrap();
+        assert_eq!(list_a_after.len(), 1);
+        assert_eq!(list_a_after[0].iccid, "894401");
+        assert_eq!(list_a_after[0].name.as_deref(), Some("Card A Profile 1 Updated"));
+
+        // Verify Card B's cache was NOT affected by reconciling Card A
+        let list_b_after = db.list_esim_profile_cache_by_eid(eid_b).unwrap();
+        assert_eq!(list_b_after.len(), 1);
+        assert_eq!(list_b_after[0].iccid, "894403");
+
+        // Reconcile empty card: Card B has no profiles installed
+        db.reconcile_esim_profile_cache(eid_b, &[]).unwrap();
+        let list_b_empty = db.list_esim_profile_cache_by_eid(eid_b).unwrap();
+        assert_eq!(list_b_empty.len(), 0);
     }
 
     #[test]

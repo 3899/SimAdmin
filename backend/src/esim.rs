@@ -1588,7 +1588,10 @@ fn normalize_profiles(response: EsimCommandResponse) -> EsimProfilesResponse {
         .map(|items| items.iter().map(normalize_profile).collect())
         .unwrap_or_default();
 
-    EsimProfilesResponse { profiles }
+    EsimProfilesResponse {
+        profiles,
+        eid: None,
+    }
 }
 
 pub fn normalize_profile(value: &Value) -> EsimProfile {
@@ -1707,6 +1710,7 @@ pub fn normalize_profile(value: &Value) -> EsimProfile {
             .or_else(|| bool_from(ppr, &["deleteAllowed", "delete_allowed"]))
             .or_else(|| policy_allows(value, &["delete", "deletion"]))
             .or(Some(true)),
+        eid: None,
         updated_at: None,
         raw: value.clone(),
     }
