@@ -1323,13 +1323,14 @@ pub async fn read_network_interfaces(
 
         let is_default_ipv4 = default_ipv4_interfaces.contains(&interface_name);
         let is_default_ipv6 = default_ipv6_interfaces.contains(&interface_name);
+        let is_cellular = bearer_stats.is_some()
+            || simadmin_device_runtime::is_cellular_interface(&interface_name);
 
         interfaces.push(NetworkInterfaceInfo {
             name: interface_name,
             status,
             is_wireless,
-            is_cellular: bearer_stats.is_some()
-                || simadmin_device_runtime::is_cellular_interface(&interface_name),
+            is_cellular,
             is_default_ipv4,
             is_default_ipv6,
             mac_address,

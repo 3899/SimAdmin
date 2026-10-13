@@ -1593,6 +1593,8 @@ mod tests {
             preferred_interface_for_family(&interfaces, NetworkAddressFamily::Ipv6).unwrap();
 
         assert_eq!(selected.name, "wwan0");
+    }
+
     #[test]
     fn ddns_interface_selection_prefers_wireless_ipv6_over_cellular_default_route() {
         let interfaces = vec![

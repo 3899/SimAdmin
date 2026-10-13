@@ -926,55 +926,55 @@ pub async fn ping_host(target: &str, ipv6: bool) -> PingResult {
     ping_host_target(target, ipv6, None).await
 }
 
-pub async fn ping_host_target(target: &str, ipv6: bool, iface: Option<&str>) -> PingResult {
-    let run = |_bind_iface: Option<&str>| async move {
-        let mut command = tokio::process::Command::new("ping");
-        #[cfg(windows)]
-        command.args(if ipv6 {
-            vec!["-6", "-n", "1", "-w", "1000", target]
+async fn execute_ping(target: &str, ipv6: bool, bind_iface: Option<&str>) -> PingResult {
+    let mut command = tokio::process::Command::new("ping");
+    #[cfg(windows)]
+    command.args(if ipv6 {
+        vec!["-6", "-n", "1", "-w", "1000", target]
+    } else {
+        vec!["-4", "-n", "1", "-w", "1000", target]
+    });
+    #[cfg(not(windows))]
+    {
+        let mut args = if ipv6 {
+            vec!["-6", "-c", "1", "-W", "1"]
         } else {
-            vec!["-4", "-n", "1", "-w", "1000", target]
-        });
-        #[cfg(not(windows))]
-        {
-            let mut args = if ipv6 {
-                vec!["-6", "-c", "1", "-W", "1"]
-            } else {
-                vec!["-4", "-c", "1", "-W", "1"]
-            };
-            if let Some(i) = _bind_iface {
-                args.push("-I");
-                args.push(i);
-            }
-            args.push(target);
-            command.args(args);
+            vec!["-4", "-c", "1", "-W", "1"]
+        };
+        if let Some(i) = bind_iface {
+            args.push("-I");
+            args.push(i);
         }
-        match command.output().await {
-            Ok(output) => {
-                let text = format!(
-                    "{}\n{}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                PingResult {
-                    success: output.status.success(),
-                    latency_ms: parse_ping_latency(&text),
-                    target: target.into(),
-                    error: (!output.status.success()).then(|| text.trim().to_owned()),
-                }
-            }
-            Err(error) => PingResult {
-                success: false,
-                latency_ms: None,
+        args.push(target);
+        command.args(args);
+    }
+    match command.output().await {
+        Ok(output) => {
+            let text = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            PingResult {
+                success: output.status.success(),
+                latency_ms: parse_ping_latency(&text),
                 target: target.into(),
-                error: Some(error.to_string()),
-            },
+                error: (!output.status.success()).then(|| text.trim().to_owned()),
+            }
         }
-    };
+        Err(error) => PingResult {
+            success: false,
+            latency_ms: None,
+            target: target.into(),
+            error: Some(error.to_string()),
+        },
+    }
+}
 
-    let result = run(iface).await;
+pub async fn ping_host_target(target: &str, ipv6: bool, iface: Option<&str>) -> PingResult {
+    let result = execute_ping(target, ipv6, iface).await;
     if !result.success && iface.is_some() {
-        return run(None).await;
+        return execute_ping(target, ipv6, None).await;
     }
     result
 }
