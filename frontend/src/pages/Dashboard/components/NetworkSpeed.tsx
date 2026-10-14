@@ -22,9 +22,9 @@ interface NetworkSpeedProps {
 }
 
 function interfacePriority(name: string): number {
-  if (name.startsWith('wwan')) return 0
+  if (name.startsWith('wlan')) return 0
   if (name.startsWith('usb')) return 1
-  if (name.startsWith('wlan')) return 2
+  if (name.startsWith('wwan')) return 2
   if (name.startsWith('eth') || name.startsWith('en')) return 3
   if (name.startsWith('docker') || name.startsWith('veth') || name.startsWith('br-')) return 10
   return 5
