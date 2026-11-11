@@ -4565,6 +4565,81 @@ pub async fn get_is_roaming_mm(conn: &Connection) -> zbus::Result<bool> {
     Ok(matches!(reg_state, 5 | 7 | 10))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CellularRegistrationStatus {
+    pub is_registered: bool,
+    pub is_modem_ready: bool,
+    pub is_roaming: bool,
+    pub modem_state: i32,
+    pub registration_state: u32,
+    pub operator_code: String,
+    pub operator_name: String,
+}
+
+/// 纯只读方式获取蜂窝网络驻网状态，不触发 mmcli 硬件扫描或 AT 命令竞争
+pub async fn get_cellular_registration_status(
+    conn: &Connection,
+) -> Option<CellularRegistrationStatus> {
+    let modem_path = list_modem_paths(conn).await.ok()?.into_iter().next()?;
+    let modem_state_val = modem_state(conn, &modem_path).await.ok()?;
+    let gpp_props = get_all_properties(conn, &modem_path, MM_MODEM_3GPP)
+        .await
+        .ok()?;
+
+    let registration_state = gpp_props
+        .get("RegistrationState")
+        .map(extract_u32)
+        .unwrap_or(0);
+    let operator_code = gpp_props
+        .get("OperatorCode")
+        .map(extract_string)
+        .unwrap_or_default();
+    let operator_raw = gpp_props
+        .get("OperatorName")
+        .map(extract_string)
+        .unwrap_or_default();
+
+    let (mcc, mnc) = split_operator_code(&operator_code);
+    let operator_name = localize_operator_display(&mcc, &mnc, &operator_raw);
+
+    // 3GPP 规范：1 = Registered (home), 5 = Registered (roaming)
+    let is_registered = matches!(registration_state, 1 | 5);
+    // Modem 状态：>= 8 代表 registered / disconnecting / connecting / connected
+    let is_modem_ready = modem_state_val >= MM_MODEM_STATE_REGISTERED;
+    let is_roaming = matches!(registration_state, 5 | 7 | 10);
+
+    Some(CellularRegistrationStatus {
+        is_registered,
+        is_modem_ready,
+        is_roaming,
+        modem_state: modem_state_val,
+        registration_state,
+        operator_code,
+        operator_name,
+    })
+}
+
+/// 快速判定蜂窝网络是否已在基带层面成功驻网（只读、无锁、无AT竞争）
+pub async fn is_modem_cellular_registered(conn: &Connection) -> bool {
+    get_cellular_registration_status(conn)
+        .await
+        .map(|s| s.is_registered && s.is_modem_ready)
+        .unwrap_or(false)
+}
+
+/// 在指定超时时间内等待蜂窝基带就绪或状态恢复，纯只读轮询
+pub async fn wait_for_cellular_registered(conn: &Connection, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if is_modem_cellular_registered(conn).await {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    is_modem_cellular_registered(conn).await
+}
+
+
 /// 持久化「允许漫游」并若数据已连接则重连以使 Simple.Connect 的 allow-roaming 生效。
 pub async fn apply_roaming_policy(
     conn: &Connection,
