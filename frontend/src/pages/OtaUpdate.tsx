@@ -52,6 +52,7 @@ import {
   Memory,
   Coffee,
   Favorite,
+  SwapHoriz,
 } from '@mui/icons-material'
 import { useSimAdminApi } from '../contexts/ApiContext'
 import { useAboutDialog } from '../contexts/AboutDialogContext'
@@ -176,6 +177,13 @@ interface ClassifiedAsset {
 }
 
 type OtaEdition = 'standard' | 'volte' | 'vowifi' | 'full'
+
+const OTA_EDITION_ORDER: Record<OtaEdition, number> = {
+  standard: 0,
+  volte: 1,
+  vowifi: 2,
+  full: 3,
+}
 
 interface EditionMeta {
   key: OtaEdition
@@ -781,15 +789,14 @@ interface OnlineUpdateCardProps {
   customProxy: string
   proxyPrefix: string
   onlineState: OnlineUpdateState
+  checkingAction: 'check' | 'switch' | null
   downloadProgress: number
-  latestRelease: OtaLatestReleaseResponse | null
   currentVersion?: string
-  manualShowReleaseCard: boolean
   onProxyEnabledChange: (enabled: boolean) => void
   onProxyPresetChange: (preset: ProxyPreset) => void
   onCustomProxyChange: (proxy: string) => void
   onCheck: () => void
-  onShowReleaseCard: () => void
+  onSwitchVersion: () => void
 }
 
 function OnlineUpdateCard({
@@ -800,15 +807,14 @@ function OnlineUpdateCard({
   customProxy,
   proxyPrefix,
   onlineState,
+  checkingAction,
   downloadProgress,
-  latestRelease,
   currentVersion,
-  manualShowReleaseCard,
   onProxyEnabledChange,
   onProxyPresetChange,
   onCustomProxyChange,
   onCheck,
-  onShowReleaseCard,
+  onSwitchVersion,
 }: OnlineUpdateCardProps) {
   const proxyLabelId = expanded ? 'proxy-preset-label' : 'proxy-preset-label-solo'
 
@@ -876,34 +882,49 @@ function OnlineUpdateCard({
           )}
         </Stack>
 
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'center' }}>
-          <Button
-            variant="contained"
-            startIcon={onlineState === 'checking' ? <CircularProgress size={20} color="inherit" /> : <Search />}
-            onClick={onCheck}
-            disabled={onlineState === 'checking' || onlineState === 'downloading'}
+        <Stack
+          direction={{ xs: 'column', sm: 'row' }}
+          spacing={2}
+          alignItems={{ xs: 'stretch', sm: 'center' }}
+          justifyContent="space-between"
+        >
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={2}
+            alignItems={{ xs: 'stretch', sm: 'center' }}
+            sx={{ minWidth: 0 }}
           >
-            {onlineState === 'checking' ? '检查中...' : '检查更新'}
-          </Button>
-          {proxyEnabled && proxyPrefix && (
-            <Typography variant="caption" color="text.secondary">
-              下载加速：{proxyPreset === 'custom' ? proxyPrefix : new URL(proxyPrefix).hostname}
-            </Typography>
+            <Button
+              variant="contained"
+              startIcon={onlineState === 'checking' && checkingAction === 'check' ? <CircularProgress size={20} color="inherit" /> : <Search />}
+              onClick={onCheck}
+              disabled={onlineState === 'checking' || onlineState === 'downloading'}
+              sx={{ flexShrink: 0 }}
+            >
+              {onlineState === 'checking' && checkingAction === 'check' ? '检查中...' : '检查更新'}
+            </Button>
+            {proxyEnabled && proxyPrefix && (
+              <Typography variant="caption" color="text.secondary" sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+                下载加速：{proxyPreset === 'custom' ? proxyPrefix : new URL(proxyPrefix).hostname}
+              </Typography>
+            )}
+          </Stack>
+
+          {!expanded && (
+            <Button
+              variant="outlined"
+              startIcon={onlineState === 'checking' && checkingAction === 'switch' ? <CircularProgress size={18} color="inherit" /> : <SwapHoriz />}
+              onClick={onSwitchVersion}
+              disabled={onlineState === 'checking' || onlineState === 'downloading'}
+              sx={{ flexShrink: 0 }}
+            >
+              {onlineState === 'checking' && checkingAction === 'switch' ? '获取中...' : '切换版本'}
+            </Button>
           )}
         </Stack>
 
         {!expanded && onlineState === 'latest' && (
-          <Alert
-            severity="success"
-            sx={{ mt: 2 }}
-            action={
-              !manualShowReleaseCard && latestRelease ? (
-                <Button color="inherit" size="small" onClick={onShowReleaseCard}>
-                  查看产物包
-                </Button>
-              ) : undefined
-            }
-          >
+          <Alert severity="success" sx={{ mt: 2 }}>
             当前版本 {currentVersion || 'N/A'} 已经是最新发布的稳定版，暂无更新。
           </Alert>
         )}
@@ -1011,6 +1032,7 @@ export default function OtaUpdate() {
   const [proxyPreset, setProxyPreset] = useState<ProxyPreset>('https://gh-proxy.com/')
   const [customProxy, setCustomProxy] = useState('')
   const [onlineState, setOnlineState] = useState<OnlineUpdateState>('idle')
+  const [checkingAction, setCheckingAction] = useState<'check' | 'switch' | null>(null)
   const [latestRelease, setLatestRelease] = useState<OtaLatestReleaseResponse | null>(null)
   const [usesLegacyAssetSelection, setUsesLegacyAssetSelection] = useState(false)
   const [selectedAssetName, setSelectedAssetName] = useState<string | null>(null)
@@ -1030,7 +1052,7 @@ export default function OtaUpdate() {
 
   const currentEdition = getStatusEdition(status)
 
-  // 解析并筛选出与当前设备硬件架构相匹配的所有产物包（标准版、VoLTE 版与 VoWiFi 版）
+  // 解析并筛选出与当前设备硬件架构相匹配的所有产物包，并按标准版、VoLTE 版、VoWiFi 版、完整版排序
   const compatibleAssets: ClassifiedAsset[] = useMemo(() => {
     if (!latestRelease) return []
 
@@ -1072,32 +1094,34 @@ export default function OtaUpdate() {
         && !lower.includes('amd64') && !lower.includes('x86_64')
     })
 
-    return filtered.map(asset => {
-      const lower = asset.name.toLowerCase()
-      let edition: OtaEdition = 'standard'
-      if (
-        lower.includes('full') ||
-        lower.includes('all') ||
-        lower.includes('volte-vowifi') ||
-        lower.includes('volte_vowifi') ||
-        (lower.includes('volte') && (lower.includes('vowifi') || lower.includes('wfc')))
-      ) {
-        edition = 'full'
-      } else if (lower.includes('volte')) {
-        edition = 'volte'
-      } else if (lower.includes('vowifi') || lower.includes('wfc') || lower.includes('wificalling')) {
-        edition = 'vowifi'
-      }
-      const meta = getEditionMeta(edition)
-      return {
-        asset,
-        edition,
-        editionLabel: meta.label,
-        isCurrentMatch: edition === currentEdition,
-        arch: inferArch(asset.name),
-        sizeStr: formatBytes(asset.size),
-      }
-    })
+    return filtered
+      .map(asset => {
+        const lower = asset.name.toLowerCase()
+        let edition: OtaEdition = 'standard'
+        if (
+          lower.includes('full') ||
+          lower.includes('all') ||
+          lower.includes('volte-vowifi') ||
+          lower.includes('volte_vowifi') ||
+          (lower.includes('volte') && (lower.includes('vowifi') || lower.includes('wfc')))
+        ) {
+          edition = 'full'
+        } else if (lower.includes('volte')) {
+          edition = 'volte'
+        } else if (lower.includes('vowifi') || lower.includes('wfc') || lower.includes('wificalling')) {
+          edition = 'vowifi'
+        }
+        const meta = getEditionMeta(edition)
+        return {
+          asset,
+          edition,
+          editionLabel: meta.label,
+          isCurrentMatch: edition === currentEdition,
+          arch: inferArch(asset.name),
+          sizeStr: formatBytes(asset.size),
+        }
+      })
+      .sort((a, b) => OTA_EDITION_ORDER[a.edition] - OTA_EDITION_ORDER[b.edition])
   }, [latestRelease, targetArchType, currentEdition])
 
   // 默认选择与当前版本相同的产物包（标准版默认选标准版，WFC 版默认选 WFC 版）
@@ -1153,7 +1177,8 @@ export default function OtaUpdate() {
     return trimmed.endsWith('/') ? trimmed : `${trimmed}/`
   }
 
-  const handleCheckOnlineUpdate = async () => {
+  const handleCheckOnlineUpdate = async (action: 'check' | 'switch' = 'check') => {
+    setCheckingAction(action)
     setOnlineState('checking')
     setError(null)
     setSuccess(null)
@@ -1195,10 +1220,23 @@ export default function OtaUpdate() {
       setLatestRelease(release)
       const currentVersion = status?.current_version || '0.0.0'
       setOnlineState(compareVersions(release.tag_name, currentVersion) > 0 ? 'available' : 'latest')
+      if (action === 'switch') {
+        setManualShowReleaseCard(true)
+      }
     } catch (err) {
       setOnlineState('idle')
       setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setCheckingAction(null)
     }
+  }
+
+  const handleSwitchVersion = () => {
+    if (latestRelease) {
+      setManualShowReleaseCard(true)
+      return
+    }
+    void handleCheckOnlineUpdate('switch')
   }
 
   const handlePrepareOnlineUpdate = async () => {
@@ -1570,15 +1608,14 @@ export default function OtaUpdate() {
                   customProxy={customProxy}
                   proxyPrefix={proxyPrefix}
                   onlineState={onlineState}
+                  checkingAction={checkingAction}
                   downloadProgress={downloadProgress}
-                  latestRelease={latestRelease}
                   currentVersion={status?.current_version}
-                  manualShowReleaseCard={manualShowReleaseCard}
                   onProxyEnabledChange={setProxyEnabled}
                   onProxyPresetChange={setProxyPreset}
                   onCustomProxyChange={setCustomProxy}
-                  onCheck={() => void handleCheckOnlineUpdate()}
-                  onShowReleaseCard={() => setManualShowReleaseCard(true)}
+                  onCheck={() => void handleCheckOnlineUpdate('check')}
+                  onSwitchVersion={handleSwitchVersion}
                 />
 
                 {supportsOtaUpload && (
@@ -1822,15 +1859,14 @@ export default function OtaUpdate() {
               customProxy={customProxy}
               proxyPrefix={proxyPrefix}
               onlineState={onlineState}
+              checkingAction={checkingAction}
               downloadProgress={downloadProgress}
-              latestRelease={latestRelease}
               currentVersion={status?.current_version}
-              manualShowReleaseCard={manualShowReleaseCard}
               onProxyEnabledChange={setProxyEnabled}
               onProxyPresetChange={setProxyPreset}
               onCustomProxyChange={setCustomProxy}
-              onCheck={() => void handleCheckOnlineUpdate()}
-              onShowReleaseCard={() => setManualShowReleaseCard(true)}
+              onCheck={() => void handleCheckOnlineUpdate('check')}
+              onSwitchVersion={handleSwitchVersion}
             />
 
             {supportsOtaUpload && (
