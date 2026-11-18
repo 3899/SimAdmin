@@ -30,6 +30,7 @@ mod tests {
                 "2461",
             ),
             ("您的 WhatsApp 验证码: 161-675", "161675"),
+            ("您正在进行登录验证，验证码为7VRU", "7VRU"),
         ];
 
         for (content, expected) in cases {

@@ -164,6 +164,33 @@ const SERVICE_HOTLINES = new Set([
   '95588', '95533', '95566', '95599', '95555', '95559', '95511',
 ])
 
+const NON_CODE_UPPER_WORDS = new Set([
+  'CODE', 'HTTP', 'HTTPS', 'WIFI', 'VOWIFI', 'VOLTE', 'USDT', 'CNY', 'RMB',
+  'FREE', 'TEST', 'NONE', 'NULL', 'TRUE', 'FALSE', 'BANK', 'PASS', 'USER', 'SMS',
+])
+
+const CHINESE_STRONG_KEYWORD_REGEX = /^(?:验证码|校验码|动态码|动态验证码|认证码|安全码|短信码|确认码|验证代码)$/
+const DIGIT_UNIT_REGEX = /^\d+(?:gb|mb|kb|tb|pb|g|m|k|t|bps|kbps|mbps|gbps|hz|khz|mhz|ghz|mah|kg|km|cm|mm|ms|px)$/i
+const WORD_WITH_DIGITS_REGEX = /^[A-Za-z][a-z]{2,}\d+$/
+const CONNECTOR_BETWEEN_REGEX = /^[\s:：是为的你您，,([【"'"“”-]*$/
+const ENGLISH_CONNECTOR_BETWEEN_REGEX = /^(?:\s+is\b[\s:(["'"“”-]*|[\s:(["'"“”-]*)$/i
+
+function isValidCodeCandidate(code: string, isChineseKeyword: boolean): boolean {
+  if (/^\d{4,8}$/.test(code)) {
+    return true
+  }
+  if (/^[A-Z]{4,8}$/.test(code)) {
+    return isChineseKeyword && !NON_CODE_UPPER_WORDS.has(code)
+  }
+  if (/^[A-Za-z0-9]{4,8}$/.test(code)) {
+    return /\d/.test(code)
+      && /[A-Za-z]/.test(code)
+      && !DIGIT_UNIT_REGEX.test(code)
+      && !WORD_WITH_DIGITS_REGEX.test(code)
+  }
+  return false
+}
+
 /**
  * 短信验证码提取（轻量客户端保底规则）
  * 优先建议直接使用后端通过 simadmin-sms-core 权威提取下发的 message.verification_code。
@@ -201,26 +228,45 @@ export function extractVerificationCode(rawText: string): string | null {
     return false
   }
 
-  // 4.1 强模式 A：关键词在前，数字紧随其后 (0~8字符内)
+  // 4.1 强模式 A：关键词在前，数字或字母数字混合验证码紧随其后
   const prefixRegex =
-    /(?:验证码|校验码|动态码|动态验证码|认证码|安全码|短信码|确认码|verification\s*code|verify\s*code|\bcode\b|\botp\b|\bpasscode\b|\bpin\b)[^\d\n\r]{0,8}?([0-9]{4,8}|[0-9]{3}-[0-9]{3}|G-[0-9]{6})(?!\d)/gi
+    /(验证码|校验码|动态码|动态验证码|认证码|安全码|短信码|确认码|验证代码|verification\s*code|verify\s*code|\bcode\b|\botp\b|\bpasscode\b|\bpin\b)(\s+is\b[\s:(["'"“”-]{0,4}|[^\dA-Za-z\n\r]{0,8}?)([0-9]{4,8}|[0-9]{3}-[0-9]{3}|G-[0-9]{6}|[A-Za-z0-9]{4,8})(?![A-Za-z0-9])/gi
 
   let match: RegExpExecArray | null
   while ((match = prefixRegex.exec(text)) !== null) {
-    const rawCode = match[1]
-    const cleanCode = rawCode.replace(/[-G]/g, '')
-    const startIndex = match.index + match[0].indexOf(rawCode)
+    const keyword = match[1]
+    const between = match[2]
+    const rawCode = match[3]
+    const cleanCode = rawCode.startsWith('G-') ? rawCode.slice(2) : rawCode.replace(/-/g, '')
+    const isChineseKeyword = CHINESE_STRONG_KEYWORD_REGEX.test(keyword)
+    const hasLetters = /[A-Za-z]/.test(cleanCode)
+    if (hasLetters) {
+      const connectorOk = isChineseKeyword
+        ? CONNECTOR_BETWEEN_REGEX.test(between)
+        : ENGLISH_CONNECTOR_BETWEEN_REGEX.test(between)
+      if (!connectorOk || !isValidCodeCandidate(cleanCode, isChineseKeyword)) {
+        continue
+      }
+    }
+    const startIndex = match.index + match[0].lastIndexOf(rawCode)
     if (!isFalsePositive(cleanCode, startIndex)) {
       return cleanCode
     }
   }
 
-  // 4.2 强模式 B：数字在前，关键词在后紧密说明 (0~10字符内)
+  // 4.2 强模式 B：验证码在前，中文关键词在后紧密说明 (0~12字符内)
   const suffixRegex =
-    /(?<!\d)([0-9]{4,8})[^\d\n\r]{0,10}?(?:为|是)?(?:您的|你的|本次|申请的)?(?:登录|注册|绑定|换绑|安全|身份)?(?:验证码|校验码|动态码|认证码|安全码|动态密码)/gi
+    /(?<![A-Za-z0-9])([A-Za-z0-9]{4,8})(?![A-Za-z0-9])([^\d\n\r]{0,12}?)(?:为|是)?(?:您的|你的|本次|申请的)?(?:登录|注册|绑定|换绑|安全|身份)?(?:验证码|校验码|动态码|动态验证码|认证码|安全码|动态密码)/gi
 
   while ((match = suffixRegex.exec(text)) !== null) {
     const code = match[1]
+    const between = match[2]
+    if (/[A-Za-z]/.test(code) && /[A-Za-z]/.test(between)) {
+      continue
+    }
+    if (!isValidCodeCandidate(code, true)) {
+      continue
+    }
     if (!isFalsePositive(code, match.index)) {
       return code
     }
@@ -228,10 +274,16 @@ export function extractVerificationCode(rawText: string): string | null {
 
   // 4.3 强模式 C：英文固定格式
   const englishRegex =
-    /(?<!\d)([0-9]{4,8})\s+(?:is\s+your\s+(?:verification\s+)?code|is\s+the\s+code)/i
+    /(?<![A-Za-z0-9])([0-9]{4,8}|[A-Za-z0-9]{4,8})\s+(?:is\s+your\s+(?:verification\s+)?code|is\s+the\s+code)/i
   const matchEng = englishRegex.exec(text)
-  if (matchEng?.[1] && !isFalsePositive(matchEng[1], matchEng.index)) {
-    return matchEng[1]
+  if (matchEng?.[1]) {
+    const code = matchEng[1]
+    if (
+      (/^\d{4,8}$/.test(code) || (/\d/.test(code) && /[A-Za-z]/.test(code) && !DIGIT_UNIT_REGEX.test(code) && !WORD_WITH_DIGITS_REGEX.test(code)))
+      && !isFalsePositive(code, matchEng.index)
+    ) {
+      return code
+    }
   }
 
   return null

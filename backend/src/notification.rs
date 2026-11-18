@@ -14,6 +14,8 @@ use crate::models::{DdnsEvent, VersionUpdateEvent};
 use crate::modem_manager::get_sim_info_data_with_cache;
 use crate::system_event::SystemEvent;
 use crate::verification_code::extract_verification_code;
+use simadmin_sms_core::clean_empty_verification_code_template;
+use simadmin_sms_core::template::clean_inline_verification_code_placeholder;
 use chrono::{
     DateTime, Datelike, Duration as ChronoDuration, FixedOffset, NaiveDateTime, Timelike, Utc,
 };
@@ -2780,191 +2782,27 @@ fn render_device_status_template(
     replace_common_variables(rendered, context, escape_json)
 }
 
-fn contains_verification_code_placeholder(s: &str) -> bool {
-    s.contains("{{验证码}}") || s.contains("{{verification_code}}")
-}
-
-fn is_standalone_verification_code_line(line: &str) -> bool {
-    let rem = line
-        .replace("{{验证码}}", "")
-        .replace("{{verification_code}}", "");
-    let trimmed = rem.trim();
-
-    if trimmed.is_empty() {
-        return true;
-    }
-
-    let lower = trimmed.to_lowercase();
-    let keywords = [
-        "验证码",
-        "动态验证码",
-        "verification code",
-        "verification_code",
-        "code",
-        "otp",
-        "captcha",
-        "passcode",
-    ];
-
-    let mut stripped = lower;
-    for kw in keywords {
-        stripped = stripped.replace(kw, "");
-    }
-
-    stripped.chars().all(|c| {
-        c.is_whitespace()
-            || matches!(
-                c,
-                ':' | '：'
-                    | '-'
-                    | '—'
-                    | '|'
-                    | ','
-                    | '，'
-                    | ';'
-                    | '；'
-                    | '['
-                    | ']'
-                    | '【'
-                    | '】'
-                    | '('
-                    | ')'
-                    | '（'
-                    | '）'
-                    | '"'
-                    | '\''
-                    | '📱'
-                    | '💬'
-                    | '🔑'
-                    | '🔒'
-            )
-    })
-}
-
-fn clean_inline_verification_code_placeholder(text: &str) -> String {
-    let mut result = text.to_string();
-
-    let bracketed_patterns = [
-        "（验证码: {{验证码}}）",
-        "（验证码：{{验证码}}）",
-        "（验证码{{验证码}}）",
-        "(验证码: {{验证码}})",
-        "(验证码：{{验证码}})",
-        "(验证码{{验证码}})",
-        "【验证码: {{验证码}}】",
-        "【验证码：{{验证码}}】",
-        "[验证码: {{验证码}}]",
-        "[验证码：{{验证码}}]",
-        "(Code: {{verification_code}})",
-        "(Verification Code: {{verification_code}})",
-        "（verification_code: {{verification_code}}）",
-    ];
-    for p in bracketed_patterns {
-        result = result.replace(p, "");
-    }
-
-    let prefix_patterns = [
-        "：验证码: {{验证码}}",
-        "：验证码：{{验证码}}",
-        "：验证码{{验证码}}",
-        ": 验证码: {{验证码}}",
-        ": 验证码：{{验证码}}",
-        ": 验证码{{验证码}}",
-        " - 验证码: {{验证码}}",
-        " - 验证码：{{验证码}}",
-        " - 验证码{{验证码}}",
-        " | 验证码: {{验证码}}",
-        " | 验证码：{{验证码}}",
-        " | 验证码{{验证码}}",
-        "，验证码: {{验证码}}",
-        "，验证码：{{验证码}}",
-        "，验证码{{验证码}}",
-        ", 验证码: {{验证码}}",
-        ", 验证码：{{验证码}}",
-        ", 验证码{{验证码}}",
-        "；验证码: {{验证码}}",
-        "；验证码：{{验证码}}",
-        "；验证码{{验证码}}",
-        "; 验证码: {{验证码}}",
-        "; 验证码：{{验证码}}",
-        "; 验证码{{验证码}}",
-        "：Code: {{verification_code}}",
-        ": Code: {{verification_code}}",
-        " - Code: {{verification_code}}",
-        " | Code: {{verification_code}}",
-        ", Code: {{verification_code}}",
-        "：{{verification_code}}",
-        ": {{verification_code}}",
-        " - {{verification_code}}",
-        " | {{verification_code}}",
-        "：{{验证码}}",
-        ": {{验证码}}",
-        " - {{验证码}}",
-        " | {{验证码}}",
-    ];
-    for p in prefix_patterns {
-        result = result.replace(p, "");
-    }
-
-    let suffix_patterns = [
-        "验证码: {{验证码}}，",
-        "验证码：{{验证码}}，",
-        "验证码: {{验证码}}, ",
-        "验证码：{{验证码}}, ",
-        "验证码: {{验证码}}；",
-        "验证码：{{验证码}}；",
-        "验证码: {{验证码}}; ",
-        "验证码：{{验证码}}; ",
-        "验证码: {{验证码}} - ",
-        "验证码：{{验证码}} - ",
-        "验证码: {{验证码}} | ",
-        "验证码：{{验证码}} | ",
-        "验证码: {{验证码}}",
-        "验证码：{{验证码}}",
-        "验证码 {{验证码}}",
-        "验证码{{验证码}}",
-        "动态验证码: {{验证码}}",
-        "动态验证码：{{验证码}}",
-        "动态验证码{{验证码}}",
-        "Verification Code: {{verification_code}}, ",
-        "Verification Code: {{verification_code}}",
-        "Code: {{verification_code}}, ",
-        "Code: {{verification_code}}",
-        "Code {{verification_code}}",
-        "code: {{verification_code}}",
-    ];
-    for p in suffix_patterns {
-        result = result.replace(p, "");
-    }
-
-    result
-        .replace("{{验证码}}", "")
-        .replace("{{verification_code}}", "")
-}
-
-fn clean_empty_verification_code_template(template: &str) -> String {
-    if !contains_verification_code_placeholder(template) {
-        return template.to_string();
-    }
-
-    let original_lines: Vec<&str> = template.split('\n').collect();
-    let mut lines = Vec::new();
-
-    for line in original_lines {
-        let trimmed_line = line.trim_end_matches('\r');
-        if contains_verification_code_placeholder(trimmed_line) {
-            if is_standalone_verification_code_line(trimmed_line) {
-                continue;
-            } else {
-                lines.push(clean_inline_verification_code_placeholder(trimmed_line));
-            }
-        } else {
-            lines.push(trimmed_line.to_string());
+fn render_sms_json_value(
+    value: &mut Value,
+    message: &SmsMessage,
+    context: &NotificationTemplateContext,
+) {
+    match value {
+        Value::String(text) => {
+            *text = render_sms_template(text, message, context, false);
         }
+        Value::Array(items) => {
+            for item in items {
+                render_sms_json_value(item, message, context);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values_mut() {
+                render_sms_json_value(item, message, context);
+            }
+        }
+        _ => {}
     }
-
-    let joined = lines.join("\n");
-    clean_inline_verification_code_placeholder(&joined)
 }
 
 fn render_sms_template(
@@ -2973,6 +2811,15 @@ fn render_sms_template(
     context: &NotificationTemplateContext,
     escape_json: bool,
 ) -> String {
+    if escape_json {
+        if let Ok(mut json_value) = serde_json::from_str::<Value>(template) {
+            render_sms_json_value(&mut json_value, message, context);
+            if let Ok(serialized) = serde_json::to_string(&json_value) {
+                return serialized;
+            }
+        }
+    }
+
     let content = if escape_json {
         escape_json_string(&message.content)
     } else {
@@ -2992,7 +2839,12 @@ fn render_sms_template(
     let verification_code = extract_verification_code(&message.content).unwrap_or_default();
 
     let template_to_use = if verification_code.is_empty() {
-        clean_empty_verification_code_template(template)
+        if escape_json {
+            // 原始 JSON 回退路径不做整行删除，避免破坏 JSON 键值结构
+            clean_inline_verification_code_placeholder(template)
+        } else {
+            clean_empty_verification_code_template(template)
+        }
     } else {
         template.to_string()
     };
@@ -3571,5 +3423,69 @@ mod tests {
         let ddns = DdnsEvent::default();
         let ddns_event = NotificationEvent::Ddns(&ddns, &context);
         assert_eq!(ddns_event.render_title(""), "DDNS通知：18888888888");
+    }
+
+    #[test]
+    fn renders_alphanumeric_code_and_cleans_custom_json_body() {
+        let context = NotificationTemplateContext {
+            own_number: "18888888888".to_string(),
+            carrier: "中国移动".to_string(),
+        };
+        let sms_alnum = SmsMessage {
+            id: 2,
+            direction: "incoming".to_string(),
+            phone_number: "10690000".to_string(),
+            content: "您正在进行登录验证，验证码为7VRU".to_string(),
+            timestamp: "2026-11-15T07:48:50Z".to_string(),
+            status: "received".to_string(),
+            pdu: None,
+            verification_code: None,
+        };
+        let event_alnum = NotificationEvent::Sms {
+            message: &sms_alnum,
+            context: &context,
+        };
+        assert_eq!(
+            event_alnum.render_title("🔐 验证码: {{验证码}}"),
+            "🔐 验证码: 7VRU"
+        );
+        assert_eq!(
+            render_sms_template(
+                "⭐ 您的验证码是：【{{验证码}}】\n\n📝 {{短信内容}}\n\n",
+                &sms_alnum,
+                &context,
+                false,
+            ),
+            "⭐ 您的验证码是：【7VRU】\n\n📝 您正在进行登录验证，验证码为7VRU\n\n"
+        );
+
+        let sms_no_code = SmsMessage {
+            content: "本月话费账单已出，总额 50.00 元".to_string(),
+            ..sms_alnum
+        };
+        let event_no_code = NotificationEvent::Sms {
+            message: &sms_no_code,
+            context: &context,
+        };
+        assert_eq!(
+            event_no_code.render_title("🔐 验证码: {{验证码}}"),
+            "SimAdmin 短信通知"
+        );
+        assert_eq!(
+            render_sms_template(
+                "⭐ 您的验证码是：【{{验证码}}】\n\n📝 {{短信内容}}\n\n",
+                &sms_no_code,
+                &context,
+                false,
+            ),
+            "📝 本月话费账单已出，总额 50.00 元\n\n"
+        );
+
+        let json_tpl = r#"{"title":"🔐 验证码: {{验证码}}","body":"⭐ 您的验证码是：【{{验证码}}】\n\n📝 {{短信内容}}\n\n","code":"{{验证码}}"}"#;
+        let rendered_json = render_sms_template(json_tpl, &sms_no_code, &context, true);
+        let parsed: Value = serde_json::from_str(&rendered_json).expect("valid rendered json");
+        assert_eq!(parsed["title"], "");
+        assert_eq!(parsed["body"], "📝 本月话费账单已出，总额 50.00 元\n\n");
+        assert_eq!(parsed["code"], "");
     }
 }

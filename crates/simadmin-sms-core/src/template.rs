@@ -8,57 +8,48 @@ pub fn is_standalone_verification_code_line(line: &str) -> bool {
     let rem = line
         .replace("{{验证码}}", "")
         .replace("{{verification_code}}", "");
-    let trimmed = rem.trim();
+    // 若同一行还有其他模板占位符，则不能整行删除
+    if rem.contains("{{") && rem.contains("}}") {
+        return false;
+    }
 
+    let trimmed = rem.trim();
     if trimmed.is_empty() {
         return true;
     }
 
     let lower = trimmed.to_lowercase();
     let keywords = [
-        "验证码",
         "动态验证码",
+        "验证码",
+        "校验码",
+        "动态码",
+        "确认码",
         "verification code",
         "verification_code",
+        "passcode",
+        "captcha",
         "code",
         "otp",
-        "captcha",
-        "passcode",
     ];
 
     let mut stripped = lower;
+    let mut had_keyword = false;
     for kw in keywords {
-        stripped = stripped.replace(kw, "");
+        if stripped.contains(kw) {
+            had_keyword = true;
+            stripped = stripped.replace(kw, "");
+        }
     }
 
-    stripped.chars().all(|c| {
-        c.is_whitespace()
-            || matches!(
-                c,
-                ':' | '：'
-                    | '-'
-                    | '—'
-                    | '|'
-                    | ','
-                    | '，'
-                    | ';'
-                    | '；'
-                    | '['
-                    | ']'
-                    | '【'
-                    | '】'
-                    | '('
-                    | ')'
-                    | '（'
-                    | '）'
-                    | '"'
-                    | '\''
-                    | '📱'
-                    | '💬'
-                    | '🔑'
-                    | '🔒'
-            )
-    })
+    if had_keyword {
+        for wrapper in ["您的", "你的", "本次", "是", "为"] {
+            stripped = stripped.replace(wrapper, "");
+        }
+    }
+
+    // 其余仅允许空白、标点、括号及 Emoji/装饰符号（非字母/数字/汉字）
+    stripped.chars().all(|c| !c.is_alphanumeric())
 }
 
 pub fn clean_inline_verification_code_placeholder(text: &str) -> String {
@@ -75,9 +66,20 @@ pub fn clean_inline_verification_code_placeholder(text: &str) -> String {
         "【验证码：{{验证码}}】",
         "[验证码: {{验证码}}]",
         "[验证码：{{验证码}}]",
+        "，您的验证码是：【{{验证码}}】",
+        ", 您的验证码是：【{{验证码}}】",
+        "您的验证码是：【{{验证码}}】",
+        "【{{验证码}}】",
+        "（{{验证码}}）",
+        "({{验证码}})",
+        "[{{验证码}}]",
         "(Code: {{verification_code}})",
         "(Verification Code: {{verification_code}})",
         "（verification_code: {{verification_code}}）",
+        "【{{verification_code}}】",
+        "（{{verification_code}}）",
+        "({{verification_code}})",
+        "[{{verification_code}}]",
     ];
     for p in bracketed_patterns {
         result = result.replace(p, "");
@@ -98,15 +100,16 @@ pub fn clean_inline_verification_code_placeholder(text: &str) -> String {
         " | 验证码{{验证码}}",
         "，验证码: {{验证码}}",
         "，验证码：{{验证码}}",
+        "，验证码{{验证码}}",
         ", 验证码: {{验证码}}",
         ", 验证码：{{验证码}}",
+        ", 验证码{{验证码}}",
         "；验证码: {{验证码}}",
         "；验证码：{{验证码}}",
+        "；验证码{{验证码}}",
         "; 验证码: {{验证码}}",
         "; 验证码：{{验证码}}",
-        "验证码: {{验证码}}",
-        "验证码：{{验证码}}",
-        "验证码{{验证码}}",
+        "; 验证码{{验证码}}",
         "：Code: {{verification_code}}",
         ": Code: {{verification_code}}",
         " - Code: {{verification_code}}",
@@ -120,16 +123,44 @@ pub fn clean_inline_verification_code_placeholder(text: &str) -> String {
         ", {{verification_code}}",
         "；{{verification_code}}",
         "; {{verification_code}}",
+        "：{{验证码}}",
+        ": {{验证码}}",
+        " - {{验证码}}",
+        " | {{验证码}}",
+        "，{{验证码}}",
+        ", {{验证码}}",
+        "；{{验证码}}",
+        "; {{验证码}}",
     ];
     for p in prefix_patterns {
         result = result.replace(p, "");
     }
 
-    let english_patterns = [
-        "(Verification Code: {{verification_code}})",
-        "[Verification Code: {{verification_code}}]",
-        "(Code: {{verification_code}})",
-        "[Code: {{verification_code}}]",
+    let suffix_patterns = [
+        "您的验证码是：",
+        "您的验证码是:",
+        "您的验证码是",
+        "验证码: {{验证码}}，",
+        "验证码：{{验证码}}，",
+        "验证码: {{验证码}}, ",
+        "验证码：{{验证码}}, ",
+        "验证码: {{验证码}}；",
+        "验证码：{{验证码}}；",
+        "验证码: {{验证码}}; ",
+        "验证码：{{验证码}}; ",
+        "验证码: {{验证码}} - ",
+        "验证码：{{验证码}} - ",
+        "验证码: {{验证码}} | ",
+        "验证码：{{验证码}} | ",
+        "验证码: {{验证码}}",
+        "验证码：{{验证码}}",
+        "验证码 {{验证码}}",
+        "验证码为{{验证码}}",
+        "验证码是{{验证码}}",
+        "验证码{{验证码}}",
+        "动态验证码: {{验证码}}",
+        "动态验证码：{{验证码}}",
+        "动态验证码{{验证码}}",
         "Verification Code: {{verification_code}}, ",
         "Verification Code: {{verification_code}}",
         "Code: {{verification_code}}, ",
@@ -137,7 +168,7 @@ pub fn clean_inline_verification_code_placeholder(text: &str) -> String {
         "Code {{verification_code}}",
         "code: {{verification_code}}",
     ];
-    for p in english_patterns {
+    for p in suffix_patterns {
         result = result.replace(p, "");
     }
 
@@ -151,24 +182,28 @@ pub fn clean_empty_verification_code_template(template: &str) -> String {
         return template.to_string();
     }
 
-    if template.contains('\n') {
-        let mut lines = Vec::new();
-        for line in template.lines() {
-            let trimmed_line = line.trim();
-            if contains_verification_code_placeholder(trimmed_line) {
-                if is_standalone_verification_code_line(trimmed_line) {
-                    continue;
-                }
-                lines.push(clean_inline_verification_code_placeholder(trimmed_line));
-            } else {
-                lines.push(line.to_string());
+    let mut lines = Vec::new();
+    let mut skip_next_blank = false;
+
+    for raw_line in template.split('\n') {
+        let line = raw_line.trim_end_matches('\r');
+        if contains_verification_code_placeholder(line) {
+            if is_standalone_verification_code_line(line) {
+                skip_next_blank = true;
+                continue;
             }
+            skip_next_blank = false;
+            lines.push(clean_inline_verification_code_placeholder(line));
+        } else {
+            if skip_next_blank && line.trim().is_empty() {
+                continue;
+            }
+            skip_next_blank = false;
+            lines.push(line.to_string());
         }
-        return lines.join("\n");
     }
 
-    let joined = template.to_string();
-    clean_inline_verification_code_placeholder(&joined)
+    lines.join("\n")
 }
 
 pub fn render_sms_template(template: &str, variables: &HashMap<&str, &str>) -> String {
@@ -189,5 +224,31 @@ mod tests {
         let cleaned = clean_empty_verification_code_template(tpl);
         assert!(!cleaned.contains("验证码"));
         assert_eq!(cleaned, "【短信通知】\n发件人：{{sender}}\n时间：{{time}}");
+    }
+
+    #[test]
+    fn test_clean_custom_emoji_and_bracket_templates() {
+        assert_eq!(
+            clean_empty_verification_code_template("🔐 验证码: {{验证码}}"),
+            ""
+        );
+        assert_eq!(
+            clean_empty_verification_code_template(
+                "⭐ 您的验证码是：【{{验证码}}】\n\n📝 {{短信内容}}\n\n"
+            ),
+            "📝 {{短信内容}}\n\n"
+        );
+        assert_eq!(
+            clean_empty_verification_code_template(
+                "号码: {{发送方号码}}, 验证码: {{验证码}}, 内容: {{短信内容}}"
+            ),
+            "号码: {{发送方号码}}, 内容: {{短信内容}}"
+        );
+        assert_eq!(
+            clean_empty_verification_code_template(
+                "号码: {{发送方号码}}，您的验证码是：【{{验证码}}】，内容: {{短信内容}}"
+            ),
+            "号码: {{发送方号码}}，内容: {{短信内容}}"
+        );
     }
 }

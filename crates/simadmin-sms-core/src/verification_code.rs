@@ -13,8 +13,16 @@ const STRONG_KEYWORDS: &[&str] = &[
     "短信码",
     "登录码",
     "安全码",
+    "确认码",
     "验证代码",
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CandidateKind {
+    Numeric,
+    AlphaNumeric,
+    UpperAlpha,
+}
 
 const ACTION_KEYWORDS: &[&str] = &[
     "登录", "注册", "绑定", "换绑", "重置", "密码", "支付", "验证", "申请",
@@ -65,18 +73,18 @@ pub fn extract_verification_code(content: &str) -> Option<String> {
     let mut index = 0usize;
 
     while index < chars.len() {
-        if !chars[index].is_ascii_digit() {
+        if !chars[index].is_ascii_alphanumeric() {
             index += 1;
             continue;
         }
 
         let start = index;
-        let Some((code, end)) = parse_candidate_at(&chars, start) else {
-            index = read_digit_run(&chars, start);
+        let Some((code, end, kind)) = parse_candidate_at(&chars, start) else {
+            index = read_alnum_run(&chars, start).max(start + 1);
             continue;
         };
 
-        let score = score_candidate(&chars, start, end, &code);
+        let score = score_candidate(&chars, start, end, &code, kind);
         if score < SCORE_THRESHOLD {
             index = end;
             continue;
@@ -96,14 +104,17 @@ pub fn extract_verification_code(content: &str) -> Option<String> {
     best.map(|candidate| candidate.code)
 }
 
-fn parse_candidate_at(chars: &[char], start: usize) -> Option<(String, usize)> {
-    let first_end = read_digit_run(chars, start);
+fn parse_candidate_at(chars: &[char], start: usize) -> Option<(String, usize, CandidateKind)> {
+    let first_end = read_alnum_run(chars, start);
     let first_len = first_end - start;
     if (MIN_CODE_LEN..=MAX_CODE_LEN).contains(&first_len) {
-        return Some((chars[start..first_end].iter().collect(), first_end));
+        let token = chars[start..first_end].iter().collect::<String>();
+        return classify_candidate(&token).map(|kind| (token, first_end, kind));
     }
 
-    if first_len < 2
+    let first_is_digits = chars[start..first_end].iter().all(|ch| ch.is_ascii_digit());
+    if !first_is_digits
+        || first_len < 2
         || first_end >= chars.len()
         || !is_code_digit_separator(chars[first_end])
         || first_end + 1 >= chars.len()
@@ -114,6 +125,9 @@ fn parse_candidate_at(chars: &[char], start: usize) -> Option<(String, usize)> {
 
     let second_start = first_end + 1;
     let second_end = read_digit_run(chars, second_start);
+    if second_end < chars.len() && chars[second_end].is_ascii_alphanumeric() {
+        return None;
+    }
     let second_len = second_end - second_start;
     let total_len = first_len + second_len;
     if second_len < 2 || !(MIN_CODE_LEN..=MAX_CODE_LEN).contains(&total_len) {
@@ -122,7 +136,7 @@ fn parse_candidate_at(chars: &[char], start: usize) -> Option<(String, usize)> {
 
     let mut code = chars[start..first_end].iter().collect::<String>();
     code.extend(chars[second_start..second_end].iter().copied());
-    Some((code, second_end))
+    Some((code, second_end, CandidateKind::Numeric))
 }
 
 fn read_digit_run(chars: &[char], start: usize) -> usize {
@@ -131,6 +145,83 @@ fn read_digit_run(chars: &[char], start: usize) -> usize {
         end += 1;
     }
     end
+}
+
+fn read_alnum_run(chars: &[char], start: usize) -> usize {
+    let mut end = start;
+    while end < chars.len() && chars[end].is_ascii_alphanumeric() {
+        end += 1;
+    }
+    end
+}
+
+fn classify_candidate(token: &str) -> Option<CandidateKind> {
+    let has_digit = token.bytes().any(|b| b.is_ascii_digit());
+    let has_alpha = token.bytes().any(|b| b.is_ascii_alphabetic());
+
+    if has_digit && !has_alpha {
+        return Some(CandidateKind::Numeric);
+    }
+    if has_digit && has_alpha {
+        if is_digit_unit_token(token) || looks_like_word_with_digits(token) {
+            return None;
+        }
+        return Some(CandidateKind::AlphaNumeric);
+    }
+    if !has_digit && token.bytes().all(|b| b.is_ascii_uppercase()) {
+        if NON_CODE_UPPER_WORDS.contains(&token) {
+            return None;
+        }
+        return Some(CandidateKind::UpperAlpha);
+    }
+    None
+}
+
+fn is_digit_unit_token(token: &str) -> bool {
+    let digit_len = token.bytes().take_while(|b| b.is_ascii_digit()).count();
+    if digit_len == 0 || digit_len == token.len() {
+        return false;
+    }
+    let suffix = token[digit_len..].to_ascii_lowercase();
+    matches!(
+        suffix.as_str(),
+        "gb" | "mb"
+            | "kb"
+            | "tb"
+            | "pb"
+            | "g"
+            | "m"
+            | "k"
+            | "t"
+            | "bps"
+            | "kbps"
+            | "mbps"
+            | "gbps"
+            | "hz"
+            | "khz"
+            | "mhz"
+            | "ghz"
+            | "mah"
+            | "kg"
+            | "km"
+            | "cm"
+            | "mm"
+            | "ms"
+            | "px"
+    )
+}
+
+fn looks_like_word_with_digits(token: &str) -> bool {
+    let bytes = token.as_bytes();
+    if bytes.len() < 4 || !bytes[0].is_ascii_alphabetic() {
+        return false;
+    }
+    let lower_run = bytes[1..]
+        .iter()
+        .take_while(|b| b.is_ascii_lowercase())
+        .count();
+    let rest = &bytes[1 + lower_run..];
+    lower_run >= 2 && !rest.is_empty() && rest.iter().all(|b| b.is_ascii_digit())
 }
 
 fn normalize_digits(content: &str) -> String {
@@ -143,16 +234,13 @@ fn normalize_digits(content: &str) -> String {
         .collect()
 }
 
-fn score_candidate(chars: &[char], start: usize, end: usize, code: &str) -> i32 {
-    let mut score = match code.chars().count() {
-        6 => 60,
-        4 => 42,
-        5 => 24,
-        7 => 22,
-        8 => 20,
-        _ => 0,
-    };
-
+fn score_candidate(
+    chars: &[char],
+    start: usize,
+    end: usize,
+    code: &str,
+    kind: CandidateKind,
+) -> i32 {
     let near = slice(
         chars,
         start.saturating_sub(CONTEXT_WINDOW),
@@ -168,6 +256,31 @@ fn score_candidate(chars: &[char], start: usize, end: usize, code: &str) -> i32 
 
     let strong_near = contains_strong_keyword(&near);
     let strong_immediate = contains_strong_keyword(&immediate);
+
+    // 非纯数字候选必须处于强关键词紧邻上下文中，防止普通英文单词或 URL 哈希被误提取
+    match kind {
+        CandidateKind::Numeric => {}
+        CandidateKind::AlphaNumeric => {
+            if !strong_immediate {
+                return 0;
+            }
+        }
+        CandidateKind::UpperAlpha => {
+            if !cjk_strong_keyword_touches(&before, &after) {
+                return 0;
+            }
+        }
+    }
+
+    let mut score = match code.chars().count() {
+        6 => 60,
+        4 => 42,
+        5 => 24,
+        7 => 22,
+        8 => 20,
+        _ => 0,
+    };
+
     if strong_near {
         score += 35;
     }
@@ -199,6 +312,11 @@ fn score_candidate(chars: &[char], start: usize, end: usize, code: &str) -> i32 
     score
 }
 
+const NON_CODE_UPPER_WORDS: &[&str] = &[
+    "CODE", "HTTP", "HTTPS", "WIFI", "VOWIFI", "VOLTE", "USDT", "CNY", "RMB", "FREE", "TEST",
+    "NONE", "NULL", "TRUE", "FALSE", "BANK", "PASS", "USER", "SMS",
+];
+
 const NEGATIVE_SUFFIXES: &[&str] = &[
     "年", "月", "日", "号", "时", "分", "秒", "点", "元", "角", "分", "块", "次", "折", "%",
     "gb", "mb", "kb", "tb", "g", "m", "k", "t", "bps",
@@ -225,6 +343,9 @@ fn is_in_url_or_domain(before: &str, after: &str) -> bool {
         || after.starts_with('.')
         || before.ends_with('/')
         || after.starts_with('/')
+        || before.ends_with('=')
+        || before.ends_with('?')
+        || before.ends_with('&')
 }
 
 fn candidate_rank(candidate: &Candidate) -> (i32, i32, std::cmp::Reverse<usize>) {
@@ -264,12 +385,16 @@ fn contains_strong_keyword(value: &str) -> bool {
         || contains_ascii_word(value, "passcode")
 }
 
-fn keyword_touches_candidate(before: &str, after: &str) -> bool {
+fn cjk_strong_keyword_touches(before: &str, after: &str) -> bool {
     let before = before.trim_end_matches(is_connector);
     let after = after.trim_start_matches(is_connector);
     STRONG_KEYWORDS
         .iter()
         .any(|keyword| before.ends_with(keyword) || after.starts_with(keyword))
+}
+
+fn keyword_touches_candidate(before: &str, after: &str) -> bool {
+    cjk_strong_keyword_touches(before, after)
         || contains_ascii_word(before, "code")
         || contains_ascii_word(after, "code")
 }
@@ -292,6 +417,8 @@ fn is_connector(ch: char) -> bool {
         ':' | '：'
             | ' '
             | '\t'
+            | '\n'
+            | '\r'
             | '-'
             | '_'
             | '是'
@@ -305,6 +432,15 @@ fn is_connector(ch: char) -> bool {
             | ')'
             | '（'
             | '）'
+            | '['
+            | ']'
+            | '【'
+            | '】'
+            | '"'
+            | '\''
+            | '“'
+            | '”'
+            | '`'
     )
 }
 
@@ -397,5 +533,50 @@ mod tests {
             extract_verification_code("订单号123456，验证码654321").as_deref(),
             Some("654321")
         );
+    }
+
+    #[test]
+    fn extracts_alphanumeric_and_uppercase_codes() {
+        let cases = [
+            ("您正在进行登录验证，验证码为7VRU", "7VRU"),
+            ("您的验证码是：【7VRU】", "7VRU"),
+            ("【某平台】验证码：A1B2C3，5分钟内有效", "A1B2C3"),
+            ("7VRU为您的登录验证码", "7VRU"),
+            ("7VRU(登录验证码)", "7VRU"),
+            ("Your verification code is A1B2", "A1B2"),
+            ("OTP: 9K2M3P", "9K2M3P"),
+            ("【某平台】验证码为ABCD，请勿泄露", "ABCD"),
+            ("ABCD为您的动态验证码", "ABCD"),
+            ("【某服务】确认码：8X9Y", "8X9Y"),
+        ];
+
+        for (content, expected) in cases {
+            assert_eq!(
+                extract_verification_code(content).as_deref(),
+                Some(expected),
+                "failed for: {content}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_extract_false_positive_alphanumeric_tokens() {
+        let cases = [
+            "Your code is valid for 5 minutes",
+            "Don't forward the code to anyone",
+            "Please check https://example.com?code=5sstHA for details",
+            "您的套餐包含200GB流量与100MB免费额度",
+            "Use code in App123 to login",
+            "您的验证码已发送，请注意查收 WIFI 通知",
+            "订单Order123已生成，请核对",
+        ];
+
+        for content in cases {
+            assert_eq!(
+                extract_verification_code(content),
+                None,
+                "unexpected match for: {content}"
+            );
+        }
     }
 }
