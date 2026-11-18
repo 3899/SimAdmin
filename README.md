@@ -63,8 +63,9 @@ SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的
 <table>
   <thead>
     <tr>
-      <th width="48%">QQ 群</th>
-      <th width="48%">TG 群组</th>
+      <th width="33%">QQ 群</th>
+      <th width="33%">微信群</th>
+      <th width="33%">TG 群组</th>
     </tr>
   </thead>
   <tbody>
@@ -74,6 +75,11 @@ SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的
           <source media="(prefers-color-scheme: dark)" srcset="./static/Community/QQGroup_Dark.png" />
           <source media="(prefers-color-scheme: light)" srcset="./static/Community/QQGroup_Light.png" />
           <img src="./static/Community/QQGroup_Light.png" />
+        </picture>
+      </td>
+      <td>
+        <picture>
+          <img src="./static/Community/WeChat.png" />
         </picture>
       </td>
       <td>

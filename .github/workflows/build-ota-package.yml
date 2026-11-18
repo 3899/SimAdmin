@@ -429,7 +429,7 @@ jobs:
               print("❌ 获取 Release 说明失败:", res.stderr)
               sys.exit(1)
 
-          body = res.stdout
+          body = res.stdout.replace('\r\n', '\n').replace('\r', '\n')
 
           # 3. 确定 prev_tag
           prev_tag = ''
@@ -457,41 +457,126 @@ jobs:
                   f"- **Commit**: {commit_sha}\n"
                   f"- **构建时间**: {build_time}\n"
                   f"- **发布类型**: {release_type}\n"
-                  f"- **资产包**: \n"
-                  f"\t- **aarch64 (ARM64)**: \n"
-                  f"\t- **armv7 (ARM32)**: \n"
-                  f"\t- **x86_64 (AMD64)**: \n\n"
+                  f"- **资产包**: \n\n"
                   f"### 更新说明\n\n"
                   f"**Full Changelog**: https://github.com/{repo}/compare/{prev_tag}...{tag}\n"
               )
 
-          # 5. 更新资产包行 (横向平铺追加)
-          arch_patterns = {
-              'aarch64': r'(?m)^([ \t]*-[ \t]*\*\*aarch64[^\r\n]*?\*\*:[ \t]*)([^\r\n]*)$',
-              'armv7': r'(?m)^([ \t]*-[ \t]*\*\*armv7[^\r\n]*?\*\*:[ \t]*)([^\r\n]*)$',
-              'x86_64': r'(?m)^([ \t]*-[ \t]*\*\*x86_64[^\r\n]*?\*\*:[ \t]*)([^\r\n]*)$',
+          # 5. 更新资产包行 (按架构分组，子项按版本竖向分列)
+          arch_specs = [
+              ('aarch64', 'aarch64 (ARM64)'),
+              ('armv7', 'armv7 (armhf)'),
+              ('x86_64', 'x86_64 (AMD64)'),
+          ]
+          ordered_editions = ['标准版', 'VoLTE 版', 'VoWiFi 版', '完整版']
+
+          def detect_arch(text):
+              lower = text.lower()
+              if 'aarch64' in lower or 'arm64' in lower:
+                  return 'aarch64'
+              if 'armv7' in lower or 'armhf' in lower:
+                  return 'armv7'
+              if 'x86_64' in lower or 'amd64' in lower:
+                  return 'x86_64'
+              return None
+
+          def detect_edition(pkg, line_text=''):
+              lower = pkg.lower()
+              if re.search(r'(?:^|[-_])volte(?:[-_.]|$)', lower):
+                  return 'VoLTE 版'
+              if re.search(r'(?:^|[-_])vowifi(?:[-_.]|$)', lower):
+                  return 'VoWiFi 版'
+              if re.search(r'(?:^|[-_])full(?:[-_.]|$)', lower):
+                  return '完整版'
+              for ed in ordered_editions:
+                  if ed in line_text:
+                      return ed
+              return '标准版'
+
+          asset_map = {
+              arch_key: {ed: [] for ed in ordered_editions}
+              for arch_key, _ in arch_specs
           }
 
-          for pkg in sorted(new_packages):
-              arch = None
-              if 'aarch64' in pkg:
-                  arch = 'aarch64'
-              elif 'armv7' in pkg:
-                  arch = 'armv7'
-              elif 'x86_64' in pkg or 'amd64' in pkg:
-                  arch = 'x86_64'
-              if not arch:
-                  continue
+          def add_pkg(arch_key, ed_title, pkg_name):
+              if not arch_key or arch_key not in asset_map:
+                  return
+              if ed_title not in asset_map[arch_key]:
+                  ed_title = '标准版'
+              if pkg_name not in asset_map[arch_key][ed_title]:
+                  asset_map[arch_key][ed_title].append(pkg_name)
 
-              pat = arch_patterns[arch]
-              m = re.search(pat, body)
-              if m:
-                  prefix = m.group(1)
-                  cur_assets = m.group(2).strip()
-                  pkg_code = f"`{pkg}`"
-                  if pkg_code not in cur_assets:
-                      new_assets = f"{cur_assets} {pkg_code}".strip()
-                      body = body[:m.start()] + f"{prefix}{new_assets}" + body[m.end():]
+          lines = body.split('\n')
+          asset_header_idx = None
+          for idx, line in enumerate(lines):
+              if re.match(r'^[ \t]*-[ \t]*\*\*资产包\*\*[ \t]*:', line):
+                  asset_header_idx = idx
+                  break
+
+          block_end = None
+          if asset_header_idx is not None:
+              header_indent = len(lines[asset_header_idx]) - len(lines[asset_header_idx].lstrip(' \t'))
+              block_end = asset_header_idx + 1
+              while block_end < len(lines):
+                  cur = lines[block_end]
+                  if cur.strip() == '':
+                      next_non_empty = block_end + 1
+                      while next_non_empty < len(lines) and lines[next_non_empty].strip() == '':
+                          next_non_empty += 1
+                      if next_non_empty < len(lines):
+                          nxt = lines[next_non_empty]
+                          nxt_indent = len(nxt) - len(nxt.lstrip(' \t'))
+                          if nxt_indent > header_indent and re.match(r'^[ \t]*[-*][ \t]+', nxt):
+                              block_end = next_non_empty
+                              continue
+                      break
+                  cur_indent = len(cur) - len(cur.lstrip(' \t'))
+                  if cur_indent > header_indent:
+                      block_end += 1
+                  else:
+                      break
+
+              current_arch = None
+              for line in lines[asset_header_idx + 1 : block_end]:
+                  arch_hdr = re.match(r'^[ \t]*-[ \t]*\*\*([^\n*]+)\*\*[ \t]*:', line)
+                  if arch_hdr:
+                      detected = detect_arch(arch_hdr.group(1))
+                      if detected:
+                          current_arch = detected
+                  for pkg_match in re.findall(r'`([^`]+\.tar\.gz)`', line):
+                      pkg_name = pkg_match.strip()
+                      arch_key = detect_arch(pkg_name) or current_arch
+                      ed_title = detect_edition(pkg_name, line)
+                      add_pkg(arch_key, ed_title, pkg_name)
+
+          for pkg in sorted(new_packages):
+              add_pkg(detect_arch(pkg), detect_edition(pkg), pkg)
+
+          new_asset_lines = ["- **资产包**: "]
+          for arch_key, arch_label in arch_specs:
+              if not any(asset_map[arch_key][ed] for ed in ordered_editions):
+                  continue
+              new_asset_lines.append(f"\t- **{arch_label}**: ")
+              for ed_title in ordered_editions:
+                  pkgs = asset_map[arch_key][ed_title]
+                  if not pkgs:
+                      continue
+                  pkgs_str = " ".join(f"`{p}`" for p in pkgs)
+                  new_asset_lines.append(f"\t\t- {ed_title}：{pkgs_str}")
+
+          if asset_header_idx is not None:
+              lines = lines[:asset_header_idx] + new_asset_lines + lines[block_end:]
+              body = "\n".join(lines)
+          else:
+              inserted = False
+              for idx, line in enumerate(lines):
+                  if re.match(r'^[ \t]*-[ \t]*\*\*发布类型\*\*[ \t]*:', line):
+                      lines = lines[:idx + 1] + new_asset_lines + lines[idx + 1:]
+                      body = "\n".join(lines)
+                      inserted = True
+                      break
+              if not inserted:
+                  body = "\n".join(new_asset_lines) + "\n\n" + body
 
           # 6. 从各分支提取更新说明并插入
           def get_changelog_for_branch(branch):
@@ -534,19 +619,8 @@ jobs:
               '完整版': 'full'
           }
 
-          ordered_editions = ['标准版', 'VoLTE 版', 'VoWiFi 版', '完整版']
-
           # 检查本次构建了哪些版本
-          detected_editions = set()
-          for p in new_packages:
-              if 'volte' in p:
-                  detected_editions.add('VoLTE 版')
-              elif 'vowifi' in p:
-                  detected_editions.add('VoWiFi 版')
-              elif 'full' in p:
-                  detected_editions.add('完整版')
-              else:
-                  detected_editions.add('标准版')
+          detected_editions = {detect_edition(p) for p in new_packages}
 
           for ed_title in ordered_editions:
               if ed_title not in detected_editions:

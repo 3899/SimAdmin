@@ -9,12 +9,17 @@ const STRONG_KEYWORDS: &[&str] = &[
     "校验码",
     "动态码",
     "动态验证码",
+    "动态密码",
     "认证码",
     "短信码",
     "登录码",
     "安全码",
+    "安全代码",
     "确认码",
     "验证代码",
+    "一次性代码",
+    "一次性验证码",
+    "一次性密码",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -379,6 +384,10 @@ fn contains_strong_keyword(value: &str) -> bool {
     contains_any(value, STRONG_KEYWORDS)
         || contains_ascii_phrase(value, "verification code")
         || contains_ascii_phrase(value, "verify code")
+        || contains_ascii_phrase(value, "security code")
+        || contains_ascii_phrase(value, "one-time code")
+        || contains_ascii_phrase(value, "one time code")
+        || contains_ascii_phrase(value, "one-time password")
         || contains_ascii_word(value, "code")
         || contains_ascii_word(value, "otp")
         || contains_ascii_word(value, "pin")
@@ -488,6 +497,7 @@ mod tests {
                 "2461",
             ),
             ("您的 WhatsApp 验证码: 161-675", "161675"),
+            ("【Microsoft】Microsoft 帐户一次性代码: 202423", "202423"),
         ];
 
         for (content, expected) in cases {

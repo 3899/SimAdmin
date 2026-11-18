@@ -797,6 +797,7 @@ pub fn cached_smsc_for_identity(db: &Database, identity: &SimIdentity) -> String
         .unwrap_or_default()
 }
 
+#[allow(dead_code)]
 pub fn cached_smsc_or_latest(db: &Database, identity: Option<&SimIdentity>) -> String {
     if let Some(identity) = identity {
         let cached = cached_smsc_for_identity(db, identity);
@@ -4565,6 +4566,7 @@ pub async fn get_is_roaming_mm(conn: &Connection) -> zbus::Result<bool> {
     Ok(matches!(reg_state, 5 | 7 | 10))
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CellularRegistrationStatus {
     pub is_registered: bool,
@@ -4577,6 +4579,7 @@ pub struct CellularRegistrationStatus {
 }
 
 /// 纯只读方式获取蜂窝网络驻网状态，不触发 mmcli 硬件扫描或 AT 命令竞争
+#[allow(dead_code)]
 pub async fn get_cellular_registration_status(
     conn: &Connection,
 ) -> Option<CellularRegistrationStatus> {
@@ -4620,6 +4623,7 @@ pub async fn get_cellular_registration_status(
 }
 
 /// 快速判定蜂窝网络是否已在基带层面成功驻网（只读、无锁、无AT竞争）
+#[allow(dead_code)]
 pub async fn is_modem_cellular_registered(conn: &Connection) -> bool {
     get_cellular_registration_status(conn)
         .await
@@ -4628,6 +4632,7 @@ pub async fn is_modem_cellular_registered(conn: &Connection) -> bool {
 }
 
 /// 在指定超时时间内等待蜂窝基带就绪或状态恢复，纯只读轮询
+#[allow(dead_code)]
 pub async fn wait_for_cellular_registered(conn: &Connection, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
